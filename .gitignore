@@ -1,0 +1,6 @@
+.venv-whisperx/
+node_modules/
+test-results/
+tmp/
+pretrained_models/
+data/speaker_profiles.json

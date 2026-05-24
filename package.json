@@ -6,9 +6,18 @@
   "scripts": {
     "dev": "node server.mjs",
     "start": "node server.mjs",
-    "bench": "node scripts/bench-voice-loop.mjs"
+    "stt": ".venv-whisperx/bin/python services/whisperx_adapter.py --port 9001",
+    "stt:install": "python3.12 -m venv .venv-whisperx && .venv-whisperx/bin/pip install -U pip && .venv-whisperx/bin/pip install -r requirements-whisperx.txt",
+    "bench": "node scripts/bench-voice-loop.mjs",
+    "test:voice:preflight": "node scripts/voice-test-preflight.mjs",
+    "test:voice:api": "playwright test tests/voice/api-contract.spec.mjs",
+    "test:voice:acoustic": "npm run test:voice:preflight && playwright test tests/voice/acoustic.spec.mjs --headed",
+    "test:voice": "playwright test tests/voice"
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0"
   }
 }

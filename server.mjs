@@ -26,6 +26,11 @@ const OPENAI_TTS_VOICE = process.env.OPENAI_TTS_VOICE ?? "alloy";
 const STT_PROVIDER = process.env.STT_PROVIDER ?? "whisperx";
 const WHISPERX_URL = process.env.WHISPERX_URL ?? "http://127.0.0.1:9001";
 const WHISPERX_TIMEOUT_MS = Number(process.env.WHISPERX_TIMEOUT_MS ?? 120000);
+const SPEAKER_GUARD_URL = process.env.SPEAKER_GUARD_URL ?? WHISPERX_URL;
+const SPEAKER_GUARD_TIMEOUT_MS = Number(process.env.SPEAKER_GUARD_TIMEOUT_MS ?? 45000);
+const SPEECH_INTENT_MODE = process.env.SPEECH_INTENT_MODE ?? "rewrite";
+const SPEECH_INTENT_TIMEOUT_MS = Number(process.env.SPEECH_INTENT_TIMEOUT_MS ?? 60000);
+const SPEECH_INTENT_NUM_PREDICT = Number(process.env.SPEECH_INTENT_NUM_PREDICT ?? 220);
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -45,6 +50,17 @@ Ask one clarifying question when the user's request is ambiguous.
 Do not use canned domain-specific answers unless the conversation calls for them.
 Do not expose hidden reasoning. Speak directly and conversationally.
 If interrupted, adapt to the user's latest words immediately.`;
+
+const SPEECH_INTENT_PROMPT =
+  process.env.SPEECH_INTENT_PROMPT ??
+  `You are a speech-to-intent cleanup layer for a realtime voice tutor.
+Convert raw speech recognition text into the user's intended message.
+Preserve all important details, examples, constraints, names, numbers, and questions.
+Remove filler words, repeated starts, obvious ASR noise, and disfluencies.
+If the user said several separate things, output a short bullet list.
+If the user is asking one thing, output one concise paragraph.
+Do not answer the question. Do not add facts. Do not mention that you cleaned the transcript.
+Return only the cleaned user message.`;
 
 function json(res, status, data) {
   res.writeHead(status, {
@@ -206,6 +222,158 @@ async function streamOllama(res, messages, systemPrompt) {
   res.end();
 }
 
+async function completeOllama(messages, systemPrompt, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? OLLAMA_INITIAL_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${OLLAMA_BASE_URL.replace(/\/$/, "")}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: options.model ?? OLLAMA_MODEL,
+        messages: normalizeMessages(messages, systemPrompt),
+        stream: false,
+        think: false,
+        options: {
+          temperature: options.temperature ?? 0.1,
+          num_ctx: OLLAMA_NUM_CTX,
+          num_predict: options.numPredict ?? OLLAMA_NUM_PREDICT,
+        },
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) throw new Error(`Ollama returned ${response.status}`);
+    const data = await response.json();
+    return {
+      text: String(data.message?.content ?? "").trim(),
+      provider: "ollama",
+      model: options.model ?? OLLAMA_MODEL,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function completeOpenAI(messages, systemPrompt, options = {}) {
+  if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not configured.");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? OLLAMA_INITIAL_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${OPENAI_BASE_URL.replace(/\/$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: options.model ?? OPENAI_MODEL,
+        messages: normalizeMessages(messages, systemPrompt),
+        stream: false,
+        temperature: options.temperature ?? 0.1,
+        max_tokens: options.maxTokens ?? SPEECH_INTENT_NUM_PREDICT,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) throw new Error(`OpenAI-compatible provider returned ${response.status}`);
+    const data = await response.json();
+    return {
+      text: String(data.choices?.[0]?.message?.content ?? "").trim(),
+      provider: "openai-compatible",
+      model: options.model ?? OPENAI_MODEL,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function cleanIntentOutput(value) {
+  return String(value ?? "")
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .replace(/^(cleaned user message|cleaned message|user message|intent)\s*:\s*/i, "")
+    .trim();
+}
+
+async function completeWithConfiguredProvider(messages, systemPrompt, options = {}) {
+  if (PROVIDER === "ollama" || PROVIDER === "auto") {
+    try {
+      return await completeOllama(messages, systemPrompt, options);
+    } catch (error) {
+      if (PROVIDER === "ollama") throw error;
+    }
+  }
+
+  if ((PROVIDER === "openai" || PROVIDER === "auto") && process.env.OPENAI_API_KEY) {
+    return completeOpenAI(messages, systemPrompt, options);
+  }
+
+  throw new Error("No text generation provider is available for speech cleanup.");
+}
+
+async function handleSpeechIntent(req, res) {
+  const body = await readJson(req);
+  const rawText = String(body.rawText ?? body.text ?? "").trim();
+  const mode = String(body.mode ?? SPEECH_INTENT_MODE);
+
+  if (!rawText) {
+    json(res, 400, { error: "Missing rawText" });
+    return;
+  }
+
+  if (mode === "raw" || rawText.length < 12) {
+    json(res, 200, {
+      text: rawText,
+      rawText,
+      mode: "raw",
+      provider: "none",
+      changed: false,
+    });
+    return;
+  }
+
+  const startedAt = performance.now();
+  try {
+    const result = await completeWithConfiguredProvider(
+      [
+        {
+          role: "user",
+          content: `Raw speech recognition text:\n${rawText}\n\nClean this into the user message that should be sent to the tutor.`,
+        },
+      ],
+      SPEECH_INTENT_PROMPT,
+      {
+        timeoutMs: SPEECH_INTENT_TIMEOUT_MS,
+        numPredict: SPEECH_INTENT_NUM_PREDICT,
+        maxTokens: SPEECH_INTENT_NUM_PREDICT,
+        temperature: 0.1,
+      },
+    );
+    const text = cleanIntentOutput(result.text) || rawText;
+    json(res, 200, {
+      text,
+      rawText,
+      mode: "rewrite",
+      provider: result.provider,
+      model: result.model,
+      changed: text !== rawText,
+      duration_ms: Math.round(performance.now() - startedAt),
+    });
+  } catch (error) {
+    json(res, 200, {
+      text: rawText,
+      rawText,
+      mode: "fallback_raw",
+      provider: PROVIDER,
+      changed: false,
+      error: error instanceof Error ? error.message : String(error),
+      duration_ms: Math.round(performance.now() - startedAt),
+    });
+  }
+}
+
 async function handleChat(req, res) {
   const body = await readJson(req);
   const messages = Array.isArray(body.messages) ? body.messages : [];
@@ -350,7 +518,9 @@ async function handleStt(req, res) {
     return;
   }
 
-  const contentType = req.headers["content-type"] ?? "application/octet-stream";
+  const contentType = firstHeader(req.headers["content-type"]) || "application/octet-stream";
+  const userId = firstHeader(req.headers["x-user-id"]);
+  const userName = firstHeader(req.headers["x-user-name"]);
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
   const audio = Buffer.concat(chunks);
@@ -364,19 +534,135 @@ async function handleStt(req, res) {
   const timeout = setTimeout(() => controller.abort(), WHISPERX_TIMEOUT_MS);
   let response;
   try {
-    response = await fetch(`${WHISPERX_URL.replace(/\/$/, "")}/transcribe`, {
-    method: "POST",
-    headers: {
+    const headers = {
       "Content-Type": contentType,
-      "X-Audio-Format": String(req.headers["x-audio-format"] ?? "webm"),
-    },
-    body: audio,
-    signal: controller.signal,
-  });
+      "X-Audio-Format": firstHeader(req.headers["x-audio-format"]) || "webm",
+    };
+    if (userId) headers["X-User-Id"] = userId;
+    if (userName) headers["X-User-Name"] = userName;
+
+    response = await fetch(`${WHISPERX_URL.replace(/\/$/, "")}/transcribe`, {
+      method: "POST",
+      headers,
+      body: audio,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    const isAbort = error instanceof Error && error.name === "AbortError";
+    json(res, isAbort ? 504 : 502, {
+      error: isAbort ? "WhisperX transcription timed out." : "WhisperX adapter is unavailable.",
+      detail: error instanceof Error ? error.message : String(error),
+    });
+    return;
   } finally {
     clearTimeout(timeout);
   }
 
+  if (!response) {
+    json(res, 504, { error: "WhisperX adapter did not respond." });
+    return;
+  }
+
+  const resultText = await response.text();
+  res.writeHead(response.status, {
+    "Content-Type": response.headers.get("content-type") ?? "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  res.end(resultText);
+}
+
+function firstHeader(value) {
+  if (Array.isArray(value)) return value[0] ?? "";
+  return typeof value === "string" ? value : "";
+}
+
+async function proxyRawAudio(req, res, upstreamUrl, timeoutMs) {
+  const contentType = firstHeader(req.headers["content-type"]) || "application/octet-stream";
+  const userId = firstHeader(req.headers["x-user-id"]);
+  const userName = firstHeader(req.headers["x-user-name"]);
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  const audio = Buffer.concat(chunks);
+
+  if (!audio.length) {
+    json(res, 400, { error: "Missing audio body" });
+    return;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    const headers = {
+      "Content-Type": contentType,
+      "X-Audio-Format": firstHeader(req.headers["x-audio-format"]) || "webm",
+    };
+    if (userId) headers["X-User-Id"] = userId;
+    if (userName) headers["X-User-Name"] = userName;
+
+    response = await fetch(upstreamUrl, {
+      method: "POST",
+      headers,
+      body: audio,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    const isAbort = error instanceof Error && error.name === "AbortError";
+    json(res, isAbort ? 504 : 502, {
+      error: isAbort ? "Upstream audio service timed out." : "Upstream audio service is unavailable.",
+      detail: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const resultText = await response.text();
+  res.writeHead(response.status, {
+    "Content-Type": response.headers.get("content-type") ?? "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  res.end(resultText);
+}
+
+async function handleSpeakerGuard(req, res, action) {
+  if (!SPEAKER_GUARD_URL) {
+    json(res, 501, {
+      error: "Speaker identity service is not configured. Set SPEAKER_GUARD_URL to a service with speaker endpoints.",
+    });
+    return;
+  }
+
+  await proxyRawAudio(
+    req,
+    res,
+    `${SPEAKER_GUARD_URL.replace(/\/$/, "")}/speaker/${action}`,
+    SPEAKER_GUARD_TIMEOUT_MS,
+  );
+}
+
+async function handleSpeakerReset(_req, res) {
+  if (!SPEAKER_GUARD_URL) {
+    json(res, 501, { error: "Speaker identity service is not configured." });
+    return;
+  }
+
+  const response = await fetch(`${SPEAKER_GUARD_URL.replace(/\/$/, "")}/speaker/reset`, { method: "POST" });
+  const resultText = await response.text();
+  res.writeHead(response.status, {
+    "Content-Type": response.headers.get("content-type") ?? "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  res.end(resultText);
+}
+
+async function handleSpeakerProfiles(_req, res) {
+  if (!SPEAKER_GUARD_URL) {
+    json(res, 501, { error: "Speaker identity service is not configured." });
+    return;
+  }
+
+  const response = await fetch(`${SPEAKER_GUARD_URL.replace(/\/$/, "")}/speaker/profiles`, { method: "GET" });
   const resultText = await response.text();
   res.writeHead(response.status, {
     "Content-Type": response.headers.get("content-type") ?? "application/json; charset=utf-8",
@@ -402,6 +688,18 @@ async function handleProviderHealth(req, res) {
       whisperxConfigured: Boolean(WHISPERX_URL),
       whisperxUrl: WHISPERX_URL || null,
       recommendation: "Use WhisperX for turn-level voice-agent STT; browser STT remains a fallback/debug option.",
+    },
+    speechIntent: {
+      mode: SPEECH_INTENT_MODE,
+      provider: PROVIDER,
+      purpose: "Whisper Flow-style rewrite from raw transcript to cleaned user intent.",
+    },
+    speakerGuard: {
+      configured: Boolean(SPEAKER_GUARD_URL),
+      url: SPEAKER_GUARD_URL || null,
+      targetModel: "NVIDIA NeMo Streaming Sortformer / TitaNet speaker embeddings",
+      localFallbackModel: "speechbrain/spkrec-ecapa-voxceleb",
+      purpose: "Parallel speaker identity for barge-in and persistent per-student profiles.",
     },
     tts: {
       defaultProvider: TTS_PROVIDER,
@@ -463,9 +761,11 @@ const server = http.createServer(async (req, res) => {
         ollamaModel: OLLAMA_MODEL,
         sttProvider: STT_PROVIDER,
         ttsProvider: TTS_PROVIDER,
+        speechIntentMode: SPEECH_INTENT_MODE,
         fishConfigured: Boolean(FISH_API_KEY),
         fishModel: FISH_TTS_MODEL,
         whisperxConfigured: Boolean(WHISPERX_URL),
+        speakerGuardConfigured: Boolean(SPEAKER_GUARD_URL),
       });
       return;
     }
@@ -493,6 +793,36 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === "/api/stt" && req.method === "POST") {
       await handleStt(req, res);
+      return;
+    }
+
+    if (url.pathname === "/api/speech-intent" && req.method === "POST") {
+      await handleSpeechIntent(req, res);
+      return;
+    }
+
+    if (url.pathname === "/api/speaker/enroll" && req.method === "POST") {
+      await handleSpeakerGuard(req, res, "enroll");
+      return;
+    }
+
+    if (url.pathname === "/api/speaker/enroll-assistant" && req.method === "POST") {
+      await handleSpeakerGuard(req, res, "enroll-assistant");
+      return;
+    }
+
+    if (url.pathname === "/api/speaker/classify" && req.method === "POST") {
+      await handleSpeakerGuard(req, res, "classify");
+      return;
+    }
+
+    if (url.pathname === "/api/speaker/reset" && req.method === "POST") {
+      await handleSpeakerReset(req, res);
+      return;
+    }
+
+    if (url.pathname === "/api/speaker/profiles" && req.method === "GET") {
+      await handleSpeakerProfiles(req, res);
       return;
     }
 

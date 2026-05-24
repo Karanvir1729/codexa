@@ -49,9 +49,22 @@
             <span>Cancel on interruption</span>
           </label>
 
+          <label class="toggle">
+            <input id="speechIntentToggle" type="checkbox" checked />
+            <span>Clean speech into intent</span>
+          </label>
+
           <label class="field">
             <span>Voice speed</span>
             <input id="rateSlider" type="range" min="0.85" max="1.25" step="0.05" value="1.02" />
+          </label>
+
+          <label class="field">
+            <span>STT provider</span>
+            <select id="sttProvider">
+              <option value="whisperx">WhisperX turn STT</option>
+              <option value="browser">Browser STT fallback</option>
+            </select>
           </label>
 
           <label class="field">
@@ -63,9 +76,28 @@
             </select>
           </label>
 
+          <label class="field">
+            <span>Student profile</span>
+            <select id="studentProfile">
+              <option value="user_a">User A</option>
+              <option value="user_b">User B</option>
+              <option value="user_c">User C</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Profile display name</span>
+            <input id="studentProfileName" value="User A" />
+          </label>
+
+          <label class="field">
+            <span>Agent system prompt</span>
+            <textarea id="systemPrompt" rows="7">You are Tutor-Tron, a realtime conversational voice tutor. Respond naturally to any prompt the user gives. Keep spoken responses concise and useful. Ask one clarifying question when the request is ambiguous. If interrupted, adapt immediately to the user's latest words.</textarea>
+          </label>
+
           <div class="note">
-            Chrome works best for live browser STT. To interrupt verbally while the tutor speaks,
-            start with “wait”, “stop”, or “hold on”; this avoids treating speaker echo as your turn.
+            WhisperX is the primary turn transcript path. Browser STT is only a fallback/debug mode.
+            Turns wait through natural pauses, then a Whisper Flow-style rewrite converts raw speech into the clearest user request.
           </div>
         </aside>
 
@@ -93,18 +125,31 @@
           <p class="label">Realtime path</p>
           <ol class="path">
             <li>Browser mic / local VAD</li>
-            <li>Speech recognition transcript</li>
-            <li>Streaming LLM request</li>
-            <li>Sentence TTS queue</li>
+            <li>Turn audio to WhisperX STT</li>
+            <li>Speech-to-intent rewrite</li>
+            <li>Streaming Ollama Qwen 3.5 request</li>
+            <li>Fish/browser sentence TTS queue</li>
             <li>Interrupt cancels stream + speech</li>
           </ol>
 
           <p class="label">Current prototype limits</p>
           <ul class="path">
-            <li>Browser STT is the live v1 path.</li>
+            <li>WhisperX is turn-based, not streaming ASR.</li>
             <li>Fish Speech is preferred TTS when configured.</li>
-            <li>WhisperX is better for accurate turn transcripts/evals than low-latency streaming.</li>
+            <li>Browser voice remains a no-key fallback.</li>
           </ul>
+
+          <p class="label">Turn-taking feedback</p>
+          <ul class="path">
+            <li>Predicts end-of-turn from stable silence.</li>
+            <li>Delays tutor speech while the mic is active.</li>
+            <li>Raises pause thresholds after early interruptions.</li>
+          </ul>
+
+          <p class="label">Parallel speaker identity</p>
+          <p id="speakerGuardState" class="live-text muted">
+            NVIDIA target: NeMo Streaming Sortformer / TitaNet. Normal turns save the active student voice profile; overlap audio is checked before it can interrupt the LLM.
+          </p>
 
           <p class="label">Latency metrics</p>
           <dl id="latencyLog" class="metrics">

@@ -29,7 +29,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -219,15 +220,28 @@ button:disabled {
   width: 100%;
 }
 
-.field select {
+.field select,
+.field textarea {
   width: 100%;
-  min-height: 40px;
   border: 1px solid var(--line);
   border-radius: 7px;
   background: #fff;
-  padding: 0 10px;
   color: #334155;
   font-weight: 700;
+}
+
+.field select {
+  min-height: 40px;
+  padding: 0 10px;
+}
+
+.field textarea {
+  min-height: 132px;
+  resize: vertical;
+  padding: 10px;
+  color: #334155;
+  font-weight: 700;
+  line-height: 1.4;
 }
 
 .note {
