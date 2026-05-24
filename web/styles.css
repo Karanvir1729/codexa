@@ -118,6 +118,17 @@ h1 {
   font-size: 13px;
 }
 
+.dashboard-link {
+  color: var(--blue);
+  font-size: 13px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.dashboard-link:hover {
+  text-decoration: underline;
+}
+
 .stage {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr) 310px;

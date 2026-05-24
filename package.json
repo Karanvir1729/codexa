@@ -9,8 +9,11 @@
     "stt": ".venv-whisperx/bin/python services/whisperx_adapter.py --port 9001",
     "stt:install": "python3.12 -m venv .venv-whisperx && .venv-whisperx/bin/pip install -U pip && .venv-whisperx/bin/pip install -r requirements-whisperx.txt",
     "bench": "node scripts/bench-voice-loop.mjs",
+    "test:voice:runner": "node scripts/voice-test-runner.mjs",
+    "test:voice:eval": "node scripts/voice-eval-suite.mjs",
     "test:voice:preflight": "node scripts/voice-test-preflight.mjs",
     "test:voice:api": "playwright test tests/voice/api-contract.spec.mjs",
+    "test:voice:ui": "playwright test tests/voice/ui-smoke.spec.mjs",
     "test:voice:acoustic": "npm run test:voice:preflight && playwright test tests/voice/acoustic.spec.mjs --headed",
     "test:voice": "playwright test tests/voice"
   },

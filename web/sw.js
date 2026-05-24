@@ -4,6 +4,9 @@ const SHELL_ASSETS = [
   "/index.html",
   "/styles.css",
   "/app.js",
+  "/test-dashboard.html",
+  "/test-dashboard.css",
+  "/test-dashboard.js",
   "/manifest.webmanifest",
   "/icons/tutor-tron-icon.svg",
 ];

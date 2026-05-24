@@ -4,3 +4,6 @@ test-results/
 tmp/
 pretrained_models/
 data/speaker_profiles.json
+data/test-runs/
+__pycache__/
+services/__pycache__/

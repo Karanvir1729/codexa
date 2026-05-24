@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tutor-Tron Test Dashboard</title>
+    <meta name="theme-color" content="#2563eb" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icons/tutor-tron-icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/test-dashboard.css" />
+  </head>
+  <body>
+    <main class="dashboard-shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Tutor-Tron QA</p>
+          <h1>Tutor-Tron Test Dashboard</h1>
+          <p class="summary">
+            Proves the voice agent works across health checks, speech-intent evals, API contracts,
+            UI installability, latency, and acoustic interruption.
+          </p>
+        </div>
+        <div class="hero-actions">
+          <a href="/" class="secondary-link">Back to voice app</a>
+          <button id="runQuickBtn">Run quick suite</button>
+          <button id="runFullBtn" class="danger">Run full suite</button>
+        </div>
+      </section>
+
+      <section class="cards">
+        <article class="card">
+          <span class="card-label">Latest status</span>
+          <strong id="latestStatus">No run yet</strong>
+          <small id="latestMeta">Waiting for test data.</small>
+        </article>
+        <article class="card">
+          <span class="card-label">Pass rate</span>
+          <strong id="passRate">--</strong>
+          <small id="passMeta">No suites completed.</small>
+        </article>
+        <article class="card">
+          <span class="card-label">Active run</span>
+          <strong id="activeRun">Idle</strong>
+          <small id="activeMeta">Use quick or full suite.</small>
+        </article>
+        <article class="card">
+          <span class="card-label">Coverage</span>
+          <strong>Voice + eval</strong>
+          <small>STT, intent, LLM, UI, PWA, latency, barge-in.</small>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Suites</p>
+            <h2>Current run</h2>
+          </div>
+          <p id="updatedAt" class="muted">Not loaded.</p>
+        </div>
+        <div id="suiteList" class="suite-list"></div>
+      </section>
+
+      <section class="grid">
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Eval details</p>
+              <h2>Parsed results</h2>
+            </div>
+          </div>
+          <pre id="parsedResults" class="log-box">No parsed results yet.</pre>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">History</p>
+              <h2>Recent runs</h2>
+            </div>
+          </div>
+          <div id="historyList" class="history-list"></div>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">GCP path</p>
+            <h2>Hosted regression plan</h2>
+          </div>
+        </div>
+        <ul class="cloud-list">
+          <li><strong>Cloud Run Jobs:</strong> run this test runner on demand or on schedule.</li>
+          <li><strong>Pub/Sub:</strong> trigger eval runs from failed sessions and strategy changes.</li>
+          <li><strong>Cloud Storage:</strong> store audio snippets, traces, and Playwright artifacts.</li>
+          <li><strong>Cloud SQL:</strong> persist run history, strategy versions, and eval outcomes.</li>
+          <li><strong>Vertex AI Gen AI Evaluation:</strong> judge tutoring quality with rubrics once the local eval set is stable.</li>
+          <li><strong>Cloud Monitoring:</strong> alert on latency, barge-in failures, and eval regressions.</li>
+        </ul>
+      </section>
+    </main>
+
+    <script src="/test-dashboard.js" type="module"></script>
+  </body>
+</html>

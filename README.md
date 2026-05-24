@@ -64,6 +64,12 @@ Open:
 http://localhost:3000
 ```
 
+Open the local QA dashboard:
+
+```text
+http://localhost:3000/test-dashboard.html
+```
+
 ## iPhone and Mac Compatibility
 
 The app is now installable as a PWA:
@@ -96,6 +102,85 @@ Browser mic
 -> Fish Audio TTS or browser TTS
 -> browser speaker
 ```
+
+## Testing Framework
+
+Tutor-Tron has a local Cekura-style QA harness with a dashboard, persisted run history, deterministic evals, browser tests, and acoustic interruption tests.
+
+Dashboard:
+
+```text
+http://localhost:3000/test-dashboard.html
+```
+
+Runner commands:
+
+```bash
+npm run test:voice:runner
+npm run test:voice:eval
+npm run test:voice:api
+npm run test:voice:ui
+npm run test:voice:acoustic
+```
+
+Suites:
+
+- `preflight`: verifies app, WhisperX, speech intent, speaker identity, and macOS speaker command.
+- `eval`: deterministic voice-agent evals for provider health, Flow-style speech cleanup, tutor LLM streaming, and PWA installability.
+- `api`: Playwright API contracts.
+- `ui`: Playwright browser smoke tests for the main app and dashboard.
+- `bench`: first-token and total response latency benchmark.
+- `acoustic`: speaker-to-mic prompt plus spoken barge-in interruption test.
+
+Test run artifacts are written to:
+
+```text
+data/test-runs/latest.json
+data/test-runs/history.json
+data/test-runs/<run-id>.json
+```
+
+Dashboard APIs:
+
+```text
+GET  /api/test-runs/latest
+GET  /api/test-runs/history
+POST /api/test-runs/run
+```
+
+Example:
+
+```bash
+curl -s -X POST http://localhost:3000/api/test-runs/run \
+  -H 'Content-Type: application/json' \
+  --data '{"suites":["preflight","eval","api","ui","bench"]}'
+```
+
+Use the full suite when you want the physical voice loop:
+
+```bash
+curl -s -X POST http://localhost:3000/api/test-runs/run \
+  -H 'Content-Type: application/json' \
+  --data '{"suites":["preflight","eval","api","ui","bench","acoustic"]}'
+```
+
+## GCP Test Infrastructure Path
+
+The local runner is intentionally container-friendly. With GCP credits, the useful hosted setup is:
+
+- **Cloud Run service:** host the Tutor-Tron API/dashboard container.
+- **Cloud Run Jobs:** run `npm run test:voice:runner` on demand or on a schedule. Cloud Run jobs are designed for code that performs work and exits.
+- **Pub/Sub:** trigger regression runs from failed sessions, prompt changes, strategy changes, or deploy events.
+- **Cloud Storage:** store Playwright traces, audio snippets, failure traces, and replay artifacts.
+- **Cloud SQL Postgres:** persist run history, eval scores, strategy versions, and promotion status.
+- **Vertex AI Gen AI Evaluation:** add rubric-based or pairwise LLM judge scoring once the deterministic eval set is stable.
+- **Cloud Monitoring/Logging/Trace:** alert on first-token latency, failed barge-ins, eval regression, and STT/TTS provider failures.
+
+References:
+
+- Cloud Run overview: https://docs.cloud.google.com/run/docs/overview/what-is-cloud-run
+- Pub/Sub overview: https://docs.cloud.google.com/pubsub/docs/pubsub-basics
+- Vertex AI Gen AI evaluation: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/models/evaluation-overview
 
 ## Interruption Path
 

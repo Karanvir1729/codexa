@@ -1,11 +1,15 @@
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "web");
+const testRunsDir = path.join(__dirname, "data", "test-runs");
 const port = Number(process.env.PORT ?? 3000);
+let activeTestRun = null;
 
 const PROVIDER = process.env.VOICE_AGENT_PROVIDER ?? "ollama";
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
@@ -111,6 +115,14 @@ async function readJson(req) {
   let body = "";
   for await (const chunk of req) body += chunk;
   return body ? JSON.parse(body) : {};
+}
+
+function readJsonFile(filePath, fallback) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+  } catch {
+    return fallback;
+  }
 }
 
 function normalizeMessages(messages = [], systemPrompt = DEFAULT_AGENT_PROMPT) {
@@ -1017,6 +1029,86 @@ async function handleProviderHealth(req, res) {
   json(res, 200, health);
 }
 
+function handleLatestTestRun(_req, res) {
+  const latest = readJsonFile(path.join(testRunsDir, "latest.json"), null);
+  json(res, 200, {
+    active: activeTestRun
+      ? {
+          id: activeTestRun.id,
+          pid: activeTestRun.process.pid,
+          startedAt: activeTestRun.startedAt,
+        }
+      : null,
+    latest,
+  });
+}
+
+function handleTestRunHistory(_req, res) {
+  const history = readJsonFile(path.join(testRunsDir, "history.json"), []);
+  json(res, 200, { history });
+}
+
+async function handleStartTestRun(req, res) {
+  if (activeTestRun) {
+    json(res, 409, {
+      error: "A test run is already active.",
+      active: {
+        id: activeTestRun.id,
+        startedAt: activeTestRun.startedAt,
+      },
+    });
+    return;
+  }
+
+  const body = await readJson(req).catch(() => ({}));
+  const allowedSuites = new Set(["preflight", "eval", "api", "ui", "bench", "acoustic"]);
+  const requestedSuites = Array.isArray(body.suites) && body.suites.length
+    ? body.suites.map(String)
+    : ["preflight", "eval", "api", "ui", "bench"];
+  const suites = requestedSuites.filter((suite) => allowedSuites.has(suite));
+  const rejected = requestedSuites.filter((suite) => !allowedSuites.has(suite));
+  if (!suites.length || rejected.length) {
+    json(res, 400, {
+      error: "Invalid suite list.",
+      allowedSuites: [...allowedSuites],
+      rejected,
+    });
+    return;
+  }
+
+  fs.mkdirSync(testRunsDir, { recursive: true });
+  const id = `run-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const child = spawn(process.execPath, ["scripts/voice-test-runner.mjs", `--id=${id}`, `--suites=${suites.join(",")}`], {
+    cwd: __dirname,
+    env: {
+      ...process.env,
+      VOICE_TEST_APP_URL: process.env.VOICE_TEST_APP_URL ?? `http://localhost:${port}`,
+      BENCH_BASE_URL: process.env.BENCH_BASE_URL ?? process.env.VOICE_TEST_APP_URL ?? `http://localhost:${port}`,
+      HEADLESS: "1",
+    },
+    stdio: "ignore",
+    detached: false,
+  });
+
+  activeTestRun = {
+    id,
+    startedAt: new Date().toISOString(),
+    process: child,
+  };
+  child.on("exit", () => {
+    if (activeTestRun?.id === id) activeTestRun = null;
+  });
+  child.on("error", () => {
+    if (activeTestRun?.id === id) activeTestRun = null;
+  });
+
+  json(res, 202, {
+    id,
+    status: "started",
+    suites,
+  });
+}
+
 function serveStatic(req, res) {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
   const safePath = path.normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, "");
@@ -1059,6 +1151,21 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === "/api/providers/health") {
       await handleProviderHealth(req, res);
+      return;
+    }
+
+    if (url.pathname === "/api/test-runs/latest" && req.method === "GET") {
+      handleLatestTestRun(req, res);
+      return;
+    }
+
+    if (url.pathname === "/api/test-runs/history" && req.method === "GET") {
+      handleTestRunHistory(req, res);
+      return;
+    }
+
+    if (url.pathname === "/api/test-runs/run" && req.method === "POST") {
+      await handleStartTestRun(req, res);
       return;
     }
 
