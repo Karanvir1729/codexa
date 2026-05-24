@@ -1,23 +1,30 @@
-# Tutor-Tron Voice Prototype
+# Tutor-Tron Voice System
 
-Browser-based end-to-end voice-agent prototype for Tutor-Tron.
+Browser-based end-to-end voice-agent system for Tutor-Tron.
 
 Goal:
 
-> Build the first ChatGPT Voice style interaction kernel: microphone input, turn-level STT, streaming local LLM response, interruptible speech playback, and a configurable system prompt.
+> Build the first ChatGPT Voice style interaction kernel: microphone input, turn-level STT, Flow-style speech-to-intent, streaming local LLM response, interruptible speech playback, and a configurable system prompt.
 
 ## Current Stack
 
 - **LLM:** Ollama with `qwen3.5` by default.
+- **Python AI/ML runtime:** `services/whisperx_adapter.py` owns WhisperX STT, speaker identity, and deterministic Flow-style speech transforms.
 - **STT:** local WhisperX adapter behind `POST /api/stt`.
-- **Speech cleanup:** Whisper Flow-style `POST /api/speech-intent` rewrite that converts raw speech into the clearest user request before the tutor LLM sees it.
+- **Speech input layer:** Wispr Flow-style `POST /api/speech-intent` rewrite that converts raw speech into the clearest user request before the tutor LLM sees it.
+  - Backtrack/self-correction cleanup.
+  - Filler removal, smart punctuation, and spoken list formatting.
+  - Per-student dictionary corrections and voice snippets.
+  - Writing style and language hint controls.
+  - Recent speech history with raw/cleaned turns.
 - **Turn-taking:** adaptive social-silence predictor that delays end-of-turn and assistant speech based on interruption feedback.
 - **Speaker identity:** persistent per-student voice profiles behind `POST /api/speaker/*`.
   - Production target: NVIDIA NeMo Streaming Sortformer for online diarization and TitaNet-style speaker embeddings.
-  - Local prototype fallback: SpeechBrain ECAPA embeddings until the NVIDIA runtime is available on GPU.
+  - Local CPU fallback: SpeechBrain ECAPA embeddings until the NVIDIA runtime is available on GPU.
 - **TTS:** Fish Audio / Fish Speech `s2-pro` through `POST /api/tts` when `FISH_API_KEY` is set.
 - **Fallbacks:** browser STT and browser Web Speech TTS remain available for local debugging.
 - **Prompting:** no hardcoded tutor answer path. The UI sends the current conversation plus the editable system prompt to the LLM.
+- **Install surface:** the same voice core ships as a browser app and installable PWA for iPhone/Mac. A native Mac shell can wrap the same local server later for global hotkeys/background dictation.
 
 ## Run End-to-End
 
@@ -57,6 +64,23 @@ Open:
 http://localhost:3000
 ```
 
+## iPhone and Mac Compatibility
+
+The app is now installable as a PWA:
+
+- iPhone/iPad: serve the app over HTTPS, open it in Safari, then use Share -> Add to Home Screen.
+- Mac: open it in Safari or Chrome and install/add it to the Dock.
+- The live voice path still calls the same Node + Python services, so the phone must reach the backend over the network.
+- For production iPhone support, use HTTPS and keep STT/TTS server-side. Browser STT is only a fallback; WhisperX/server STT is the main path.
+
+Recommended native path when we need OS-level control:
+
+```text
+shared web UI + Node API + Python AI runtime
+-> PWA for iPhone/Mac now
+-> thin Tauri/Electron Mac shell later for hotkey, background mic, and system audio routing
+```
+
 ## Voice Interaction Path
 
 ```text
@@ -65,7 +89,7 @@ Browser mic
 -> /api/stt
 -> WhisperX adapter
 -> parallel speaker identity service enrolls/checks student voice
--> /api/speech-intent rewrites raw transcript into cleaned intent
+-> /api/speech-intent applies Flow-style cleanup, snippets, dictionary, style, and intent rewrite
 -> /api/chat
 -> Ollama qwen3.5 streaming response
 -> sentence TTS queue
@@ -132,7 +156,7 @@ Future turns -> classify speaker against saved profiles, then route context to t
 
 Remote TTS audio can also enroll an assistant voiceprint. Browser `speechSynthesis` does not expose its raw audio, so browser TTS relies on the enrolled student voiceprint and model-based speaker matching.
 
-This is slower than production streaming ASR. The production-grade model path is NVIDIA NeMo Streaming Sortformer, which is built for online diarization with speaker-cache behavior; the local CPU fallback keeps the prototype working on this machine.
+This is slower than production streaming ASR. The production-grade model path is NVIDIA NeMo Streaming Sortformer, which is built for online diarization with speaker-cache behavior; the local CPU fallback keeps the system working on this machine.
 
 ## Configuration
 
@@ -201,7 +225,7 @@ Expected adapter response:
 }
 ```
 
-### Speech Intent Rewrite
+### Flow-Style Speech Intent Rewrite
 
 ```text
 POST /api/speech-intent
@@ -211,7 +235,18 @@ Content-Type: application/json
 ```json
 {
   "rawText": "um okay so I think I am confused about like why this is not binomial because there are two outcomes but also no replacement",
-  "mode": "rewrite"
+  "mode": "rewrite",
+  "flow": {
+    "cleanupLevel": "high",
+    "writingStyle": "tutor",
+    "languageHint": "auto",
+    "dictionary": [
+      { "from": "hyper geometric", "to": "hypergeometric", "term": "hypergeometric", "starred": true }
+    ],
+    "snippets": [
+      { "trigger": "quiz me", "text": "Ask me one short diagnostic question after the explanation." }
+    ]
+  }
 }
 ```
 
@@ -222,9 +257,26 @@ Example response:
   "text": "I am confused why this is not binomial. There are two outcomes, but the problem also says sampling is without replacement.",
   "rawText": "...",
   "mode": "rewrite",
-  "changed": true
+  "changed": true,
+  "flow": {
+    "cleanup_level": "high",
+    "writing_style": "tutor",
+    "language_hint": "auto",
+    "dictionary_applied": [],
+    "snippets_applied": []
+  }
 }
 ```
+
+Use `mode: "format"` to run only the deterministic local Flow formatter. Use `mode: "rewrite"` to run deterministic cleanup first and then let the configured LLM produce the final user intent. If the LLM is unavailable, the endpoint falls back to local Flow formatting instead of returning an unprocessed raw transcript.
+
+Node prefers the Python endpoint at:
+
+```text
+POST http://127.0.0.1:9001/speech-intent
+```
+
+If the Python service is unavailable, Node uses its equivalent local formatter as a fallback so voice turns still work.
 
 ### TTS
 

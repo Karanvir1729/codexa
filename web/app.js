@@ -16,6 +16,13 @@ const dom = {
   autoSpeakToggle: document.querySelector("#autoSpeakToggle"),
   bargeInToggle: document.querySelector("#bargeInToggle"),
   speechIntentToggle: document.querySelector("#speechIntentToggle"),
+  flowCleanupLevel: document.querySelector("#flowCleanupLevel"),
+  flowWritingStyle: document.querySelector("#flowWritingStyle"),
+  flowLanguage: document.querySelector("#flowLanguage"),
+  flowDictionary: document.querySelector("#flowDictionary"),
+  flowSnippets: document.querySelector("#flowSnippets"),
+  flowState: document.querySelector("#flowState"),
+  flowHistory: document.querySelector("#flowHistory"),
   rateSlider: document.querySelector("#rateSlider"),
   sttProvider: document.querySelector("#sttProvider"),
   ttsProvider: document.querySelector("#ttsProvider"),
@@ -83,6 +90,7 @@ const state = {
   assistantTurnInterrupted: false,
   turnTakingProfile: null,
   currentStudentId: "user_a",
+  speechHistory: [],
 };
 
 const TURN_CAPTURE = {
@@ -149,6 +157,14 @@ function conversationStorageKey(studentId = activeStudentId()) {
   return `tutor-tron:conversation:${studentId}`;
 }
 
+function speechFlowStorageKey(studentId = activeStudentId()) {
+  return `tutor-tron:speech-flow:${studentId}`;
+}
+
+function speechHistoryStorageKey(studentId = activeStudentId()) {
+  return `tutor-tron:speech-history:${studentId}`;
+}
+
 function turnTakingStorageKey(studentId = activeStudentId()) {
   return `tutor-tron:turn-taking:${studentId}`;
 }
@@ -170,6 +186,15 @@ function defaultTurnTakingProfile() {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function loadTurnTakingProfile(studentId = activeStudentId()) {
@@ -200,6 +225,138 @@ function saveTurnTakingEvent(event) {
   } catch {
     // Turn-taking feedback is best-effort local learning.
   }
+}
+
+function parseArrowLines(value) {
+  return String(value || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [left, ...rightParts] = line.split(/\s*=>\s*/);
+      const right = rightParts.join(" => ").trim();
+      return { left: left?.trim() || "", right };
+    })
+    .filter((entry) => entry.left);
+}
+
+function defaultSpeechFlowConfig() {
+  return {
+    cleanupLevel: "high",
+    writingStyle: "tutor",
+    languageHint: "auto",
+    dictionaryText: dom.flowDictionary?.value || "",
+    snippetsText: dom.flowSnippets?.value || "",
+  };
+}
+
+function parseDictionaryConfig(value) {
+  return parseArrowLines(value).map((entry) => {
+    if (entry.right) {
+      return {
+        from: entry.left,
+        to: entry.right,
+        term: entry.right,
+        starred: /!$/.test(entry.left),
+      };
+    }
+    return {
+      term: entry.left.replace(/!$/, ""),
+      starred: /!$/.test(entry.left),
+    };
+  });
+}
+
+function parseSnippetConfig(value) {
+  return parseArrowLines(value)
+    .filter((entry) => entry.right)
+    .map((entry) => ({ trigger: entry.left, text: entry.right }));
+}
+
+function getSpeechFlowConfig() {
+  return {
+    cleanupLevel: dom.flowCleanupLevel?.value || "high",
+    writingStyle: dom.flowWritingStyle?.value || "tutor",
+    languageHint: dom.flowLanguage?.value || "auto",
+    dictionary: parseDictionaryConfig(dom.flowDictionary?.value),
+    snippets: parseSnippetConfig(dom.flowSnippets?.value),
+  };
+}
+
+function saveSpeechFlowConfig() {
+  const config = {
+    cleanupLevel: dom.flowCleanupLevel?.value || "high",
+    writingStyle: dom.flowWritingStyle?.value || "tutor",
+    languageHint: dom.flowLanguage?.value || "auto",
+    dictionaryText: dom.flowDictionary?.value || "",
+    snippetsText: dom.flowSnippets?.value || "",
+  };
+  localStorage.setItem(speechFlowStorageKey(state.currentStudentId), JSON.stringify(config));
+  renderFlowState();
+}
+
+function loadSpeechFlowConfig(studentId = activeStudentId()) {
+  let config = defaultSpeechFlowConfig();
+  try {
+    const stored = localStorage.getItem(speechFlowStorageKey(studentId));
+    if (stored) config = { ...config, ...JSON.parse(stored) };
+  } catch {
+    // Keep defaults if saved config is corrupt.
+  }
+  if (dom.flowCleanupLevel) dom.flowCleanupLevel.value = config.cleanupLevel || "high";
+  if (dom.flowWritingStyle) dom.flowWritingStyle.value = config.writingStyle || "tutor";
+  if (dom.flowLanguage) dom.flowLanguage.value = config.languageHint || "auto";
+  if (dom.flowDictionary) dom.flowDictionary.value = config.dictionaryText || "";
+  if (dom.flowSnippets) dom.flowSnippets.value = config.snippetsText || "";
+  renderFlowState();
+}
+
+function loadSpeechHistory(studentId = activeStudentId()) {
+  try {
+    const stored = localStorage.getItem(speechHistoryStorageKey(studentId));
+    state.speechHistory = stored ? JSON.parse(stored).filter((item) => item?.cleaned || item?.raw) : [];
+  } catch {
+    state.speechHistory = [];
+  }
+  renderSpeechHistory();
+}
+
+function saveSpeechHistoryItem(item) {
+  state.speechHistory.unshift({ ts: Date.now(), ...item });
+  state.speechHistory = state.speechHistory.slice(0, 8);
+  localStorage.setItem(speechHistoryStorageKey(state.currentStudentId), JSON.stringify(state.speechHistory));
+  renderSpeechHistory();
+}
+
+function renderFlowState(lastIntent = null) {
+  if (!dom.flowState) return;
+  const config = getSpeechFlowConfig();
+  const dictionaryCount = config.dictionary.length;
+  const snippetCount = config.snippets.length;
+  const last = lastIntent
+    ? ` Last: ${lastIntent.changed ? "cleaned" : "unchanged"} via ${lastIntent.mode || "rewrite"}.`
+    : "";
+  dom.flowState.textContent =
+    `Cleanup ${config.cleanupLevel}; style ${config.writingStyle}; language ${config.languageHint}; ` +
+    `${dictionaryCount} dictionary item${dictionaryCount === 1 ? "" : "s"}; ` +
+    `${snippetCount} snippet${snippetCount === 1 ? "" : "s"}.${last}`;
+}
+
+function renderSpeechHistory() {
+  if (!dom.flowHistory) return;
+  if (!state.speechHistory.length) {
+    dom.flowHistory.innerHTML = '<div class="history-item">No speech turns yet.</div>';
+    return;
+  }
+  dom.flowHistory.innerHTML = state.speechHistory
+    .slice(0, 5)
+    .map((item) => {
+      const cleaned = escapeHtml(item.cleaned || item.raw || "");
+      const raw = escapeHtml(item.raw || "");
+      const changed = item.changed ? "cleaned" : "raw";
+      return `<div class="history-item"><strong>${changed}</strong>${cleaned}${item.changed ? `<br><span class="muted">Raw: ${raw}</span>` : ""}</div>`;
+    })
+    .join("");
 }
 
 function turnTakingProfile() {
@@ -315,6 +472,8 @@ function activateStudentProfile(profileId, profileName = profileId, opts = {}) {
   state.currentStudentId = activeStudentId();
   loadStudentConversation(state.currentStudentId);
   loadTurnTakingProfile(state.currentStudentId);
+  loadSpeechFlowConfig(state.currentStudentId);
+  loadSpeechHistory(state.currentStudentId);
   dom.messages.innerHTML = "";
   addMessage("system", `Active student profile: ${activeStudentName()} (${state.currentStudentId}).`);
   updateActiveSpeakerState();
@@ -830,6 +989,7 @@ async function rewriteSpeechIntent(rawText, meta = {}) {
         barge_in: Boolean(meta.bargeIn),
         student_id: state.currentStudentId,
         student_name: activeStudentName(),
+        flow: getSpeechFlowConfig(),
       }),
     });
     const result = await response.json().catch(() => ({}));
@@ -842,6 +1002,7 @@ async function rewriteSpeechIntent(rawText, meta = {}) {
       provider: result.provider,
       model: result.model,
       duration_ms: result.duration_ms,
+      flow: result.flow,
     };
   } catch (error) {
     setTurn(`Speech cleanup unavailable; using raw transcript. ${error instanceof Error ? error.message : ""}`.trim());
@@ -866,6 +1027,16 @@ async function submitSpeechTurn(rawText, meta = {}) {
   setTurn(useSpeechIntentRewrite() ? "Structuring your speech into a clear request..." : "Sending transcript to tutor...");
   const intent = await rewriteSpeechIntent(trimmed, meta);
   const finalText = intent.text.trim() || trimmed;
+  renderFlowState(intent);
+  saveSpeechHistoryItem({
+    raw: trimmed,
+    cleaned: finalText,
+    changed: intent.changed || finalText !== trimmed,
+    mode: intent.mode,
+    provider: intent.provider,
+    dictionary_applied: intent.flow?.dictionary_applied || [],
+    snippets_applied: intent.flow?.snippets_applied || [],
+  });
 
   if (intent.changed) {
     state.transcriptBuffer = finalText;
@@ -1227,6 +1398,7 @@ async function sendUserTurn(text, meta = {}) {
           barge_in: dom.bargeInToggle.checked,
           raw_speech_text: meta.rawText || null,
           speech_intent: meta.speechIntent || null,
+          speech_flow: getSpeechFlowConfig(),
         },
       }),
       signal: state.abortController.signal,
@@ -1510,6 +1682,12 @@ dom.sttProvider.addEventListener("change", () => {
 });
 dom.studentProfile.addEventListener("change", switchStudentProfile);
 dom.studentProfileName.addEventListener("change", switchStudentProfile);
+[dom.flowCleanupLevel, dom.flowWritingStyle, dom.flowLanguage, dom.flowDictionary, dom.flowSnippets]
+  .filter(Boolean)
+  .forEach((element) => {
+    element.addEventListener("change", saveSpeechFlowConfig);
+    element.addEventListener("input", saveSpeechFlowConfig);
+  });
 dom.textForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const text = dom.textInput.value.trim();
@@ -1521,4 +1699,10 @@ switchStudentProfile();
 updateProviderStatus();
 if (!supportsSpeechRecognition()) {
   setTurn("Browser speech recognition unavailable. WhisperX or typed fallback is ready.");
+}
+
+if ("serviceWorker" in navigator && window.isSecureContext) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {
+    // Installability is best-effort; voice runtime still works without the service worker.
+  });
 }

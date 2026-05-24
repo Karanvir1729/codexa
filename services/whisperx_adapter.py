@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Small WhisperX HTTP adapter for the browser voice prototype.
+"""Python AI/ML runtime for the browser voice system.
 
 Contract:
   POST /transcribe
   raw audio body -> {"text": "...", "segments": [...], ...}
+  POST /speech-intent
+  JSON body -> Flow-style cleaned speech intent
 
-The Node app treats this as a replaceable STT service boundary. This adapter is
-intentionally minimal so it can be swapped for streaming ASR later.
+The Node app treats this as a replaceable AI/ML service boundary. It keeps
+browser orchestration lightweight while Python owns STT, speaker identity, and
+speech-intent transforms.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ import argparse
 import json
 import os
 import math
+import re
 import subprocess
 import tempfile
 import time
@@ -35,6 +39,14 @@ ASSISTANT_EMBEDDING: Any | None = None
 ASSISTANT_SAMPLES = 0
 SPEAKER_PROFILES: dict[str, dict[str, Any]] = {}
 SPEAKER_PROFILES_LOADED = False
+
+DEFAULT_SPEECH_FLOW_CONFIG = {
+    "cleanupLevel": "high",
+    "writingStyle": "tutor",
+    "languageHint": "auto",
+    "dictionary": [],
+    "snippets": [],
+}
 
 
 def _profile_store_path() -> Path:
@@ -149,6 +161,221 @@ def _json(handler: BaseHTTPRequestHandler, status: int, payload: dict[str, Any])
     handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
     handler.wfile.write(body)
+
+
+def _read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
+    length = int(handler.headers.get("content-length", "0") or "0")
+    if length <= 0:
+        return {}
+    raw = handler.rfile.read(length).decode("utf-8")
+    return json.loads(raw) if raw else {}
+
+
+def _normalize_key(value: Any) -> str:
+    lowered = str(value or "").lower()
+    cleaned = re.sub(r"[^\w\s]", " ", lowered, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _normalize_speech_flow_config(raw: dict[str, Any] | None) -> dict[str, Any]:
+    raw = raw or {}
+    dictionary: list[dict[str, Any]] = []
+    for entry in raw.get("dictionary", []):
+        if isinstance(entry, str):
+            term = entry.strip()
+            if term:
+                dictionary.append({"term": term})
+            continue
+        if isinstance(entry, dict):
+            term = str(entry.get("term") or entry.get("word") or entry.get("to") or entry.get("correction") or "").strip()
+            from_text = str(entry.get("from") or entry.get("misspelling") or entry.get("heard") or "").strip()
+            to_text = str(entry.get("to") or entry.get("correction") or entry.get("term") or entry.get("word") or "").strip()
+            if term or (from_text and to_text):
+                dictionary.append(
+                    {
+                        "term": term,
+                        "from": from_text,
+                        "to": to_text,
+                        "starred": bool(entry.get("starred")),
+                    }
+                )
+
+    snippets: list[dict[str, str]] = []
+    for entry in raw.get("snippets", []):
+        if not isinstance(entry, dict):
+            continue
+        trigger = str(entry.get("trigger") or entry.get("name") or "").strip()
+        text = str(entry.get("text") or entry.get("expansion") or "").strip()
+        if trigger and text:
+            snippets.append({"trigger": trigger, "text": text})
+
+    return {
+        **DEFAULT_SPEECH_FLOW_CONFIG,
+        "cleanupLevel": str(raw.get("cleanupLevel") or DEFAULT_SPEECH_FLOW_CONFIG["cleanupLevel"]),
+        "writingStyle": str(raw.get("writingStyle") or DEFAULT_SPEECH_FLOW_CONFIG["writingStyle"]),
+        "languageHint": str(raw.get("languageHint") or DEFAULT_SPEECH_FLOW_CONFIG["languageHint"]),
+        "dictionary": dictionary[:200],
+        "snippets": snippets[:100],
+    }
+
+
+def _replace_whole_word(text: str, from_text: str, to_text: str) -> str:
+    if not from_text or not to_text:
+        return text
+    return re.sub(rf"(?<![\w]){re.escape(from_text)}(?![\w])", to_text, text, flags=re.IGNORECASE | re.UNICODE)
+
+
+def _apply_dictionary(text: str, dictionary: list[dict[str, Any]]) -> tuple[str, list[dict[str, str]]]:
+    applied: list[dict[str, str]] = []
+    next_text = text
+    replacements = sorted(
+        [entry for entry in dictionary if entry.get("from") and entry.get("to")],
+        key=lambda entry: (bool(entry.get("starred")), len(str(entry.get("from")))),
+        reverse=True,
+    )
+    for entry in replacements:
+        before = next_text
+        next_text = _replace_whole_word(next_text, str(entry["from"]), str(entry["to"]))
+        if next_text != before:
+            applied.append({"from": str(entry["from"]), "to": str(entry["to"])})
+    return next_text, applied
+
+
+def _apply_snippets(text: str, snippets: list[dict[str, str]]) -> tuple[str, list[dict[str, str]]]:
+    applied: list[dict[str, str]] = []
+    next_text = text
+    sorted_snippets = sorted(snippets, key=lambda entry: len(entry["trigger"]), reverse=True)
+    normalized_text = _normalize_key(re.sub(r"[.!?]+$", "", next_text))
+
+    for snippet in sorted_snippets:
+        if normalized_text == _normalize_key(snippet["trigger"]):
+            return snippet["text"], [{"trigger": snippet["trigger"]}]
+
+    for snippet in sorted_snippets:
+        before = next_text
+        next_text = _replace_whole_word(next_text, snippet["trigger"], snippet["text"])
+        if next_text != before:
+            applied.append({"trigger": snippet["trigger"]})
+    return next_text, applied
+
+
+def _apply_punctuation_commands(text: str) -> str:
+    replacements = [
+        (r"\bnew paragraph\b", "\n\n"),
+        (r"\b(new line|line break|next line)\b", "\n"),
+        (r"\bquestion mark\b", "?"),
+        (r"\b(exclamation point|exclamation mark)\b", "!"),
+        (r"\b(period|full stop)\b", "."),
+        (r"\bcomma\b", ","),
+        (r"\bsemicolon\b", ";"),
+        (r"\bcolon\b", ":"),
+        (r"\bellipsis\b", "..."),
+        (r"\b(open parenthesis|open paren)\b", "("),
+        (r"\b(close parenthesis|close paren)\b", ")"),
+        (r"\bplus sign\b", "+"),
+        (r"\bequals sign\b", "="),
+        (r"\b(at sign|at symbol)\b", "@"),
+        (r"\b(percent sign|percentage symbol)\b", "%"),
+    ]
+    next_text = text
+    for pattern, replacement in replacements:
+        next_text = re.sub(pattern, replacement, next_text, flags=re.IGNORECASE)
+    next_text = re.sub(r"\s+([,.!?;:%])", r"\1", next_text)
+    next_text = re.sub(r"([(\n])\s+", r"\1", next_text)
+    next_text = re.sub(r"\s+([)])", r"\1", next_text)
+    return re.sub(r"[ \t]{2,}", " ", next_text).strip()
+
+
+def _apply_backtrack(text: str) -> str:
+    number_words = "zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty"
+    next_text = re.sub(
+        rf"\b(\d+|{number_words})\s+(actually|no wait|wait no|sorry|i mean|make that|change that to)\s+(\d+|{number_words})\b",
+        r"\3",
+        text,
+        flags=re.IGNORECASE,
+    )
+    next_text = re.sub(
+        r"\b(actually|no wait|wait no|sorry|i mean|rather|make that|change that to)\b[:,]?\s*",
+        "",
+        next_text,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"\s{2,}", " ", next_text).strip()
+
+
+def _apply_filler_cleanup(text: str, cleanup_level: str) -> str:
+    if cleanup_level == "none":
+        return text
+    next_text = re.sub(r"\b(um+|uh+|erm+|ah+|hmm+)\b[,\s]*", "", text, flags=re.IGNORECASE)
+    next_text = re.sub(r"\b(you know|kind of|sort of)\b[,\s]*", "", next_text, flags=re.IGNORECASE)
+    if cleanup_level == "high":
+        next_text = re.sub(
+            r"\b(like)\b(?=\s+(so|i|we|can|could|what|why|how|the|this|that|first|second|third)\b)[,\s]*",
+            "",
+            next_text,
+            flags=re.IGNORECASE,
+        )
+        next_text = re.sub(
+            r"\b(okay|ok|so)\b[,\s]*(?=(first|second|third|can|could|i|we|what|why|how)\b)",
+            "",
+            next_text,
+            flags=re.IGNORECASE,
+        )
+    return re.sub(r"\s{2,}", " ", next_text).strip()
+
+
+def _format_spoken_lists(text: str, writing_style: str) -> str:
+    marker_pattern = re.compile(
+        r"\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|1|2|3|4|5|6|7|8|9|10)[.)]?\s+",
+        flags=re.IGNORECASE,
+    )
+    matches = list(marker_pattern.finditer(text))
+    if len(matches) < 2:
+        return text
+
+    items: list[str] = []
+    for index, match in enumerate(matches):
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        item = text[start:end].strip().strip(",;:. -")
+        if item:
+            items.append(item)
+
+    prefix = text[: matches[0].start()].strip().strip(",;:. -")
+    if len(items) < 2:
+        return text
+    if writing_style == "numbered":
+        formatted_items = [f"{index + 1}. {item}" for index, item in enumerate(items)]
+    else:
+        formatted_items = [f"- {item}" for item in items]
+    return "\n".join([part for part in [prefix, "\n".join(formatted_items)] if part])
+
+
+def _apply_writing_style(text: str, writing_style: str) -> str:
+    next_text = text.strip()
+    if writing_style == "casual":
+        next_text = re.sub(r"\.$", "", next_text)
+    if writing_style in {"bullets", "numbered"}:
+        next_text = _format_spoken_lists(next_text, writing_style)
+    return next_text
+
+
+def _apply_speech_flow_transforms(raw_text: str, flow_config: dict[str, Any]) -> dict[str, Any]:
+    dictionary_text, dictionary_applied = _apply_dictionary(raw_text, flow_config["dictionary"])
+    snippets_text, snippets_applied = _apply_snippets(dictionary_text, flow_config["snippets"])
+    cleaned = _apply_filler_cleanup(snippets_text, flow_config["cleanupLevel"])
+    backtracked = _apply_backtrack(cleaned)
+    punctuated = _apply_punctuation_commands(backtracked)
+    styled = _apply_writing_style(punctuated, flow_config["writingStyle"])
+    return {
+        "text": styled,
+        "dictionary_applied": dictionary_applied,
+        "snippets_applied": snippets_applied,
+        "cleanup_level": flow_config["cleanupLevel"],
+        "writing_style": flow_config["writingStyle"],
+        "language_hint": flow_config["languageHint"],
+        "runtime": "python",
+    }
 
 
 def _load_model() -> Any:
@@ -366,6 +593,20 @@ class WhisperXHandler(BaseHTTPRequestHandler):
                         "persistent_profiles": len(SPEAKER_PROFILES),
                         "store": str(_profile_store_path()),
                     },
+                    "speech_flow": {
+                        "ok": True,
+                        "runtime": "python",
+                        "features": [
+                            "backtrack",
+                            "filler_cleanup",
+                            "smart_punctuation",
+                            "spoken_lists",
+                            "dictionary_replacements",
+                            "voice_snippets",
+                            "writing_style",
+                            "language_hint",
+                        ],
+                    },
                     "error": error,
                 },
             )
@@ -429,6 +670,10 @@ class WhisperXHandler(BaseHTTPRequestHandler):
             self._handle_speaker_request()
             return
 
+        if self.path.rstrip("/") == "/speech-intent":
+            self._handle_speech_intent_request()
+            return
+
         if self.path.rstrip("/") != "/transcribe":
             _json(self, HTTPStatus.NOT_FOUND, {"error": "Not found"})
             return
@@ -488,6 +733,41 @@ class WhisperXHandler(BaseHTTPRequestHandler):
         finally:
             if temp_path:
                 temp_path.unlink(missing_ok=True)
+
+    def _handle_speech_intent_request(self) -> None:
+        started_at = time.perf_counter()
+        try:
+            body = _read_json(self)
+            raw_text = str(body.get("rawText") or body.get("text") or "").strip()
+            if not raw_text:
+                _json(self, HTTPStatus.BAD_REQUEST, {"error": "Missing rawText"})
+                return
+
+            flow_config = _normalize_speech_flow_config(body.get("flow") or body.get("flowConfig") or {})
+            result = _apply_speech_flow_transforms(raw_text, flow_config)
+            _json(
+                self,
+                HTTPStatus.OK,
+                {
+                    "text": result["text"] or raw_text,
+                    "rawText": raw_text,
+                    "mode": "format",
+                    "provider": "python-flow-format",
+                    "changed": (result["text"] or raw_text) != raw_text,
+                    "duration_ms": round((time.perf_counter() - started_at) * 1000),
+                    "flow": result,
+                },
+            )
+        except Exception as exc:
+            _json(
+                self,
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {
+                    "error": "Python speech intent formatting failed.",
+                    "detail": str(exc),
+                    "trace": traceback.format_exc(limit=4),
+                },
+            )
 
     def _handle_speaker_request(self) -> None:
         global USER_EMBEDDING, USER_SAMPLES, ASSISTANT_EMBEDDING, ASSISTANT_SAMPLES

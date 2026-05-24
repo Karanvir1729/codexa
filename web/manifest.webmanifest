@@ -1,0 +1,20 @@
+{
+  "name": "Tutor-Tron Voice",
+  "short_name": "Tutor-Tron",
+  "description": "Interruptible voice tutor with Flow-style speech intent and Python AI/ML runtime.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f7fb",
+  "theme_color": "#2563eb",
+  "orientation": "any",
+  "categories": ["education", "productivity"],
+  "icons": [
+    {
+      "src": "/icons/tutor-tron-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -28,6 +28,8 @@ const WHISPERX_URL = process.env.WHISPERX_URL ?? "http://127.0.0.1:9001";
 const WHISPERX_TIMEOUT_MS = Number(process.env.WHISPERX_TIMEOUT_MS ?? 120000);
 const SPEAKER_GUARD_URL = process.env.SPEAKER_GUARD_URL ?? WHISPERX_URL;
 const SPEAKER_GUARD_TIMEOUT_MS = Number(process.env.SPEAKER_GUARD_TIMEOUT_MS ?? 45000);
+const SPEECH_FLOW_URL = process.env.SPEECH_FLOW_URL ?? WHISPERX_URL;
+const SPEECH_FLOW_TIMEOUT_MS = Number(process.env.SPEECH_FLOW_TIMEOUT_MS ?? 2500);
 const SPEECH_INTENT_MODE = process.env.SPEECH_INTENT_MODE ?? "rewrite";
 const SPEECH_INTENT_TIMEOUT_MS = Number(process.env.SPEECH_INTENT_TIMEOUT_MS ?? 60000);
 const SPEECH_INTENT_NUM_PREDICT = Number(process.env.SPEECH_INTENT_NUM_PREDICT ?? 220);
@@ -37,6 +39,7 @@ const contentTypes = {
   ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
   ".svg": "image/svg+xml; charset=utf-8",
   ".png": "image/png",
 };
@@ -53,14 +56,25 @@ If interrupted, adapt to the user's latest words immediately.`;
 
 const SPEECH_INTENT_PROMPT =
   process.env.SPEECH_INTENT_PROMPT ??
-  `You are a speech-to-intent cleanup layer for a realtime voice tutor.
+  `You are a Wispr Flow-style speech-to-intent layer for a realtime voice tutor.
 Convert raw speech recognition text into the user's intended message.
-Preserve all important details, examples, constraints, names, numbers, and questions.
+Preserve all important details, examples, constraints, names, numbers, code terms, and questions.
+Apply the provided dictionary, snippets, writing style, language hint, and cleanup level.
+Handle Backtrack/self-correction language such as "actually", "no wait", "I mean", "make that", and "change that to".
 Remove filler words, repeated starts, obvious ASR noise, and disfluencies.
+Format spoken numbered lists, punctuation commands, line breaks, and paragraphs when useful.
 If the user said several separate things, output a short bullet list.
 If the user is asking one thing, output one concise paragraph.
 Do not answer the question. Do not add facts. Do not mention that you cleaned the transcript.
 Return only the cleaned user message.`;
+
+const DEFAULT_SPEECH_FLOW_CONFIG = {
+  cleanupLevel: "high",
+  writingStyle: "tutor",
+  languageHint: "auto",
+  dictionary: [],
+  snippets: [],
+};
 
 function json(res, status, data) {
   res.writeHead(status, {
@@ -297,6 +311,226 @@ function cleanIntentOutput(value) {
     .trim();
 }
 
+function normalizeKey(value) {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeSpeechFlowConfig(raw = {}) {
+  const dictionary = Array.isArray(raw.dictionary)
+    ? raw.dictionary
+        .map((entry) => {
+          if (typeof entry === "string") return { term: entry.trim() };
+          return {
+            term: String(entry.term ?? entry.word ?? entry.to ?? entry.correction ?? "").trim(),
+            from: String(entry.from ?? entry.misspelling ?? entry.heard ?? "").trim(),
+            to: String(entry.to ?? entry.correction ?? entry.term ?? entry.word ?? "").trim(),
+            starred: Boolean(entry.starred),
+          };
+        })
+        .filter((entry) => entry.term || (entry.from && entry.to))
+        .slice(0, 200)
+    : [];
+
+  const snippets = Array.isArray(raw.snippets)
+    ? raw.snippets
+        .map((entry) => {
+          if (typeof entry === "string") return null;
+          return {
+            trigger: String(entry.trigger ?? entry.name ?? "").trim(),
+            text: String(entry.text ?? entry.expansion ?? "").trim(),
+          };
+        })
+        .filter((entry) => entry?.trigger && entry?.text)
+        .slice(0, 100)
+    : [];
+
+  return {
+    ...DEFAULT_SPEECH_FLOW_CONFIG,
+    cleanupLevel: String(raw.cleanupLevel ?? DEFAULT_SPEECH_FLOW_CONFIG.cleanupLevel),
+    writingStyle: String(raw.writingStyle ?? DEFAULT_SPEECH_FLOW_CONFIG.writingStyle),
+    languageHint: String(raw.languageHint ?? DEFAULT_SPEECH_FLOW_CONFIG.languageHint),
+    dictionary,
+    snippets,
+  };
+}
+
+function replaceWholeWord(text, from, to) {
+  if (!from || !to) return text;
+  const pattern = new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRegex(from)}(?![\\p{L}\\p{N}_])`, "giu");
+  return text.replace(pattern, to);
+}
+
+function applyDictionary(text, dictionary = []) {
+  const applied = [];
+  let next = text;
+  const replacements = dictionary
+    .filter((entry) => entry.from && entry.to)
+    .sort((a, b) => Number(b.starred) - Number(a.starred) || b.from.length - a.from.length);
+
+  for (const entry of replacements) {
+    const before = next;
+    next = replaceWholeWord(next, entry.from, entry.to);
+    if (next !== before) applied.push({ from: entry.from, to: entry.to });
+  }
+
+  return { text: next, applied };
+}
+
+function applySnippets(text, snippets = []) {
+  const applied = [];
+  let next = text;
+  const sorted = snippets.slice().sort((a, b) => b.trigger.length - a.trigger.length);
+  const normalizedText = normalizeKey(next.replace(/[.!?]+$/g, ""));
+
+  for (const snippet of sorted) {
+    const triggerKey = normalizeKey(snippet.trigger);
+    if (!triggerKey) continue;
+    if (normalizedText === triggerKey) {
+      applied.push({ trigger: snippet.trigger });
+      return { text: snippet.text, applied };
+    }
+  }
+
+  for (const snippet of sorted) {
+    const before = next;
+    next = replaceWholeWord(next, snippet.trigger, snippet.text);
+    if (next !== before) applied.push({ trigger: snippet.trigger });
+  }
+
+  return { text: next, applied };
+}
+
+function applyPunctuationCommands(text) {
+  const replacements = [
+    [/\bnew paragraph\b/gi, "\n\n"],
+    [/\b(new line|line break|next line)\b/gi, "\n"],
+    [/\b(question mark)\b/gi, "?"],
+    [/\b(exclamation point|exclamation mark)\b/gi, "!"],
+    [/\b(period|full stop)\b/gi, "."],
+    [/\bcomma\b/gi, ","],
+    [/\bsemicolon\b/gi, ";"],
+    [/\bcolon\b/gi, ":"],
+    [/\b(ellipsis)\b/gi, "..."],
+    [/\b(open parenthesis|open paren)\b/gi, "("],
+    [/\b(close parenthesis|close paren)\b/gi, ")"],
+    [/\b(plus sign)\b/gi, "+"],
+    [/\b(equals sign)\b/gi, "="],
+    [/\b(at sign|at symbol)\b/gi, "@"],
+    [/\b(percent sign|percentage symbol)\b/gi, "%"],
+  ];
+
+  let next = text;
+  for (const [pattern, replacement] of replacements) {
+    next = next.replace(pattern, replacement);
+  }
+  return next
+    .replace(/\s+([,.!?;:%])/g, "$1")
+    .replace(/([(\n])\s+/g, "$1")
+    .replace(/\s+([)])/g, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+function applyBacktrack(text) {
+  const numberWords = "zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty";
+  let next = text;
+  next = next.replace(
+    new RegExp(`\\b(\\d+|${numberWords})\\s+(actually|no wait|wait no|sorry|i mean|make that|change that to)\\s+(\\d+|${numberWords})\\b`, "giu"),
+    "$3",
+  );
+  next = next.replace(/\b(actually|no wait|wait no|sorry|i mean|rather|make that|change that to)\b[:,]?\s*/giu, "");
+  return next.replace(/\s{2,}/g, " ").trim();
+}
+
+function applyFillerCleanup(text, cleanupLevel = "high") {
+  if (cleanupLevel === "none") return text;
+  let next = text;
+  next = next.replace(/\b(um+|uh+|erm+|ah+|hmm+)\b[,\s]*/giu, "");
+  next = next.replace(/\b(you know|kind of|sort of)\b[,\s]*/giu, "");
+  if (cleanupLevel === "high") {
+    next = next.replace(/\b(like)\b(?=\s+(so|i|we|can|could|what|why|how|the|this|that|first|second|third)\b)[,\s]*/giu, "");
+    next = next.replace(/\b(okay|ok|so)\b[,\s]*(?=(first|second|third|can|could|i|we|what|why|how)\b)/giu, "");
+  }
+  return next.replace(/\s{2,}/g, " ").trim();
+}
+
+function formatSpokenLists(text, writingStyle = "tutor") {
+  const markerPattern = /\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|1|2|3|4|5|6|7|8|9|10)[.)]?\s+/giu;
+  const matches = [...text.matchAll(markerPattern)];
+  if (matches.length < 2) return text;
+
+  const items = [];
+  for (let i = 0; i < matches.length; i += 1) {
+    const start = matches[i].index + matches[i][0].length;
+    const end = i + 1 < matches.length ? matches[i + 1].index : text.length;
+    const item = text.slice(start, end).trim().replace(/^[,;:. -]+|[,;:. -]+$/g, "");
+    if (item) items.push(item);
+  }
+
+  const prefix = text.slice(0, matches[0].index).trim().replace(/[,;:. -]+$/g, "");
+  if (items.length < 2) return text;
+  const bulletChar = writingStyle === "numbered" ? null : "-";
+  const formattedItems = items.map((item, index) => (bulletChar ? `${bulletChar} ${item}` : `${index + 1}. ${item}`));
+  return [prefix, formattedItems.join("\n")].filter(Boolean).join("\n");
+}
+
+function applyWritingStyle(text, writingStyle = "tutor") {
+  let next = text.trim();
+  if (writingStyle === "casual") {
+    next = next.replace(/\.$/, "");
+  }
+  if (writingStyle === "bullets" || writingStyle === "numbered") {
+    next = formatSpokenLists(next, writingStyle);
+  }
+  return next;
+}
+
+function applySpeechFlowTransforms(rawText, flowConfig) {
+  const dictionary = applyDictionary(rawText, flowConfig.dictionary);
+  const snippets = applySnippets(dictionary.text, flowConfig.snippets);
+  const cleaned = applyFillerCleanup(snippets.text, flowConfig.cleanupLevel);
+  const backtracked = applyBacktrack(cleaned);
+  const punctuated = applyPunctuationCommands(backtracked);
+  const styled = applyWritingStyle(punctuated, flowConfig.writingStyle);
+
+  return {
+    text: styled,
+    dictionary_applied: dictionary.applied,
+    snippets_applied: snippets.applied,
+    cleanup_level: flowConfig.cleanupLevel,
+    writing_style: flowConfig.writingStyle,
+    language_hint: flowConfig.languageHint,
+  };
+}
+
+async function runPythonSpeechFlow(rawText, flowConfig) {
+  if (!SPEECH_FLOW_URL) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), SPEECH_FLOW_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${SPEECH_FLOW_URL.replace(/\/$/, "")}/speech-intent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rawText, flow: flowConfig }),
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function completeWithConfiguredProvider(messages, systemPrompt, options = {}) {
   if (PROVIDER === "ollama" || PROVIDER === "auto") {
     try {
@@ -317,11 +551,20 @@ async function handleSpeechIntent(req, res) {
   const body = await readJson(req);
   const rawText = String(body.rawText ?? body.text ?? "").trim();
   const mode = String(body.mode ?? SPEECH_INTENT_MODE);
+  const flowConfig = normalizeSpeechFlowConfig(body.flow ?? body.flowConfig ?? {});
 
   if (!rawText) {
     json(res, 400, { error: "Missing rawText" });
     return;
   }
+
+  const pythonFlow = await runPythonSpeechFlow(rawText, flowConfig);
+  const deterministic = pythonFlow?.flow
+    ? {
+        ...pythonFlow.flow,
+        text: String(pythonFlow.text || pythonFlow.flow.text || rawText),
+      }
+    : applySpeechFlowTransforms(rawText, flowConfig);
 
   if (mode === "raw" || rawText.length < 12) {
     json(res, 200, {
@@ -330,6 +573,19 @@ async function handleSpeechIntent(req, res) {
       mode: "raw",
       provider: "none",
       changed: false,
+      flow: deterministic,
+    });
+    return;
+  }
+
+  if (mode === "format") {
+    json(res, 200, {
+      text: deterministic.text || rawText,
+      rawText,
+      mode: "format",
+      provider: pythonFlow?.provider || "node-flow-format",
+      changed: (deterministic.text || rawText) !== rawText,
+      flow: deterministic,
     });
     return;
   }
@@ -340,7 +596,26 @@ async function handleSpeechIntent(req, res) {
       [
         {
           role: "user",
-          content: `Raw speech recognition text:\n${rawText}\n\nClean this into the user message that should be sent to the tutor.`,
+          content: [
+            `Raw speech recognition text:\n${rawText}`,
+            `Local Flow-style first pass:\n${deterministic.text}`,
+            `Flow config:\n${JSON.stringify({
+              cleanupLevel: flowConfig.cleanupLevel,
+              writingStyle: flowConfig.writingStyle,
+              languageHint: flowConfig.languageHint,
+              dictionary: flowConfig.dictionary.map((entry) => ({
+                term: entry.term,
+                from: entry.from,
+                to: entry.to,
+                starred: entry.starred,
+              })),
+              snippets: flowConfig.snippets.map((entry) => ({
+                trigger: entry.trigger,
+                text: entry.text,
+              })),
+            })}`,
+            "Clean this into the user message that should be sent to the tutor.",
+          ].join("\n\n"),
         },
       ],
       SPEECH_INTENT_PROMPT,
@@ -351,7 +626,10 @@ async function handleSpeechIntent(req, res) {
         temperature: 0.1,
       },
     );
-    const text = cleanIntentOutput(result.text) || rawText;
+    const modelText = cleanIntentOutput(result.text) || deterministic.text || rawText;
+    const afterDictionary = applyDictionary(modelText, flowConfig.dictionary);
+    const afterSnippets = applySnippets(afterDictionary.text, flowConfig.snippets);
+    const text = applyWritingStyle(applyPunctuationCommands(afterSnippets.text), flowConfig.writingStyle) || deterministic.text || rawText;
     json(res, 200, {
       text,
       rawText,
@@ -360,16 +638,22 @@ async function handleSpeechIntent(req, res) {
       model: result.model,
       changed: text !== rawText,
       duration_ms: Math.round(performance.now() - startedAt),
+      flow: {
+        ...deterministic,
+        dictionary_applied: [...deterministic.dictionary_applied, ...afterDictionary.applied],
+        snippets_applied: [...deterministic.snippets_applied, ...afterSnippets.applied],
+      },
     });
   } catch (error) {
     json(res, 200, {
-      text: rawText,
+      text: deterministic.text || rawText,
       rawText,
-      mode: "fallback_raw",
-      provider: PROVIDER,
-      changed: false,
+      mode: "fallback_flow_format",
+      provider: pythonFlow?.provider || "node-flow-format",
+      changed: (deterministic.text || rawText) !== rawText,
       error: error instanceof Error ? error.message : String(error),
       duration_ms: Math.round(performance.now() - startedAt),
+      flow: deterministic,
     });
   }
 }
@@ -692,7 +976,10 @@ async function handleProviderHealth(req, res) {
     speechIntent: {
       mode: SPEECH_INTENT_MODE,
       provider: PROVIDER,
-      purpose: "Whisper Flow-style rewrite from raw transcript to cleaned user intent.",
+      pythonFlowUrl: SPEECH_FLOW_URL || null,
+      pythonFlowTimeoutMs: SPEECH_FLOW_TIMEOUT_MS,
+      deterministicRuntime: "python preferred, node fallback",
+      purpose: "Wispr Flow-style rewrite from raw transcript to cleaned user intent.",
     },
     speakerGuard: {
       configured: Boolean(SPEAKER_GUARD_URL),
@@ -833,6 +1120,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(port, () => {
-  console.log(`Tutor-Tron voice prototype running at http://localhost:${port}`);
+  console.log(`Tutor-Tron voice system running at http://localhost:${port}`);
   console.log(`Provider mode: ${PROVIDER}`);
 });

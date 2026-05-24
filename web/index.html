@@ -3,18 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tutor-Tron Voice Prototype</title>
+    <title>Tutor-Tron Voice System</title>
+    <meta name="theme-color" content="#2563eb" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Tutor-Tron" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icons/tutor-tron-icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icons/tutor-tron-icon.svg" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <main class="shell">
       <section class="topbar">
         <div>
-          <p class="eyebrow">Tutor-Tron Voice Prototype</p>
+          <p class="eyebrow">Tutor-Tron Voice System</p>
           <h1>Interruptible browser voice tutor</h1>
           <p class="goal">
-            Goal: build the first ChatGPT-style voice loop: continuous listening, barge-in interruption,
-            streaming LLM response, and spoken tutor output.
+            Goal: a full end-to-end voice agent with continuous listening, barge-in interruption,
+            Flow-style speech cleanup, streaming LLM response, and spoken tutor output.
           </p>
         </div>
         <div class="status-card">
@@ -51,8 +58,52 @@
 
           <label class="toggle">
             <input id="speechIntentToggle" type="checkbox" checked />
-            <span>Clean speech into intent</span>
+            <span>Flow-style speech intent</span>
           </label>
+
+          <div class="flow-config">
+            <p class="label">Speech input layer</p>
+            <label class="field">
+              <span>Cleanup level</span>
+              <select id="flowCleanupLevel">
+                <option value="light">Light</option>
+                <option value="medium">Medium</option>
+                <option value="high" selected>High</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Writing style</span>
+              <select id="flowWritingStyle">
+                <option value="tutor" selected>Tutor prompt</option>
+                <option value="bullets">Bullets</option>
+                <option value="numbered">Numbered list</option>
+                <option value="formal">Formal</option>
+                <option value="casual">Casual</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Language hint</span>
+              <select id="flowLanguage">
+                <option value="auto" selected>Auto detect</option>
+                <option value="en-US">English US</option>
+                <option value="en-GB">English UK</option>
+                <option value="hinglish">Hinglish</option>
+                <option value="es">Spanish</option>
+                <option value="fr">French</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Dictionary / corrections</span>
+              <textarea id="flowDictionary" rows="4" spellcheck="false">derivitives => derivatives
+hyper geometric => hypergeometric
+coin three point five => Qwen 3.5</textarea>
+            </label>
+            <label class="field">
+              <span>Voice snippets</span>
+              <textarea id="flowSnippets" rows="3" spellcheck="false">quiz me => Ask me one short diagnostic question after the explanation.
+office hours => My office hours are Monday at 3 PM.</textarea>
+            </label>
+          </div>
 
           <label class="field">
             <span>Voice speed</span>
@@ -97,7 +148,7 @@
 
           <div class="note">
             WhisperX is the primary turn transcript path. Browser STT is only a fallback/debug mode.
-            Turns wait through natural pauses, then a Whisper Flow-style rewrite converts raw speech into the clearest user request.
+            Turns wait through natural pauses, then a Wispr Flow-style layer converts raw speech into the clearest user request.
           </div>
         </aside>
 
@@ -132,7 +183,7 @@
             <li>Interrupt cancels stream + speech</li>
           </ol>
 
-          <p class="label">Current prototype limits</p>
+          <p class="label">Current system limits</p>
           <ul class="path">
             <li>WhisperX is turn-based, not streaming ASR.</li>
             <li>Fish Speech is preferred TTS when configured.</li>
@@ -145,6 +196,14 @@
             <li>Delays tutor speech while the mic is active.</li>
             <li>Raises pause thresholds after early interruptions.</li>
           </ul>
+
+          <p class="label">Flow-style speech layer</p>
+          <p id="flowState" class="live-text muted">
+            Backtrack, filler cleanup, smart punctuation, lists, snippets, dictionary corrections, and style shaping are active.
+          </p>
+
+          <p class="label">Recent speech history</p>
+          <div id="flowHistory" class="history-list"></div>
 
           <p class="label">Parallel speaker identity</p>
           <p id="speakerGuardState" class="live-text muted">
