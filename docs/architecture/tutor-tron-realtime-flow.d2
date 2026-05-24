@@ -1,0 +1,67 @@
+direction: right
+
+title: "Tutor-Tron Real-Time Voice Path"
+
+student: "Student" {
+  mic: "Mic"
+  speaker: "Speaker"
+}
+
+edge: "Voice Edge" {
+  direction: down
+  webrtc: "Daily / WebRTC"
+  gateway: "Voice Gateway\n2 replicas"
+  pipecat: "Pipecat\nframes, VAD, barge-in"
+}
+
+speech: "Speech Providers" {
+  direction: down
+  asr: "Streaming ASR\nNVIDIA Riva"
+  asr_fallback: "ASR Fallback"
+  tts: "Streaming TTS"
+  tts_fallback: "TTS Fallback\ncached phrases"
+}
+
+tutor: "Tutor Decision Path" {
+  direction: down
+  orchestrator: "Tutor Orchestrator"
+  context: "Live Context\nrecent turns + student state"
+  rag: "Fast RAG\ncurriculum + strategy memory"
+  scip: "SCIP\nchoose next teaching action"
+  llm: "Reasoning Model"
+}
+
+cache: "Latency Caches" {
+  direction: down
+  l1: "L1 In-Process\nsession hot state"
+  redis: "Redis Cache\nRAG + embeddings + strategy scores"
+  tts_cache: "TTS Cache\ncommon fragments"
+}
+
+observe: "Voice Observability" {
+  qa: "Voice QA Metrics\nlatency, WER, dead air, interruption"
+  traces: "OpenTelemetry\nturn-level traces"
+}
+
+student.mic -> edge.webrtc: "speech"
+edge.webrtc -> edge.gateway: "media"
+edge.gateway -> edge.pipecat: "audio frames"
+edge.pipecat -> speech.asr: "stream"
+speech.asr -> tutor.orchestrator: "partial + final text"
+speech.asr -> speech.asr_fallback: "low confidence"
+
+tutor.orchestrator -> tutor.context: "state update"
+tutor.context -> cache.l1: "hot read/write"
+cache.l1 -> cache.redis: "miss"
+tutor.context -> tutor.rag: "grounding needed"
+tutor.rag -> cache.redis: "cached lookup"
+tutor.context -> tutor.scip: "alerts + constraints"
+tutor.scip -> tutor.llm: "selected move"
+tutor.llm -> speech.tts: "response text"
+speech.tts -> cache.tts_cache: "phrase hit"
+speech.tts -> speech.tts_fallback: "timeout"
+speech.tts -> edge.pipecat: "speech frames"
+edge.pipecat -> student.speaker: "spoken answer"
+
+edge.pipecat -> observe.qa: "timing + interruption"
+tutor.orchestrator -> observe.traces: "trace spans"

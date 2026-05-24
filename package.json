@@ -1,0 +1,14 @@
+{
+  "name": "tutor-tron-voice",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server.mjs",
+    "start": "node server.mjs",
+    "bench": "node scripts/bench-voice-loop.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

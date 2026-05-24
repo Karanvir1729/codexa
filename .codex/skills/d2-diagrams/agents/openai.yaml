@@ -1,0 +1,4 @@
+interface:
+  display_name: "D2 Diagrams"
+  short_description: "Create, validate, and render D2 diagrams."
+  default_prompt: "Create a readable D2 architecture diagram and render it to SVG."

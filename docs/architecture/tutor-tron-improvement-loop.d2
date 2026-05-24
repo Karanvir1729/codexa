@@ -1,0 +1,73 @@
+direction: right
+
+title: "Tutor-Tron Async Evaluation + Auto-Improvement Loop"
+
+source: "Failure Sources" {
+  direction: down
+  real_call: "Real Student Session\nconfusion or wrong answer"
+  eval_run: "Simulated Student Run\nfailed scenario"
+  ops_alert: "Ops Alert\nlatency or tool failure"
+}
+
+trace: "Raw Evidence Store" {
+  direction: down
+  transcript: "Transcript"
+  audio: "Audio + timing"
+  tools: "Tool calls"
+  state: "Student state"
+}
+
+cekura: "Cekura-Style Eval Harness" {
+  direction: down
+  scenario: "Scenario Generator\nmulti-turn test"
+  profile: "Structured Test Profile\npersona + variables"
+  conditional: "Conditional Actions\nadaptive assertions"
+  replay: "Production Replay\nknown failure fixture"
+  redteam: "Red Team + Accent Suite"
+}
+
+judge: "Metric Fitting" {
+  direction: down
+  human: "Human Feedback\naccept / reject / correct"
+  optimizer: "Metric Optimizer\nfit trigger + verdict"
+  metric_code: "Versioned Metric Code"
+}
+
+improve: "Teaching Improvement" {
+  direction: down
+  pitfall: "Pitfall Rule"
+  strategy: "Strategy Candidate"
+  ab: "A/B Replay\nold vs new"
+  promote: "Promote Winner"
+}
+
+memory: "Shared Learning Memory" {
+  direction: down
+  strategy_registry: "Strategy Registry"
+  cohort_memory: "Cohort RAG\nsimilar-student patterns"
+  eval_bank: "Eval RAG\nregression cases"
+}
+
+source.real_call -> trace.transcript: "session artifact"
+source.real_call -> trace.audio: "voice artifact"
+source.eval_run -> trace.state: "student model"
+source.ops_alert -> trace.tools: "failure context"
+
+trace.transcript -> cekura.scenario: "generate regression"
+trace.state -> cekura.profile: "fixture data"
+trace.audio -> cekura.replay: "replay call"
+cekura.scenario -> cekura.conditional: "expected outcomes"
+cekura.redteam -> cekura.replay: "stress variants"
+
+cekura.replay -> judge.optimizer: "run traces"
+judge.human -> judge.optimizer: "calibration labels"
+judge.optimizer -> judge.metric_code: "updated evaluator"
+judge.metric_code -> improve.ab: "score candidates"
+
+improve.pitfall -> improve.strategy: "repair proposal"
+improve.strategy -> improve.ab: "test strategy"
+improve.ab -> improve.promote: "passes gate"
+improve.promote -> memory.strategy_registry: "versioned rule"
+improve.promote -> memory.cohort_memory: "update cohort ranking"
+cekura.scenario -> memory.eval_bank: "new eval case"
+memory.strategy_registry -> source.real_call: "better next response"

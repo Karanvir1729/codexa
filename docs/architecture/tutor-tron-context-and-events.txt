@@ -1,0 +1,58 @@
+Tutor-Tron Core Context and Events
+
+Canonical context object:
+
+{
+  "session_id": "...",
+  "student_id": "...",
+  "topic": "probability",
+  "subskill": "binomial_vs_hypergeometric",
+  "student_state": {
+    "mastery": 0.42,
+    "confusion": 0.81,
+    "confidence": 0.36,
+    "active_pitfalls": ["two_outcomes_always_means_binomial"]
+  },
+  "current_strategy": {
+    "id": "replacement_check_first",
+    "version": "v3",
+    "reason": "similar students succeeded"
+  },
+  "retrieved_context": {
+    "curriculum_context": [],
+    "known_pitfalls": [],
+    "student_memory": [],
+    "similar_student_evidence": [],
+    "strategy_candidates": [],
+    "eval_regressions": []
+  },
+  "alerts": [],
+  "last_action": {},
+  "eval_hooks": []
+}
+
+Typed event contracts:
+
+- transcript.final
+- student_state.updated
+- pitfall.detected
+- cohort.strategy.recommendation
+- candidate_actions.generated
+- scip.action_selected
+- strategy.failed
+- strategy.succeeded
+- eval_case.generated
+- strategy.promoted
+- strategy.rollback
+- latency.spike
+
+Each event should include:
+
+- event_id
+- session_id
+- student_id
+- timestamp
+- source_service
+- schema_version
+- idempotency_key
+- payload

@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tutor-Tron Voice Prototype</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <div>
+          <p class="eyebrow">Tutor-Tron Voice Prototype</p>
+          <h1>Interruptible browser voice tutor</h1>
+          <p class="goal">
+            Goal: build the first ChatGPT-style voice loop: continuous listening, barge-in interruption,
+            streaming LLM response, and spoken tutor output.
+          </p>
+        </div>
+        <div class="status-card">
+          <span id="agentState" class="state-pill">Idle</span>
+          <span id="providerState" class="provider">provider: checking</span>
+        </div>
+      </section>
+
+      <section class="stage">
+        <aside class="controls panel">
+          <button id="startBtn" class="primary">Start voice session</button>
+          <button id="stopBtn" class="secondary" disabled>Stop</button>
+          <button id="interruptBtn" class="danger" disabled>Interrupt tutor</button>
+
+          <div class="meter-wrap">
+            <div class="meter-head">
+              <span>Mic level</span>
+              <span id="vadState">waiting</span>
+            </div>
+            <div class="meter">
+              <div id="micMeter" class="meter-fill"></div>
+            </div>
+          </div>
+
+          <label class="toggle">
+            <input id="autoSpeakToggle" type="checkbox" checked />
+            <span>Speak AI responses</span>
+          </label>
+
+          <label class="toggle">
+            <input id="bargeInToggle" type="checkbox" checked />
+            <span>Cancel on interruption</span>
+          </label>
+
+          <label class="field">
+            <span>Voice speed</span>
+            <input id="rateSlider" type="range" min="0.85" max="1.25" step="0.05" value="1.02" />
+          </label>
+
+          <label class="field">
+            <span>TTS provider</span>
+            <select id="ttsProvider">
+              <option value="browser">Browser Web Speech</option>
+              <option value="fish">Fish Speech / Fish Audio</option>
+              <option value="openai">OpenAI-compatible TTS</option>
+            </select>
+          </label>
+
+          <div class="note">
+            Chrome works best for live browser STT. To interrupt verbally while the tutor speaks,
+            start with “wait”, “stop”, or “hold on”; this avoids treating speaker echo as your turn.
+          </div>
+        </aside>
+
+        <section class="conversation panel">
+          <div class="live">
+            <div>
+              <p class="label">Live transcript</p>
+              <p id="liveTranscript" class="live-text">Start a session and ask a tutoring question.</p>
+            </div>
+            <div>
+              <p class="label">Turn state</p>
+              <p id="turnState" class="live-text muted">No active turn.</p>
+            </div>
+          </div>
+
+          <div id="messages" class="messages"></div>
+
+          <form id="textForm" class="text-form">
+            <input id="textInput" autocomplete="off" placeholder="Typed fallback: ask Tutor-Tron something..." />
+            <button type="submit">Send</button>
+          </form>
+        </section>
+
+        <aside class="debug panel">
+          <p class="label">Realtime path</p>
+          <ol class="path">
+            <li>Browser mic / local VAD</li>
+            <li>Speech recognition transcript</li>
+            <li>Streaming LLM request</li>
+            <li>Sentence TTS queue</li>
+            <li>Interrupt cancels stream + speech</li>
+          </ol>
+
+          <p class="label">Current prototype limits</p>
+          <ul class="path">
+            <li>Browser STT is the live v1 path.</li>
+            <li>Fish Speech is preferred TTS when configured.</li>
+            <li>WhisperX is better for accurate turn transcripts/evals than low-latency streaming.</li>
+          </ul>
+
+          <p class="label">Latency metrics</p>
+          <dl id="latencyLog" class="metrics">
+            <div><dt>Turn</dt><dd>not measured</dd></div>
+            <div><dt>First token</dt><dd>--</dd></div>
+            <div><dt>First speech</dt><dd>--</dd></div>
+            <div><dt>TTS provider</dt><dd>browser</dd></div>
+          </dl>
+        </aside>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

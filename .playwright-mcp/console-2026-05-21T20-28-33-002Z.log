@@ -1,0 +1,12 @@
+[  199520ms] [WARNING] AbortError: Failed to execute 'showOpenFilePicker' on 'Window': Intercepted by Page.setInterceptFileChooserDialog().
+    at Object.T7e [as default] (https://excalidraw.com/assets/index-crMYjEVg.js:151:309307)
+    at E7e (https://excalidraw.com/assets/index-crMYjEVg.js:151:308716)
+    at async yS (https://excalidraw.com/assets/index-crMYjEVg.js:151:314345)
+    at async O7e (https://excalidraw.com/assets/index-crMYjEVg.js:151:315298)
+    at async Object.perform (https://excalidraw.com/assets/index-crMYjEVg.js:157:5367) @ https://excalidraw.com/assets/index-crMYjEVg.js:66
+[  216079ms] [WARNING] AbortError: Failed to execute 'showOpenFilePicker' on 'Window': Intercepted by Page.setInterceptFileChooserDialog().
+    at Object.T7e [as default] (https://excalidraw.com/assets/index-crMYjEVg.js:151:309307)
+    at E7e (https://excalidraw.com/assets/index-crMYjEVg.js:151:308716)
+    at async yS (https://excalidraw.com/assets/index-crMYjEVg.js:151:314345)
+    at async O7e (https://excalidraw.com/assets/index-crMYjEVg.js:151:315298)
+    at async Object.perform (https://excalidraw.com/assets/index-crMYjEVg.js:157:5367) @ https://excalidraw.com/assets/index-crMYjEVg.js:66

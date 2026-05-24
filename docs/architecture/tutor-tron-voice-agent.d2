@@ -1,0 +1,47 @@
+direction: down
+
+title: "Tutor-Tron Voice Agent - Hackathon Architecture"
+
+critical: "1. Critical Path - Keep Voice Latency Low" {
+  direction: right
+
+  student: "Student A\ngets confused"
+  voice: "Pipecat Voice Runtime\nDaily/WebRTC\nASR Router\nTTS Router\ninterruptions"
+  tutor: "Tutor Orchestrator\nlive context\nL1 cache\ncompact RAG\nresponse planner"
+  response: "Spoken Response\nshort\ngrounded\ninterruptible"
+
+  student -> voice: "audio"
+  voice -> tutor: "transcript.final"
+  tutor -> response: "response text"
+  response -> student: "speech"
+}
+
+decision: "2. Near-Real-Time Decision Loop - Shared Events, Not Agent Chains" {
+  direction: right
+
+  bus: "Shared Context Bus\nRedis Streams\ntyped events\ncanonical context\nidempotency"
+  agents: "Agent Mesh\nstudent_state.updated\npitfall.detected\ncohort recommendation\ncandidate actions"
+  rag: "RAG / Memory\none retrieval agent\nQdrant collections:\ncurriculum, pitfalls,\nstudent, cohort,\nevals, strategies"
+  scip: "SCIP Optimizer\nchoose strategy\ngenerate eval?\nupdate cohort?\n<150ms or heuristic fallback"
+
+  bus -> agents: "transcripts + alerts"
+  agents -> rag: "evidence request"
+  rag -> agents: "context bundle"
+  agents -> scip: "candidate_actions.generated"
+  scip -> bus: "scip.action_selected"
+}
+
+improve: "3. Async Improvement Loop - Prove the System Learns" {
+  direction: right
+
+  failure: "Teaching Failure\nstrategy.failed\npitfall detected"
+  evals: "Eval Harness\nScenario Bank\nSimulated Student Runner\nFailure-to-Eval Generator\nRegression Scorecard"
+  auto: "Auto-Improvement\npropose rule\npending -> tested -> promoted\nA/B old vs new\nrollback on regression"
+  next_student: "Student B\nsimilar pitfall\ngets better strategy"
+
+  failure -> evals: "generate eval"
+  evals -> auto: "scores + traces"
+  auto -> next_student: "promoted rule"
+}
+
+proof: "Dashboard Proof for Judges\nlive transcript -> detected pitfall -> SCIP action -> generated eval -> before/after score -> strategy promoted"

@@ -1,0 +1,264 @@
+direction: right
+
+title: "Tutor-Tron Voice Agent - Production Architecture"
+
+student_surface: "Student Surface" {
+  direction: down
+  student: "Student\nvoice + browser"
+  dashboard_view: "Operator Dashboard\nlive system view"
+}
+
+voice_edge: "Real-Time Voice Edge" {
+  direction: down
+  daily: "Daily / WebRTC\ntransport"
+  voice_gateway: "Voice Gateway\n2 replicas"
+  pipecat: "Pipecat Runtime\nVAD + interruption"
+  asr_primary: "Streaming ASR\nNVIDIA Riva"
+  asr_fallback: "ASR Fallback\ncloud / local"
+  tts_primary: "Streaming TTS\nprimary"
+  tts_fallback: "TTS Fallback\ncached / backup"
+  turn_silence_monitor: "Turn + Silence Monitor\nVAD / dead air / barge-in"
+
+  daily -> voice_gateway: "media session"
+  voice_gateway -> pipecat: "audio frames"
+  pipecat -> asr_primary: "stream"
+  asr_primary -> pipecat: "partial + final text"
+  asr_primary -> asr_fallback: "fallback on low confidence"
+  pipecat -> turn_silence_monitor: "timing signals"
+  turn_silence_monitor -> pipecat: "endpoint + interruption events"
+  tts_primary -> pipecat: "speech frames"
+  tts_primary -> tts_fallback: "fallback on timeout"
+}
+
+realtime_core: "Real-Time Tutor Core" {
+  direction: down
+  orchestrator: "Tutor Orchestrator\n3 replicas"
+  compact_context: "Live Context Builder\nsession window"
+  response_planner: "Response Planner\nask / hint / explain / test"
+  reasoning_llm: "Reasoning Model\nopen weights or routed LLM"
+  heuristic_policy: "Heuristic Policy\nSCIP timeout fallback"
+
+  orchestrator -> compact_context: "build prompt state"
+  compact_context -> response_planner: "student state + evidence"
+  response_planner -> reasoning_llm: "grounded tutor move"
+  response_planner -> heuristic_policy: "fallback decision"
+}
+
+context_backbone: "Shared Context + Event Backbone" {
+  direction: down
+  redis_streams: "Redis Streams\nappend-only event bus"
+  alert_bus: "Alert Stream\nprioritized alerts"
+  command_bus: "Command Stream\nactions + strategy updates"
+  dlq: "Dead Letter Queue\nfailed jobs"
+
+  redis_streams -> alert_bus: "pitfalls + failures"
+  command_bus -> redis_streams: "state mutations"
+  redis_streams -> dlq: "poison events"
+}
+
+agent_mesh: "Multi-Agent Coordination Mesh" {
+  direction: down
+  student_state_agent: "Student State Agent\nmastery + confusion"
+  pitfall_agent: "Pitfall Detection Agent\nmisconception tags"
+  similar_student_agent: "Similar-Student Agent\ncohort matching"
+  strategy_agent: "Teaching Strategy Agent\ncandidate moves"
+  rag_agent: "RAG Retrieval Agent\ncurriculum + memory"
+  eval_agent: "Evaluation Agent\nstudent simulations"
+  improvement_agent: "Auto-Improvement Agent\nrules + strategy updates"
+
+  student_state_agent -> pitfall_agent: "state evidence"
+  pitfall_agent -> similar_student_agent: "pitfall id"
+  similar_student_agent -> strategy_agent: "worked / failed strategies"
+  strategy_agent -> rag_agent: "retrieval needs"
+  eval_agent -> improvement_agent: "eval scores"
+}
+
+cekura_quality: "Cekura-Informed Evaluation Harness" {
+  direction: down
+  scenario_bank: "Scenario Bank\nworkflow / KB / edge cases"
+  test_profiles: "Structured Test Profiles\npersona + dynamic variables"
+  simulated_students: "Simulated Students\nmulti-turn voice runs"
+  conditional_actions: "Conditional Actions\nadaptive assertions"
+  redteam_suite: "Multi-Turn Red Teaming\njailbreak + safety"
+  multilingual_suite: "Accent + Language Suite\n30+ language coverage"
+  prod_replay: "Production Call Replay\nknown failures as fixtures"
+  load_test: "Voice Load Tests\nconcurrent calls"
+  snapshot_tests: "Voice Snapshot Tests\nSSML + TTS drift"
+  metric_optimizer: "Metric Optimizer\nfit trigger + verdict"
+  human_feedback: "Human Feedback Queue\naccept / reject / correct"
+
+  scenario_bank -> test_profiles: "scenario fixtures"
+  test_profiles -> simulated_students: "caller state"
+  conditional_actions -> simulated_students: "branch on agent response"
+  redteam_suite -> simulated_students: "adversarial personas"
+  multilingual_suite -> simulated_students: "accent + language variants"
+  prod_replay -> simulated_students: "replay real failures"
+  human_feedback -> metric_optimizer: "annotated verdicts"
+  metric_optimizer -> scenario_bank: "updated judges"
+}
+
+optimization_layer: "SCIP Feedback Optimization Loop" {
+  direction: down
+  scip_optimizer: "SCIP Optimizer\n50-150 ms budget"
+  objective_model: "Objective Model\nlearning gain - latency - load"
+  selected_action: "Selected Action\nstrategy + next tutor move"
+  timeout_guard: "Timeout Guard\nuse heuristic policy"
+
+  objective_model -> scip_optimizer: "constraints + scores"
+  scip_optimizer -> selected_action: "optimized decision"
+  scip_optimizer -> timeout_guard: "timeout"
+}
+
+rag_memory: "RAG + Memory Stores" {
+  direction: down
+  qdrant: "Qdrant Vector DB\nhybrid retrieval"
+  kb_sync_worker: "Async KB Sync Worker\nconnector ingestion"
+  ssrf_guard: "Connector Guard\nSSRF + allowlist checks"
+  curriculum_rag: "Curriculum RAG\nformulas + examples"
+  misconception_rag: "Misconception RAG\npitfalls + repairs"
+  student_memory_rag: "Student Memory RAG\npersonal history"
+  cohort_rag: "Cohort RAG\nsimilar students"
+  eval_rag: "Eval RAG\nregression cases"
+  strategy_rag: "Strategy RAG\nsuccess rates"
+
+  kb_sync_worker -> ssrf_guard: "fetch content"
+  ssrf_guard -> qdrant: "safe indexed chunks"
+  qdrant -> curriculum_rag: "topic chunks"
+  qdrant -> misconception_rag: "pitfall matches"
+  qdrant -> student_memory_rag: "student context"
+  qdrant -> cohort_rag: "cluster evidence"
+  qdrant -> eval_rag: "past evals"
+  qdrant -> strategy_rag: "strategy candidates"
+}
+
+cache_layer: "Caching Layer" {
+  direction: down
+  l1_cache: "L1 In-Process Cache\nsession state"
+  redis_cache: "Redis Cache\nRAG + strategy + rate limits"
+  tts_cache: "TTS Phrase Cache\ncommon tutor fragments"
+  eval_cache: "Eval Result Cache\ncase x strategy version"
+
+  l1_cache -> redis_cache: "miss"
+  redis_cache -> tts_cache: "phrase metadata"
+  redis_cache -> eval_cache: "eval lookup"
+}
+
+data_layer: "Durable Data Layer" {
+  direction: down
+  postgres: "Postgres\nsessions + strategy versions"
+  object_store: "S3 / MinIO\ntranscripts + audio + eval artifacts"
+  trace_store: "Raw Failure Trace Store\ntranscript + audio + tools"
+  profile_store: "Test Profile Store\nscenario fixtures + mock tools"
+  metric_registry: "Metric Code Registry\ntrigger + verdict versions"
+  strategy_registry: "Strategy Registry\nrules + promotion state"
+  snapshots: "Backups / Snapshots\nrecovery points"
+
+  postgres -> strategy_registry: "versioned strategy records"
+  object_store -> trace_store: "session artifacts"
+  postgres -> profile_store: "test fixtures"
+  postgres -> metric_registry: "metric versions"
+  object_store -> snapshots: "durable backup"
+  postgres -> snapshots: "database backup"
+}
+
+observability: "Observability + Reliability" {
+  direction: down
+  otel: "OpenTelemetry\ntraces"
+  prometheus: "Prometheus\nmetrics"
+  grafana: "Grafana\nlatency + quality"
+  conversation_metrics: "Voice QA Metrics\nlatency / WER / VAD / interruptions / CSAT"
+  health: "Health Checks\nSwarm restarts"
+  alerts: "Ops Alerts\nlatency + eval regressions"
+
+  otel -> prometheus: "trace metrics"
+  conversation_metrics -> prometheus: "quality signals"
+  prometheus -> grafana: "dashboards"
+  prometheus -> alerts: "threshold alerts"
+  health -> alerts: "service failure"
+}
+
+deployment: "Deployment + Redundancy" {
+  direction: down
+  swarm: "Docker Swarm\nmulti-service stack"
+  traefik: "Traefik\nrouting + TLS"
+  replicated_services: "Replicated Stateless Services\norchestrator / agents / APIs"
+  stateful_services: "Stateful Services\nRedis / Postgres / Qdrant"
+  release_gate: "CI/CD Release Gate\nscenario + replay pass/fail"
+  canary_ab: "Canary + A/B Runner\nmodel / prompt / strategy"
+  rolling_updates: "Rolling Updates\nhealth-gated deploys"
+
+  swarm -> traefik: "ingress"
+  swarm -> replicated_services: "desired replicas"
+  swarm -> stateful_services: "persistent volumes"
+  release_gate -> canary_ab: "approved candidate"
+  canary_ab -> rolling_updates: "promote winner"
+  swarm -> rolling_updates: "safe rollout"
+}
+
+student_surface.student -> voice_edge.daily: "student speech"
+voice_edge.pipecat -> realtime_core.orchestrator: "final transcript"
+realtime_core.orchestrator -> cache_layer.l1_cache: "hot context read/write"
+realtime_core.orchestrator -> context_backbone.redis_streams: "transcript + session events"
+realtime_core.compact_context -> agent_mesh.rag_agent: "fast retrieval request"
+agent_mesh.rag_agent -> cache_layer.redis_cache: "cached RAG lookup"
+cache_layer.redis_cache -> rag_memory.qdrant: "cache miss"
+rag_memory.strategy_rag -> optimization_layer.objective_model: "strategy scores"
+context_backbone.alert_bus -> optimization_layer.scip_optimizer: "active alerts"
+agent_mesh.strategy_agent -> optimization_layer.objective_model: "candidate actions"
+optimization_layer.selected_action -> realtime_core.response_planner: "next tutor move"
+optimization_layer.timeout_guard -> realtime_core.heuristic_policy: "use fallback policy"
+realtime_core.reasoning_llm -> voice_edge.tts_primary: "response text"
+voice_edge.pipecat -> student_surface.student: "spoken answer"
+
+context_backbone.redis_streams -> agent_mesh.student_state_agent: "consume transcript events"
+context_backbone.redis_streams -> agent_mesh.pitfall_agent: "consume answers"
+context_backbone.redis_streams -> agent_mesh.eval_agent: "failed session events"
+context_backbone.redis_streams -> cekura_quality.prod_replay: "failed real calls"
+agent_mesh.pitfall_agent -> context_backbone.alert_bus: "pitfall_detected"
+agent_mesh.student_state_agent -> context_backbone.command_bus: "student_state.updated"
+agent_mesh.similar_student_agent -> rag_memory.cohort_rag: "similarity search"
+agent_mesh.strategy_agent -> rag_memory.strategy_rag: "rank strategies"
+cekura_quality.scenario_bank -> agent_mesh.eval_agent: "multi-turn eval suite"
+cekura_quality.simulated_students -> voice_edge.daily: "synthetic voice calls"
+cekura_quality.conditional_actions -> agent_mesh.eval_agent: "adaptive checks"
+cekura_quality.redteam_suite -> context_backbone.alert_bus: "safety failures"
+cekura_quality.metric_optimizer -> agent_mesh.improvement_agent: "metric updates"
+cekura_quality.load_test -> voice_edge.voice_gateway: "stress concurrent calls"
+cekura_quality.snapshot_tests -> deployment.release_gate: "voice drift gate"
+cekura_quality.prod_replay -> deployment.canary_ab: "compare versions"
+
+agent_mesh.eval_agent -> data_layer.object_store: "eval artifacts"
+agent_mesh.improvement_agent -> data_layer.strategy_registry: "new rule pending eval"
+agent_mesh.eval_agent -> data_layer.metric_registry: "judge results"
+data_layer.strategy_registry -> context_backbone.command_bus: "promote winning strategy"
+data_layer.trace_store -> cekura_quality.metric_optimizer: "raw failure traces"
+data_layer.profile_store -> cekura_quality.test_profiles: "mock tool state"
+data_layer.metric_registry -> cekura_quality.metric_optimizer: "editable metric code"
+data_layer.postgres -> student_surface.dashboard_view: "analytics API data"
+context_backbone.alert_bus -> student_surface.dashboard_view: "live alerts"
+
+realtime_core.orchestrator -> observability.otel: "trace spans"
+voice_edge.pipecat -> observability.prometheus: "latency + interruption metrics"
+voice_edge.turn_silence_monitor -> observability.conversation_metrics: "dead air + barge-in"
+agent_mesh.eval_agent -> observability.prometheus: "eval pass/fail"
+observability.alerts -> context_backbone.alert_bus: "system alert"
+
+deployment.traefik -> voice_edge.voice_gateway: "route voice traffic"
+deployment.traefik -> student_surface.dashboard_view: "route dashboard"
+deployment.replicated_services -> realtime_core.orchestrator: "replicas"
+deployment.replicated_services -> agent_mesh.student_state_agent: "agent replicas"
+deployment.stateful_services -> context_backbone.redis_streams: "persistent event log"
+deployment.stateful_services -> rag_memory.qdrant: "vector storage"
+deployment.stateful_services -> data_layer.postgres: "relational storage"
+deployment.release_gate -> deployment.rolling_updates: "block regressions"
+
+cache_layer.tts_cache -> voice_edge.tts_primary: "common phrase hit"
+cache_layer.redis_cache -> realtime_core.compact_context: "warm session state"
+cache_layer.eval_cache -> agent_mesh.eval_agent: "skip duplicate eval"
+rag_memory.misconception_rag -> agent_mesh.pitfall_agent: "known pitfall repairs"
+rag_memory.curriculum_rag -> realtime_core.reasoning_llm: "grounding context"
+
+voice_edge.asr_fallback -> realtime_core.orchestrator: "fallback transcript"
+voice_edge.tts_fallback -> voice_edge.pipecat: "fallback speech"
+rag_memory.qdrant -> cache_layer.redis_cache: "write-through result"
+context_backbone.dlq -> observability.alerts: "job failure"
