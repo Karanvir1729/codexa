@@ -37,6 +37,22 @@ export type PromptState = {
   compiled: string;
 };
 
+export type EvalSchedulerState = {
+  running: boolean;
+  suite_path: string;
+  interval_seconds: number;
+  apply_feedback: boolean;
+  run_count: number;
+  last_run: null | {
+    run_id: string;
+    status: string;
+    aggregate_score: number;
+    ran_at: string;
+  };
+  last_error: string | null;
+  next_run_at: string | null;
+};
+
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -96,6 +112,24 @@ export function runEval() {
   }>("/api/evals/run", {
     method: "POST",
     body: JSON.stringify({ suite_path: "backend/evals/customer_intake.yml", apply_feedback: true })
+  });
+}
+
+export function getEvalScheduler() {
+  return request<EvalSchedulerState>("/api/evals/scheduler");
+}
+
+export function startEvalScheduler(intervalSeconds = 300) {
+  return request<EvalSchedulerState>("/api/evals/scheduler/start", {
+    method: "POST",
+    body: JSON.stringify({ interval_seconds: intervalSeconds })
+  });
+}
+
+export function stopEvalScheduler() {
+  return request<EvalSchedulerState>("/api/evals/scheduler/stop", {
+    method: "POST",
+    body: JSON.stringify({})
   });
 }
 

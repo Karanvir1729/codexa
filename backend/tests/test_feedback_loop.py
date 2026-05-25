@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from app.agent import AgentService
 from app.config import Settings
 from app.cost_guard import CostGuard, CostLimitExceeded
 from app.db import Database
+from app.eval_scheduler import EvalScheduler
 from app.evaluator import EvalRunner
 from app.feedback import FeedbackLearner, PromptRepository
 from app.llm import MockLLMClient
@@ -89,3 +91,46 @@ async def test_eval_suite_records_results(runtime):
     assert result["status"] == "passed"
     assert result["aggregate_score"] == 1.0
     assert repo.active().version == result["prompt_version"]
+
+
+@pytest.mark.asyncio
+async def test_eval_scheduler_run_once_records_status(runtime):
+    _settings, db, _repo, learner, agent = runtime
+    runner = EvalRunner(db, agent, learner)
+    scheduler = EvalScheduler(
+        runner,
+        lambda path: Path(path),
+        "evals/customer_intake.yml",
+        interval_seconds=60,
+        apply_feedback=True,
+    )
+
+    result = await scheduler.run_once()
+
+    assert result["status"] == "passed"
+    status = scheduler.status()
+    assert status["run_count"] == 1
+    assert status["last_run"]["status"] == "passed"
+
+
+@pytest.mark.asyncio
+async def test_eval_scheduler_keeps_running_after_eval_error():
+    class BrokenRunner:
+        async def run_suite(self, *_args, **_kwargs):
+            raise RuntimeError("temporary eval failure")
+
+    scheduler = EvalScheduler(
+        BrokenRunner(),  # type: ignore[arg-type]
+        lambda path: Path(path),
+        "missing.yml",
+        interval_seconds=60,
+        apply_feedback=True,
+    )
+
+    await scheduler.start()
+    await asyncio.sleep(0)
+    status = scheduler.status()
+    await scheduler.stop()
+
+    assert status["running"] is True
+    assert status["last_error"] == "RuntimeError: temporary eval failure"

@@ -3,6 +3,7 @@ import {
   Activity,
   Brain,
   CheckCircle2,
+  Clock3,
   Gauge,
   MessageSquare,
   PhoneCall,
@@ -12,12 +13,15 @@ import {
   Server,
   ShieldCheck,
   Sparkles,
+  Square,
   ThumbsDown,
   ThumbsUp
 } from "lucide-react";
 import {
   ChatResponse,
   CostGuard,
+  EvalSchedulerState,
+  getEvalScheduler,
   getCost,
   getHealth,
   getPrompt,
@@ -26,7 +30,9 @@ import {
   PromptState,
   runEval,
   sendFeedback,
-  sendMessage
+  sendMessage,
+  startEvalScheduler,
+  stopEvalScheduler
 } from "./api";
 
 type Turn = {
@@ -61,20 +67,23 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [evalBusy, setEvalBusy] = useState(false);
   const [evalRuns, setEvalRuns] = useState<EvalRun[]>([]);
+  const [scheduler, setScheduler] = useState<EvalSchedulerState | null>(null);
   const [cost, setCost] = useState<CostGuard | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   async function refresh() {
-    const [healthState, promptState, runs, costState] = await Promise.all([
+    const [healthState, promptState, runs, costState, schedulerState] = await Promise.all([
       getHealth(),
       getPrompt(),
       listEvalRuns(),
-      getCost()
+      getCost(),
+      getEvalScheduler()
     ]);
     setHealth(healthState);
     setPrompt(promptState);
     setEvalRuns(runs.runs);
     setCost(costState.cost_guard);
+    setScheduler(schedulerState);
   }
 
   useEffect(() => {
@@ -144,6 +153,21 @@ export function App() {
     }
   }
 
+  async function toggleScheduler() {
+    setEvalBusy(true);
+    setNotice(null);
+    try {
+      const state = scheduler?.running ? await stopEvalScheduler() : await startEvalScheduler(300);
+      setScheduler(state);
+      setNotice(state.running ? "Scheduled evals started" : "Scheduled evals stopped");
+      await refresh();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Scheduler update failed");
+    } finally {
+      setEvalBusy(false);
+    }
+  }
+
   return (
     <main className="shell">
       <aside className="rail">
@@ -177,6 +201,12 @@ export function App() {
           <Metric icon={<PhoneCall />} label="Voice" value={health?.voice_runtime ?? "loading"} detail="Twilio + Pipecat path" />
           <Metric icon={<Gauge />} label="Latency" value={`${latency} ms`} detail="latest assistant turn" />
           <Metric icon={<CheckCircle2 />} label="Prompt" value={`v${prompt?.version ?? "-"}`} detail={health?.reasoning_mode ?? ""} />
+          <Metric
+            icon={<Clock3 />}
+            label="Auto eval"
+            value={scheduler?.running ? "running" : "manual"}
+            detail={scheduler?.running ? `every ${scheduler.interval_seconds}s` : "scheduler idle"}
+          />
           <Metric
             icon={<ShieldCheck />}
             label="Local cap"
@@ -239,8 +269,16 @@ export function App() {
                   <h2>Evaluation</h2>
                   <p>Regression suite</p>
                 </div>
-                <button onClick={executeEval} disabled={evalBusy}><Play size={16} /> Run</button>
+                <div className="buttonRow">
+                  <button onClick={executeEval} disabled={evalBusy}><Play size={16} /> Run</button>
+                  <button onClick={toggleScheduler} disabled={evalBusy}>
+                    {scheduler?.running ? <Square size={16} /> : <Clock3 size={16} />}
+                    {scheduler?.running ? "Stop" : "Auto"}
+                  </button>
+                </div>
               </div>
+              {scheduler?.last_error && <p className="errorText">{scheduler.last_error}</p>}
+              {scheduler?.next_run_at && <p className="muted padX">Next run {new Date(scheduler.next_run_at).toLocaleTimeString()}</p>}
               <div className="evalList">
                 {evalRuns.slice(0, 5).map((run) => (
                   <div className="evalRow" key={run.id}>

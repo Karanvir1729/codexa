@@ -109,6 +109,7 @@ button:disabled {
 .topbar,
 .sectionHead,
 .feedbackActions,
+.buttonRow,
 .composer,
 .statusGrid,
 .metric,
@@ -242,6 +243,10 @@ h2 {
   gap: 8px;
 }
 
+.buttonRow {
+  gap: 8px;
+}
+
 .feedbackActions button {
   background: #172027;
   color: #dbe7ee;
@@ -348,6 +353,17 @@ h2 {
   display: grid;
   gap: 1px;
   background: #1d242b;
+}
+
+.padX {
+  padding: 0 18px 14px;
+}
+
+.errorText {
+  margin: 0;
+  padding: 0 18px 14px;
+  color: #ffb0b0;
+  font-size: 13px;
 }
 
 .evalRow {

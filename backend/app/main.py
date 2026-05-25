@@ -14,6 +14,7 @@ from .agent import AgentService
 from .config import Settings, get_settings
 from .cost_guard import CostGuard, CostLimitExceeded
 from .db import Database, dumps, loads
+from .eval_scheduler import EvalScheduler
 from .evaluator import EvalRunner
 from .feedback import FeedbackLearner, PromptRepository
 from .llm import make_llm_client
@@ -47,14 +48,14 @@ class ExportTrainingDataRequest(BaseModel):
     output_path: str = "data/sft/voice-agent-feedback.jsonl"
 
 
+class EvalSchedulerRequest(BaseModel):
+    interval_seconds: int = Field(default=300, ge=10)
+    suite_path: str | None = None
+    apply_feedback: bool | None = None
+
+
 settings: Settings = get_settings()
 REPO_ROOT = Path(__file__).resolve().parents[2]
-db = Database(settings.database_path)
-prompt_repo = PromptRepository(db)
-learner = FeedbackLearner(db, prompt_repo, settings.latency_target_ms)
-cost_guard = CostGuard(db, settings)
-agent = AgentService(db, settings, make_llm_client(settings), cost_guard)
-eval_runner = EvalRunner(db, agent, learner)
 
 
 def resolve_repo_path(path: str) -> Path:
@@ -69,6 +70,21 @@ def resolve_repo_path(path: str) -> Path:
         return backend_candidate
     return repo_candidate
 
+
+db = Database(settings.database_path)
+prompt_repo = PromptRepository(db)
+learner = FeedbackLearner(db, prompt_repo, settings.latency_target_ms)
+cost_guard = CostGuard(db, settings)
+agent = AgentService(db, settings, make_llm_client(settings), cost_guard)
+eval_runner = EvalRunner(db, agent, learner)
+eval_scheduler = EvalScheduler(
+    eval_runner,
+    resolve_repo_path,
+    settings.eval_suite_path,
+    settings.eval_schedule_seconds,
+    settings.eval_schedule_apply_feedback,
+)
+
 app = FastAPI(title="Voice Agent Feedback Engine", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
@@ -77,6 +93,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def start_background_services() -> None:
+    if settings.eval_schedule_seconds > 0:
+        await eval_scheduler.start(settings.eval_schedule_seconds)
+
+
+@app.on_event("shutdown")
+async def stop_background_services() -> None:
+    await eval_scheduler.stop()
 
 
 @app.exception_handler(CostLimitExceeded)
@@ -201,6 +228,28 @@ async def prompt() -> dict[str, Any]:
 async def run_eval(payload: EvalRunRequest) -> dict[str, Any]:
     path = resolve_repo_path(payload.suite_path)
     return await eval_runner.run_suite(path, apply_feedback=payload.apply_feedback)
+
+
+@app.get("/api/evals/scheduler")
+async def eval_scheduler_status() -> dict[str, Any]:
+    return eval_scheduler.status()
+
+
+@app.post("/api/evals/scheduler/start")
+async def eval_scheduler_start(payload: EvalSchedulerRequest) -> dict[str, Any]:
+    try:
+        return await eval_scheduler.start(
+            interval_seconds=payload.interval_seconds,
+            suite_path=payload.suite_path,
+            apply_feedback=payload.apply_feedback,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/evals/scheduler/stop")
+async def eval_scheduler_stop() -> dict[str, Any]:
+    return await eval_scheduler.stop()
 
 
 @app.get("/api/evals/runs")

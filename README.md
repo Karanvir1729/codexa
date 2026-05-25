@@ -17,6 +17,7 @@ Built locally:
   - stores transcripts, feedback, latency records, eval runs, and prompt versions in SQLite.
   - converts low-rated user feedback into prompt improvements.
   - runs YAML eval suites and feeds failures back into the active agent prompt.
+  - optionally reruns eval suites on a schedule so regressions feed back without a manual click.
   - exports positive examples and passing evals for later SFT/LoRA data prep.
 - Twilio integration:
   - `/twilio/inbound` TwiML route.
@@ -26,6 +27,7 @@ Built locally:
   - session simulator.
   - feedback submission.
   - eval run controls.
+  - scheduled eval start/stop controls.
   - prompt version visibility.
   - Pipecat Voice UI Kit dependency included for voice UI expansion.
 - AWS deployment assets:
@@ -120,6 +122,15 @@ COST_GUARD_RESERVE_USD_PER_CALL=0.01
 ```
 
 Every model call reserves estimated cost before the LLM request starts. If the next request would exceed the local cap, the API returns HTTP `402` and does not call the model provider.
+
+## Docker Compose
+
+```bash
+cp .env.example .env
+docker-compose up --build
+```
+
+The frontend container serves React through nginx on `http://localhost:8080` and proxies `/api`, `/health`, and `/twilio` traffic to the backend service.
 
 ## NVIDIA NIM Mode
 
@@ -221,6 +232,19 @@ pytest
 ```
 
 Or use the operator console's `Run` button. Eval results and live feedback rebuild the active prompt version automatically.
+
+To run the feedback loop continuously, either press `Auto` in the operator console or set:
+
+```bash
+EVAL_SCHEDULE_SECONDS=300
+EVAL_SCHEDULE_APPLY_FEEDBACK=true
+```
+
+The scheduler exposes status at:
+
+```text
+GET /api/evals/scheduler
+```
 
 Export curated positive-feedback and passing-eval examples:
 

@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     cartesia_voice_id: str = "71a7ad14-091c-4e8e-a314-022ece01c121"
 
     latency_target_ms: int = Field(default=1200, ge=100)
+    eval_suite_path: str = "backend/evals/customer_intake.yml"
+    eval_schedule_seconds: int = Field(default=0, ge=0)
+    eval_schedule_apply_feedback: bool = True
 
     @property
     def origins(self) -> list[str]:

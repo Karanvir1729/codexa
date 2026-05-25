@@ -36,6 +36,8 @@ hints, so evaluation data immediately flows back into behavior.
 The local eval runner mirrors Pipecat's recommended workflow: validate prompt and
 conversation logic with text-first simulation before running costly end-to-end audio.
 It is intentionally first-party so the project does not depend on Cekura/Secure credits.
+The same runner can be started as a scheduler with `EVAL_SCHEDULE_SECONDS` or from the
+operator console, so regressions keep flowing into `FeedbackLearner` without manual runs.
 
 ## AWS Deployment
 
