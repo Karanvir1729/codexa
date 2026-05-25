@@ -771,7 +771,7 @@ function useCodexPilot() {
 }
 
 function selectedControlProvider() {
-  return dom.codexControlProvider?.value || "codex";
+  return dom.codexControlProvider?.value || "openclaw";
 }
 
 function selectedControlProviderLabel() {
@@ -779,6 +779,18 @@ function selectedControlProviderLabel() {
   if (value === "openclaw") return "OpenClaw control plane";
   if (value === "auto") return "OpenClaw with Codex fallback";
   return "direct Codex CLI";
+}
+
+function compactWorkspacePath(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const workspaceMarker = "/tmp/codex-workspaces/";
+  const workspaceIndex = text.indexOf(workspaceMarker);
+  if (workspaceIndex >= 0) return `tmp/codex-workspaces/${text.slice(workspaceIndex + workspaceMarker.length)}`;
+  const repoMarker = "/tutor-tron-voice/";
+  const repoIndex = text.indexOf(repoMarker);
+  if (repoIndex >= 0) return text.slice(repoIndex + repoMarker.length);
+  return text;
 }
 
 function setCodexPilotState(text) {
@@ -1729,6 +1741,7 @@ async function readSse(response) {
         dom.providerState.textContent = `provider: ${event.data.provider} / ${event.data.model}`;
         if (event.data.provider === "codex") {
           const details = [
+            event.data.workspace ? `workspace ${compactWorkspacePath(event.data.workspace)}` : null,
             event.data.threadId ? `thread ${event.data.threadId}` : null,
             event.data.sandbox ? `sandbox ${event.data.sandbox}` : null,
             event.data.durationMs ? `${event.data.durationMs} ms` : null,
@@ -1737,6 +1750,7 @@ async function readSse(response) {
         }
         if (event.data.provider === "openclaw") {
           const details = [
+            event.data.workspace ? `workspace ${compactWorkspacePath(event.data.workspace)}` : null,
             event.data.sessionKey ? `session ${event.data.sessionKey}` : null,
             event.data.mode ? `${event.data.mode} mode` : null,
             event.data.runner ? `runner ${event.data.runner}` : null,

@@ -47,7 +47,7 @@ const CODEX_PILOT_SANDBOX = process.env.CODEX_PILOT_SANDBOX ?? "workspace-write"
 const CODEX_PILOT_APPROVAL = process.env.CODEX_PILOT_APPROVAL ?? "never";
 const CODEX_PILOT_TIMEOUT_MS = Number(process.env.CODEX_PILOT_TIMEOUT_MS ?? 300000);
 const CODEX_PILOT_MAX_CONTEXT_MESSAGES = Number(process.env.CODEX_PILOT_MAX_CONTEXT_MESSAGES ?? 8);
-const CODEX_CONTROL_PROVIDER = process.env.CODEX_CONTROL_PROVIDER ?? "codex";
+const CODEX_CONTROL_PROVIDER = process.env.CODEX_CONTROL_PROVIDER ?? "openclaw";
 const CODEX_WORKSPACE_ROOT = path.resolve(process.env.CODEX_WORKSPACE_ROOT ?? path.join(__dirname, "tmp", "codex-workspaces"));
 const OPENCLAW_COMMAND =
   process.env.OPENCLAW_COMMAND ??
@@ -888,9 +888,9 @@ function openClawStatusPayload() {
 }
 
 function normalizeControlProvider(value) {
-  const raw = String(value || CODEX_CONTROL_PROVIDER || "codex").toLowerCase();
+  const raw = String(value || CODEX_CONTROL_PROVIDER || "openclaw").toLowerCase();
   if (["openclaw", "codex", "auto"].includes(raw)) return raw;
-  return "codex";
+  return "openclaw";
 }
 
 function activeControlProvider(input, client) {
@@ -1412,6 +1412,7 @@ async function handleCodexPilot(req, res) {
           durationMs: result.durationMs,
           sessionId: result.parsed?.meta?.agentMeta?.sessionId || null,
           runner: result.parsed?.meta?.executionTrace?.runner || (OPENCLAW_LOCAL ? "local" : "gateway"),
+          workspace: targetWorkspace,
         });
         sse(res, "done", {});
         res.end();

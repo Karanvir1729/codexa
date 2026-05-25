@@ -5,8 +5,10 @@ test("main voice UI exposes installable speech-layer controls", async ({ page })
 
   await expect(page.getByRole("heading", { name: "Coding voice agent" })).toBeVisible();
   await expect(page.locator("#codexPilotToggle")).toBeVisible();
+  await expect(page.locator("#codexPilotToggle")).toBeChecked();
   await expect(page.locator("#codexControlProvider")).toBeVisible();
   await expect(page.locator("#codexControlProvider")).toContainText("OpenClaw controls Codex/system");
+  await expect(page.locator("#codexControlProvider")).toHaveValue("openclaw");
   await expect(page.locator("#flowCleanupLevel")).toBeVisible();
   await expect(page.locator("#flowWritingStyle")).toBeVisible();
   await expect(page.locator("#flowDictionary")).toContainText("Codex");

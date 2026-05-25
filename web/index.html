@@ -57,15 +57,15 @@
           </label>
 
           <label class="toggle">
-            <input id="codexPilotToggle" type="checkbox" />
+            <input id="codexPilotToggle" type="checkbox" checked />
             <span>Codex pilot mode</span>
           </label>
 
           <label class="field">
             <span>Codex control plane</span>
             <select id="codexControlProvider">
-              <option value="codex" selected>Direct Codex CLI</option>
-              <option value="openclaw">OpenClaw controls Codex/system</option>
+              <option value="openclaw" selected>OpenClaw controls Codex/system</option>
+              <option value="codex">Direct Codex CLI</option>
               <option value="auto">Auto: OpenClaw, then Codex fallback</option>
             </select>
           </label>
@@ -242,7 +242,7 @@ ship it => Implement the change, verify it, then summarize files and checks.</te
 
           <p class="label">Codex pilot</p>
           <p id="codexPilotState" class="live-text muted">
-            Off by default. Turn on Codex pilot mode to route voice commands through Codex or OpenClaw for system work.
+            On by default. Voice coding turns route OpenClaw -> Codex; workspace paths appear here while runs execute.
           </p>
 
           <p class="label">Call / chat history</p>

@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const baseUrl = process.env.VOICE_TEST_APP_URL || "http://localhost:3000";
 const workspaceRoot = path.join(repoRoot, "tmp", "codex-workspaces");
+const controlProvider = process.env.CALCULATOR_CONTROL_PROVIDER || "openclaw";
 
 function parseSse(payload) {
   const events = [];
@@ -89,7 +90,7 @@ async function requestCodexBuild(workspace) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      controlProvider: "codex",
+      controlProvider,
       workspaceDir: workspace,
       timeoutMs: Number(process.env.CALCULATOR_CODEX_TIMEOUT_MS || 600000),
       systemPrompt: "You are a concise voice coding pilot.",
@@ -101,7 +102,7 @@ async function requestCodexBuild(workspace) {
         project_mode: "new_project",
         user_id: "test",
         user_name: "Test",
-        control_provider: "codex",
+        control_provider: controlProvider,
         workspace_dir: workspace,
       },
     }),
@@ -182,7 +183,7 @@ async function main() {
   await verifyCalculator(workspace);
 
   const durationMs = Math.round(performance.now() - startedAt);
-  console.log(`PASS Codex calculator build smoke: ${durationMs} ms`);
+  console.log(`PASS ${controlProvider} calculator build smoke: ${durationMs} ms`);
   console.log(`workspace=${workspace}`);
   console.log(`response_excerpt=${result.responseText.slice(0, 400).replace(/\s+/g, " ") || "(empty)"}`);
   console.log(

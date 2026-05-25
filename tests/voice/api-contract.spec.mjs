@@ -96,7 +96,7 @@ test("codex pilot status exposes local exec integration", async ({ request }) =>
   expect(status.sandbox).toBeTruthy();
   expect(status.workspaceRoot).toBeTruthy();
   expect(status.openclaw.available).toBe(true);
-  expect(status.defaultControlProvider).toBeTruthy();
+  expect(status.defaultControlProvider).toBe("openclaw");
 });
 
 test("openclaw status exposes the system-control adapter", async ({ request }) => {

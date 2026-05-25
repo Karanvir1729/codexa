@@ -110,7 +110,8 @@ voice/audio turn
 -> WhisperX STT
 -> Flow-style speech intent cleanup
 -> /api/codex/exec
--> local codex exec in this repo
+-> OpenClaw local control plane
+-> Codex provider edits/checks the target workspace
 -> spoken summary back through the same TTS queue
 ```
 
@@ -122,10 +123,12 @@ Codex pilot mode now has a **Codex control plane** selector:
 
 Default behavior:
 
+- Routes voice coding turns through OpenClaw by default, with direct Codex CLI still available from the selector.
 - Uses the project-local `@openai/codex` CLI from `node_modules/.bin/codex`.
 - Runs in `workspace-write` sandbox mode.
 - Uses non-interactive approval mode `never`.
 - Runs code/build requests in a target workspace. Existing-project chats default to this repo; new-project chats are placed under `tmp/codex-workspaces/`, or an explicit `workspaceDir` can be passed to `/api/codex/exec`.
+- Shows the active target workspace in the Codex pilot state while a control turn is running. These OpenClaw/Codex runs are separate local control sessions, so they do not append messages into this Codex desktop chat transcript.
 - The Codex pilot prompt requires real file edits plus focused checks for build requests; it should not answer with canned demo code.
 - Keeps the final answer concise so it can be spoken.
 
@@ -138,7 +141,7 @@ CODEX_PILOT_MODEL=gpt-5-codex
 CODEX_PILOT_SANDBOX=workspace-write
 CODEX_PILOT_TIMEOUT_MS=300000
 CODEX_WORKSPACE_ROOT=tmp/codex-workspaces
-CODEX_CONTROL_PROVIDER=codex
+CODEX_CONTROL_PROVIDER=openclaw
 OPENCLAW_LOCAL=1
 OPENCLAW_TIMEOUT_SECS=180
 OPENCLAW_THINKING=off
