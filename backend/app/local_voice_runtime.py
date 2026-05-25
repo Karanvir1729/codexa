@@ -5,6 +5,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from .agent import build_runtime_system_prompt
 from .config import Settings, get_settings
 from .db import Database, dumps
 from .feedback import PromptRepository
@@ -98,7 +99,7 @@ def require_openai_compatible_llm(settings: Settings) -> None:
 
 
 def build_system_instruction(settings: Settings, prompt_repo: PromptRepository) -> str:
-    instruction = prompt_repo.active().compiled
+    instruction = build_runtime_system_prompt(prompt_repo.active().system_prompt)
     instruction = (
         f"{instruction}\n\n"
         "Live voice constraints:\n"

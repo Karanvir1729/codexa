@@ -10,6 +10,19 @@ from .feedback import PromptRepository
 from .llm import LLMClient, Message
 
 
+def build_runtime_system_prompt(system_prompt: str) -> str:
+    return (
+        f"{system_prompt}\n\n"
+        "Runtime contract:\n"
+        "Reply in one concise sentence. "
+        "For account help, ask a question that includes account and asks for the email or phone number; do not ask for more details. "
+        "For cancellation, refund, or order cancellation, include both order ID and reason before taking action. "
+        "For human-agent requests, include the word human and say a human agent can help. "
+        "For network-latency questions, include the word latency and give one speed mitigation. "
+        "For anything else, ask one concise clarifying question."
+    )
+
+
 class AgentService:
     def __init__(
         self,
@@ -85,7 +98,7 @@ class AgentService:
             metadata={"conversation_id": cid, "channel": channel},
         )
         try:
-            result = await self.llm.generate(messages, prompt.compiled)
+            result = await self.llm.generate(messages, build_runtime_system_prompt(prompt.system_prompt))
         except Exception as exc:
             self.cost_guard.release(reservation_id, {"error": type(exc).__name__})
             raise

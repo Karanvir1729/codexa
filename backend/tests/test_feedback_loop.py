@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from app.agent import AgentService
+from app.agent import AgentService, build_runtime_system_prompt
 from app.config import Settings
 from app.cost_guard import CostGuard, CostLimitExceeded
 from app.db import Database
@@ -108,9 +108,18 @@ def test_local_voice_defaults_to_whisperx_and_fast_turn_timing():
 
     assert settings.local_stt_provider == "whisperx"
     assert settings.local_stt_model == "large-v3"
-    assert settings.max_completion_tokens <= 128
+    assert settings.max_completion_tokens <= 48
     assert settings.local_vad_start_secs <= 0.05
     assert settings.local_user_speech_timeout <= 0.2
+
+
+def test_runtime_prompt_adds_customer_intake_contract():
+    prompt = build_runtime_system_prompt("Base prompt.")
+
+    assert "email or phone number" in prompt
+    assert "order ID and reason" in prompt
+    assert "human agent can help" in prompt
+    assert "latency" in prompt
 
 
 def test_local_voice_records_turns_in_feedback_database(tmp_path: Path):

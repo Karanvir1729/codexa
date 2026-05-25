@@ -25,9 +25,9 @@ class Settings(BaseSettings):
     local_llm_model: str = "Llama-3_3-Nemotron-Super-49B-v1_5"
 
     reasoning_mode: Literal["on", "off"] = "on"
-    llm_temperature: float = 0.3
+    llm_temperature: float = 0.0
     llm_top_p: float = 0.95
-    max_completion_tokens: int = 128
+    max_completion_tokens: int = 48
     llm_timeout_seconds: float = 60
 
     cost_guard_enabled: bool = True

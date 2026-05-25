@@ -11,7 +11,7 @@ Built locally:
 - FastAPI backend with health checks, chat endpoint, Twilio inbound webhook, feedback capture, prompt-versioning, and eval APIs.
 - OpenAI-compatible LLM adapter supporting:
   - `mock` mode for free local testing.
-  - Ollama mode for local under-1GB workflow tests.
+  - Ollama mode for local real-model workflow tests.
   - NVIDIA NIM endpoint mode.
   - self-hosted local/AWS vLLM endpoint mode.
 - Continuous feedback loop:
@@ -117,7 +117,7 @@ LLM_PROVIDER=mock
 
 That mode is intentionally free and does not call paid APIs.
 
-For a local model that is still fast enough for workflow testing, install Ollama and pull the under-1GB Qwen model:
+For the fastest local real LLM profile, install Ollama and pull the Qwen 2.5 0.5B model:
 
 ```bash
 ./scripts/setup_ollama_local.sh
@@ -132,7 +132,7 @@ OLLAMA_MODEL=qwen2.5:0.5b \
 ./scripts/run_backend.sh
 ```
 
-`qwen2.5:0.5b` is intentionally the tiny test model. It is for proving the voice, eval, feedback, and routing loop locally; swap the model later for NVIDIA NIM or AWS vLLM without changing the application flow.
+`qwen2.5:0.5b` is the default local real LLM because this repo prioritizes voice turn latency. Swap `OLLAMA_MODEL` or `LLM_PROVIDER` to a hosted external model when you are ready for higher quality.
 
 ## Local Pipecat Voice
 

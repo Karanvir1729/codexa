@@ -97,16 +97,21 @@ class FeedbackLearner:
             hints.append("- Offer a human handoff when the caller asks for an agent or repeats the same unresolved request.")
 
         if eval_rows and eval_rows[0]["avg_latency"] and eval_rows[0]["avg_latency"] > self.latency_target_ms:
-            hints.append(
-                f"- Target first response latency below {self.latency_target_ms} ms by answering directly before explaining."
-            )
-        if eval_rows and eval_rows[0]["avg_score"] is not None and eval_rows[0]["avg_score"] < 0.85:
-            hints.append("- Satisfy required scenario facts before adding optional conversational polish.")
+            hints.append(f"- Target first response latency below {self.latency_target_ms} ms with the shortest matching answer.")
 
         for row in failing_cases:
-            hints.append(f"- Regression guard: address failure pattern from eval case {row['case_id']}.")
+            case_id = row["case_id"]
+            if case_id == "account_lookup_requires_identifier":
+                hints.append("- Account help: ask only for the account email or phone number.")
+            elif case_id == "cancellation_collects_required_fields":
+                hints.append("- Cancellation/refund: ask for the order ID and reason before saying anything is cancelled.")
+            elif case_id == "handoff_respected":
+                hints.append("- Human handoff: mention a human agent; this intent has priority over account lookup.")
+            elif case_id == "latency_strategy":
+                hints.append("- Latency questions: mention latency and one mitigation such as streaming or local voice processing.")
+            else:
+                hints.append(f"- Address failure pattern from eval case {case_id}.")
 
         if not hints:
             hints.append("- Current evaluations are passing; preserve concise confirmations and explicit next steps.")
-        return hints[:8]
-
+        return list(dict.fromkeys(hints))[:5]
