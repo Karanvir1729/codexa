@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
@@ -49,6 +49,9 @@ const CODEX_PILOT_TIMEOUT_MS = Number(process.env.CODEX_PILOT_TIMEOUT_MS ?? 3000
 const CODEX_PILOT_MAX_CONTEXT_MESSAGES = Number(process.env.CODEX_PILOT_MAX_CONTEXT_MESSAGES ?? 8);
 const CODEX_CONTROL_PROVIDER = process.env.CODEX_CONTROL_PROVIDER ?? "openclaw";
 const CODEX_WORKSPACE_ROOT = path.resolve(process.env.CODEX_WORKSPACE_ROOT ?? path.join(__dirname, "tmp", "codex-workspaces"));
+const CODEX_ACTIVITY_MIRROR = process.env.CODEX_ACTIVITY_MIRROR !== "0";
+const CODEX_ACTIVITY_MIRROR_SANDBOX = process.env.CODEX_ACTIVITY_MIRROR_SANDBOX ?? "read-only";
+const CODEX_ACTIVITY_MIRROR_TIMEOUT_MS = Number(process.env.CODEX_ACTIVITY_MIRROR_TIMEOUT_MS ?? 120000);
 const OPENCLAW_COMMAND =
   process.env.OPENCLAW_COMMAND ??
   path.join(__dirname, "node_modules", ".bin", process.platform === "win32" ? "openclaw.cmd" : "openclaw");
@@ -1123,6 +1126,149 @@ function runOpenClawAgent(prompt, client = {}, targetWorkspace = __dirname) {
   });
 }
 
+function latestUserContent(messages = []) {
+  return [...(Array.isArray(messages) ? messages : [])].reverse().find((message) => message?.role === "user" && message.content)?.content ?? "";
+}
+
+function truncateText(value, maxLength = 3000) {
+  const text = String(value || "").trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 20).trim()}... [truncated]`;
+}
+
+function collectWorkspaceEvidence(targetWorkspace) {
+  const evidence = { gitStatus: "", files: [] };
+  try {
+    const git = spawnSync("git", ["-C", targetWorkspace, "status", "--short"], {
+      encoding: "utf8",
+      timeout: 5000,
+      maxBuffer: 128 * 1024,
+    });
+    if (git.status === 0) evidence.gitStatus = git.stdout.trim();
+  } catch {
+    evidence.gitStatus = "";
+  }
+
+  const ignored = new Set([".git", "node_modules", ".next", "dist", "build", "coverage", "test-results"]);
+  const walk = (dir, prefix = "") => {
+    if (evidence.files.length >= 80) return;
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (evidence.files.length >= 80) return;
+      if (ignored.has(entry.name)) continue;
+      const relativePath = prefix ? path.join(prefix, entry.name) : entry.name;
+      const absolutePath = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(absolutePath, relativePath);
+      else if (entry.isFile()) evidence.files.push(relativePath);
+    }
+  };
+
+  walk(targetWorkspace);
+  return evidence;
+}
+
+function buildCodexActivityMirrorPrompt({ messages, client = {}, targetWorkspace, result }) {
+  const latestUser = latestUserContent(messages);
+  const evidence = collectWorkspaceEvidence(targetWorkspace);
+  return [
+    `Voice app OpenClaw activity audit: ${truncateText(latestUser || "voice coding turn", 180)}`,
+    "",
+    "This is a read-only Codex activity entry for monitoring a voice-triggered OpenClaw run.",
+    "Do not modify files. Do not run long commands. Summarize the activity so it appears in the normal Codex activity/thread log.",
+    "",
+    "Activity context:",
+    JSON.stringify(
+      {
+        route: "voice_app -> OpenClaw -> Codex",
+        workspace: targetWorkspace,
+        project: client?.project_name ?? null,
+        chat_session_id: client?.session_id ?? null,
+        chat_title: client?.session_title ?? null,
+        openclaw_session_key: openClawSessionKey(client),
+        user_request: latestUser,
+      },
+      null,
+      2,
+    ),
+    "",
+    "Workspace evidence:",
+    JSON.stringify(
+      {
+        git_status_short: evidence.gitStatus || null,
+        files_seen: evidence.files.slice(0, 80),
+      },
+      null,
+      2,
+    ),
+    "",
+    "OpenClaw spoken result:",
+    truncateText(result?.text || "", 3500),
+    "",
+    "Return a concise audit summary with: request, workspace, key files or git status, checks reported, and whether this was mirrored from OpenClaw.",
+  ].join("\n");
+}
+
+function mirrorOpenClawRunToCodexActivity({ messages, client, targetWorkspace, result }) {
+  if (!CODEX_ACTIVITY_MIRROR || !codexPilotAvailable()) return { queued: false, reason: "disabled_or_unavailable" };
+
+  const mirrorDir = path.join(__dirname, "tmp", "codex-activity-mirror");
+  fs.mkdirSync(mirrorDir, { recursive: true });
+  const logPath = path.join(mirrorDir, `${Date.now()}-${randomUUID()}.jsonl`);
+  const out = fs.openSync(logPath, "a");
+  const args = [];
+  if (CODEX_PILOT_MODEL) args.push("-m", CODEX_PILOT_MODEL);
+  args.push(
+    "-a",
+    CODEX_PILOT_APPROVAL,
+    "exec",
+    "--json",
+    "--cd",
+    targetWorkspace,
+    "--sandbox",
+    CODEX_ACTIVITY_MIRROR_SANDBOX,
+    "-",
+  );
+
+  const child = spawn(CODEX_PILOT_COMMAND, args, {
+    cwd: targetWorkspace,
+    env: {
+      ...process.env,
+      NO_COLOR: "1",
+      FORCE_COLOR: "0",
+    },
+    stdio: ["pipe", out, out],
+  });
+
+  const timeout = setTimeout(() => {
+    if (child.exitCode === null) child.kill("SIGTERM");
+  }, CODEX_ACTIVITY_MIRROR_TIMEOUT_MS);
+
+  child.on("close", () => {
+    clearTimeout(timeout);
+    try {
+      fs.closeSync(out);
+    } catch {
+      // Best-effort activity mirror only.
+    }
+  });
+  child.on("error", () => {
+    clearTimeout(timeout);
+    try {
+      fs.closeSync(out);
+    } catch {
+      // Best-effort activity mirror only.
+    }
+  });
+
+  child.stdin.end(buildCodexActivityMirrorPrompt({ messages, client, targetWorkspace, result }));
+  return { queued: true, logPath };
+}
+
 function streamCodexJsonLine(res, line, state) {
   let parsed;
   try {
@@ -1405,6 +1551,7 @@ async function handleCodexPilot(req, res) {
       sse(res, "warning", { message: "OpenClaw is controlling Codex/system tools for this voice turn." });
       const result = await runOpenClawAgent(prompt, client, targetWorkspace);
       if (result.ok) {
+        const mirror = mirrorOpenClawRunToCodexActivity({ messages, client, targetWorkspace, result });
         sse(res, "token", { text: result.text.slice(0, 2400) });
         sse(res, "meta", {
           provider: "openclaw",
@@ -1414,6 +1561,15 @@ async function handleCodexPilot(req, res) {
           runner: result.parsed?.meta?.executionTrace?.runner || (OPENCLAW_LOCAL ? "local" : "gateway"),
           workspace: targetWorkspace,
         });
+        if (mirror.queued) {
+          sse(res, "meta", {
+            provider: "codex_activity_mirror",
+            model: CODEX_PILOT_MODEL || "default",
+            workspace: targetWorkspace,
+            sandbox: CODEX_ACTIVITY_MIRROR_SANDBOX,
+            logPath: mirror.logPath,
+          });
+        }
         sse(res, "done", {});
         res.end();
         return;
@@ -1835,6 +1991,11 @@ async function handleProviderHealth(req, res) {
       model: CODEX_PILOT_MODEL || "default",
       workspaceRoot: CODEX_WORKSPACE_ROOT,
       purpose: "Routes voice-intent tasks into Codex exec so the desktop agent can inspect, edit, test, and operate this repo.",
+      activityMirror: {
+        enabled: CODEX_ACTIVITY_MIRROR,
+        sandbox: CODEX_ACTIVITY_MIRROR_SANDBOX,
+        purpose: "Mirrors successful OpenClaw turns into read-only Codex exec sessions for native Codex activity monitoring.",
+      },
     },
     openclaw: openClawStatusPayload(),
     tts: {
@@ -2089,6 +2250,11 @@ const server = http.createServer(async (req, res) => {
         model: CODEX_PILOT_MODEL || "default",
         workspaceRoot: CODEX_WORKSPACE_ROOT,
         defaultControlProvider: CODEX_CONTROL_PROVIDER,
+        activityMirror: {
+          enabled: CODEX_ACTIVITY_MIRROR,
+          sandbox: CODEX_ACTIVITY_MIRROR_SANDBOX,
+          timeoutMs: CODEX_ACTIVITY_MIRROR_TIMEOUT_MS,
+        },
         openclaw: openClawStatusPayload(),
       });
       return;

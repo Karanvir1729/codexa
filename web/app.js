@@ -1758,6 +1758,13 @@ async function readSse(response) {
           ].filter(Boolean).join("; ");
           setCodexPilotState(details ? `OpenClaw control active: ${details}` : "OpenClaw control active.");
         }
+        if (event.data.provider === "codex_activity_mirror") {
+          const details = [
+            event.data.workspace ? `workspace ${compactWorkspacePath(event.data.workspace)}` : null,
+            event.data.sandbox ? `mirror sandbox ${event.data.sandbox}` : null,
+          ].filter(Boolean).join("; ");
+          setCodexPilotState(details ? `OpenClaw run mirrored to Codex activity: ${details}` : "OpenClaw run mirrored to Codex activity.");
+        }
       }
     }
   }

@@ -128,7 +128,8 @@ Default behavior:
 - Runs in `workspace-write` sandbox mode.
 - Uses non-interactive approval mode `never`.
 - Runs code/build requests in a target workspace. Existing-project chats default to this repo; new-project chats are placed under `tmp/codex-workspaces/`, or an explicit `workspaceDir` can be passed to `/api/codex/exec`.
-- Shows the active target workspace in the Codex pilot state while a control turn is running. These OpenClaw/Codex runs are separate local control sessions, so they do not append messages into this Codex desktop chat transcript.
+- Shows the active target workspace in the Codex pilot state while a control turn is running.
+- Mirrors successful OpenClaw runs into a read-only Codex exec session so the request, workspace, changed files, and result appear in Codex's native activity/thread store.
 - The Codex pilot prompt requires real file edits plus focused checks for build requests; it should not answer with canned demo code.
 - Keeps the final answer concise so it can be spoken.
 
@@ -142,6 +143,8 @@ CODEX_PILOT_SANDBOX=workspace-write
 CODEX_PILOT_TIMEOUT_MS=300000
 CODEX_WORKSPACE_ROOT=tmp/codex-workspaces
 CODEX_CONTROL_PROVIDER=openclaw
+CODEX_ACTIVITY_MIRROR=1
+CODEX_ACTIVITY_MIRROR_SANDBOX=read-only
 OPENCLAW_LOCAL=1
 OPENCLAW_TIMEOUT_SECS=180
 OPENCLAW_THINKING=off
