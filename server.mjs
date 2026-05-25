@@ -2328,6 +2328,7 @@ async function handleProviderHealth(req, res) {
         available: codexAppChatAvailable(),
         command: CODEX_APP_CHAT_COMMAND,
         timeoutMs: CODEX_APP_CHAT_TIMEOUT_MS,
+        defaultForGeneratedProjects: true,
         purpose:
           "Creates a normal Codex Desktop app chat in generated project folders so they appear under Projects.",
       },
@@ -2592,6 +2593,9 @@ const server = http.createServer(async (req, res) => {
           available: codexAppChatAvailable(),
           command: CODEX_APP_CHAT_COMMAND,
           timeoutMs: CODEX_APP_CHAT_TIMEOUT_MS,
+          defaultForGeneratedProjects: true,
+          purpose:
+            "Creates a normal Codex Desktop app chat for every generated project folder so it appears under Projects.",
         },
         openclaw: openClawStatusPayload(),
       });

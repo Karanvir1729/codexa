@@ -101,6 +101,8 @@ test("codex pilot status exposes local CLI and app-chat integration", async ({ r
   expect(status.openclaw.codexCliCommand).toContain("codex");
   expect(status.appChatRegistration.enabled).toBe(true);
   expect(status.appChatRegistration.command).toContain("codex");
+  expect(status.appChatRegistration.defaultForGeneratedProjects).toBe(true);
+  expect(status.appChatRegistration.purpose).toContain("every generated project");
 });
 
 test("openclaw status exposes the system-control adapter", async ({ request }) => {
