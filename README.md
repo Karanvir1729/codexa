@@ -133,6 +133,38 @@ CODEX_PILOT_TIMEOUT_MS=300000
 
 For full-machine control, Codex itself must be configured for that level of access. The default desktop route intentionally keeps voice-triggered edits inside this repository.
 
+## Phone Calls Without Rebuilding Voice Infra
+
+Do not hand-roll Twilio audio transport. The phone path should use Pipecat:
+
+```text
+Twilio call
+-> Twilio Media Streams
+-> Pipecat FastAPIWebsocketTransport + TwilioFrameSerializer
+-> STT / LLM-or-Codex-pilot / TTS pipeline
+-> Twilio caller
+```
+
+Architecture decision:
+
+```text
+docs/architecture/voice-telephony-stack-decision.md
+```
+
+Local free-tier development flow:
+
+1. Create a Twilio trial account and trial voice number.
+2. Expose the local Pipecat bot with ngrok.
+3. Configure a TwiML Bin with `<Connect><Stream url="wss://YOUR_NGROK_DOMAIN/ws" />`.
+4. Assign the TwiML Bin to the trial number.
+5. Call from a verified caller ID.
+
+Production/demo path:
+
+```text
+Twilio number -> Pipecat Cloud Twilio WebSocket endpoint -> Tutor-Tron Pipecat bot
+```
+
 ## Manual Web Mode
 
 Start the WhisperX adapter:
@@ -352,6 +384,12 @@ TTS_PROVIDER=fish
 FISH_API_KEY=...
 FISH_TTS_MODEL=s2-pro
 AGENT_SYSTEM_PROMPT="You are Tutor-Tron..."
+TELEPHONY_STACK=pipecat
+TWILIO_ACCOUNT_SID=...
+TWILIO_AUTH_TOKEN=...
+TWILIO_PHONE_NUMBER=...
+PIPECAT_PUBLIC_WS_URL=wss://YOUR_NGROK_DOMAIN/ws
+DAILY_API_KEY=...
 ```
 
 ## API Contracts
