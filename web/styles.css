@@ -231,6 +231,7 @@ button:disabled {
   width: 100%;
 }
 
+.field input,
 .field select,
 .field textarea {
   width: 100%;
@@ -241,6 +242,7 @@ button:disabled {
   font-weight: 700;
 }
 
+.field input,
 .field select {
   min-height: 40px;
   padding: 0 10px;
@@ -277,7 +279,50 @@ button:disabled {
 .conversation {
   min-height: 720px;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto auto 1fr auto;
+}
+
+.session-planner {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-bottom: 1px solid var(--line);
+  background: #fbfdff;
+}
+
+.session-planner-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.session-planner h2 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.session-state {
+  max-width: 360px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  text-align: right;
+}
+
+.session-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.session-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 160px 140px;
+  gap: 10px;
+  align-items: end;
 }
 
 .live {
@@ -394,6 +439,20 @@ button:disabled {
   line-height: 1.35;
 }
 
+.history-button {
+  width: 100%;
+  min-height: auto;
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-button:hover {
+  border-color: var(--blue);
+  background: var(--blue-soft);
+}
+
 .history-item strong {
   display: block;
   margin-bottom: 4px;
@@ -449,6 +508,16 @@ button:disabled {
 
   .conversation {
     min-height: 620px;
+  }
+
+  .session-grid,
+  .session-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .session-state {
+    max-width: none;
+    text-align: left;
   }
 }
 

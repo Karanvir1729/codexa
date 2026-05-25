@@ -31,6 +31,15 @@ const dom = {
   studentProfile: document.querySelector("#studentProfile"),
   studentProfileName: document.querySelector("#studentProfileName"),
   systemPrompt: document.querySelector("#systemPrompt"),
+  projectMode: document.querySelector("#projectMode"),
+  projectSelect: document.querySelector("#projectSelect"),
+  projectName: document.querySelector("#projectName"),
+  sessionSelect: document.querySelector("#sessionSelect"),
+  chatTitle: document.querySelector("#chatTitle"),
+  loadSessionBtn: document.querySelector("#loadSessionBtn"),
+  newSessionBtn: document.querySelector("#newSessionBtn"),
+  sessionState: document.querySelector("#sessionState"),
+  sessionHistoryList: document.querySelector("#sessionHistoryList"),
   speakerGuardState: document.querySelector("#speakerGuardState"),
   latencyLog: document.querySelector("#latencyLog"),
 };
@@ -93,6 +102,10 @@ const state = {
   turnTakingProfile: null,
   currentStudentId: "user_a",
   speechHistory: [],
+  sessions: [],
+  projects: ["Tutor-Tron"],
+  currentSessionId: null,
+  currentSessionSummary: null,
 };
 
 const TURN_CAPTURE = {
@@ -155,6 +168,46 @@ function activeStudentName() {
   return (dom.studentProfileName?.value || activeStudentId().replace(/_/g, " ")).trim();
 }
 
+function compactTitle(value, fallback = "Untitled chat") {
+  const text = String(value || fallback).replace(/\s+/g, " ").trim() || fallback;
+  return text.length > 58 ? `${text.slice(0, 55)}...` : text;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function selectedProjectName() {
+  if (dom.projectMode?.value === "new_project") {
+    return (dom.projectName?.value || "New project").trim() || "New project";
+  }
+  return (dom.projectSelect?.value || dom.projectName?.value || "Tutor-Tron").trim() || "Tutor-Tron";
+}
+
+function sessionLabel(session) {
+  const updated = session.updatedAt ? new Date(session.updatedAt).toLocaleString() : "not saved";
+  const turns = Number(session.turnCount || 0);
+  return `${session.title || "Untitled chat"} | ${session.projectName || "No project"} | ${turns} turn${turns === 1 ? "" : "s"} | ${updated}`;
+}
+
+async function apiJson(url, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error || `${url} returned ${response.status}`);
+  return body;
+}
+
 function conversationStorageKey(studentId = activeStudentId()) {
   return `tutor-tron:conversation:${studentId}`;
 }
@@ -188,15 +241,6 @@ function defaultTurnTakingProfile() {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
-}
-
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 function loadTurnTakingProfile(studentId = activeStudentId()) {
@@ -431,6 +475,164 @@ function saveStudentConversation() {
   localStorage.setItem(conversationStorageKey(state.currentStudentId), JSON.stringify(state.messages.slice(-24)));
 }
 
+function renderMessages() {
+  dom.messages.innerHTML = "";
+  if (state.currentSessionSummary) {
+    addMessage(
+      "system",
+      `Active chat: ${state.currentSessionSummary.title || "Untitled chat"} | ${state.currentSessionSummary.projectName || "No project"}`,
+    );
+  } else {
+    addMessage("system", "Choose an existing chat or start a new project chat before using the voice agent.");
+  }
+  for (const message of state.messages) addMessage(message.role, message.content);
+}
+
+function renderSessionUi() {
+  if (!dom.sessionSelect) return;
+
+  const projectNames = [...new Set(["Tutor-Tron", ...state.projects, ...state.sessions.map((session) => session.projectName).filter(Boolean)])]
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+  dom.projectSelect.innerHTML = projectNames
+    .map((project) => `<option value="${escapeHtml(project)}">${escapeHtml(project)}</option>`)
+    .join("");
+  const currentProject = selectedProjectName();
+  if (projectNames.includes(currentProject)) dom.projectSelect.value = currentProject;
+
+  const filteredSessions = state.sessions.filter((session) => {
+    if (dom.projectMode?.value === "new_project") return true;
+    return !currentProject || session.projectName === currentProject;
+  });
+  dom.sessionSelect.innerHTML = filteredSessions.length
+    ? filteredSessions.map((session) => `<option value="${escapeHtml(session.id)}">${escapeHtml(sessionLabel(session))}</option>`).join("")
+    : '<option value="">No saved chats for this project</option>';
+  if (state.currentSessionId && filteredSessions.some((session) => session.id === state.currentSessionId)) {
+    dom.sessionSelect.value = state.currentSessionId;
+  }
+  dom.loadSessionBtn.disabled = !dom.sessionSelect.value;
+
+  if (dom.projectMode?.value === "new_project") {
+    dom.projectSelect.disabled = true;
+    dom.projectName.disabled = false;
+    if (!dom.projectName.value || dom.projectName.value === "Tutor-Tron") dom.projectName.value = "New project";
+  } else {
+    dom.projectSelect.disabled = false;
+    dom.projectName.disabled = true;
+    dom.projectName.value = dom.projectSelect.value || "Tutor-Tron";
+  }
+
+  if (state.currentSessionSummary) {
+    dom.sessionState.textContent = `Working in ${state.currentSessionSummary.projectName}: ${state.currentSessionSummary.title}`;
+  } else {
+    dom.sessionState.textContent = "Pick an existing chat or start a new one.";
+  }
+
+  if (dom.sessionHistoryList) {
+    dom.sessionHistoryList.innerHTML = state.sessions.length
+      ? state.sessions
+          .slice(0, 8)
+          .map((session) => {
+            const source = session.source === "phone_bridge" ? "phone" : session.source || "browser";
+            const detail = session.lastUserText ? session.lastUserText : "No user turn saved yet.";
+            return `<button type="button" class="history-item history-button" data-session-id="${escapeHtml(session.id)}">
+              <strong>${escapeHtml(session.title || "Untitled chat")}</strong>
+              <span>${escapeHtml(session.projectName || "No project")} · ${escapeHtml(source)} · ${session.turnCount || 0} turns</span>
+              <span class="muted">${escapeHtml(compactTitle(detail, "No user turn saved yet."))}</span>
+            </button>`;
+          })
+          .join("")
+      : '<div class="history-item">No saved calls or chats yet.</div>';
+  }
+}
+
+async function refreshSessions() {
+  try {
+    const data = await apiJson("/api/sessions");
+    state.sessions = data.sessions || [];
+    state.projects = data.projects || [];
+    renderSessionUi();
+  } catch (error) {
+    if (dom.sessionState) dom.sessionState.textContent = `Session history unavailable: ${error.message}`;
+  }
+}
+
+function sessionCreatePayload(source = "browser") {
+  const projectName = selectedProjectName();
+  const title = (dom.chatTitle?.value || "").trim() || `${projectName} voice chat`;
+  return {
+    projectMode: dom.projectMode?.value === "new_project" ? "new_project" : "existing_project",
+    projectName,
+    title,
+    studentId: state.currentStudentId,
+    studentName: activeStudentName(),
+    source,
+  };
+}
+
+async function createSession(source = "browser") {
+  const data = await apiJson("/api/sessions", {
+    method: "POST",
+    body: JSON.stringify(sessionCreatePayload(source)),
+  });
+  state.currentSessionId = data.session.id;
+  state.currentSessionSummary = data.session;
+  state.messages = [];
+  saveStudentConversation();
+  dom.chatTitle.value = "";
+  await refreshSessions();
+  renderMessages();
+  setTurn(`Chat ready: ${data.session.title}.`);
+  return data.session;
+}
+
+async function loadSession(sessionId = dom.sessionSelect?.value) {
+  if (!sessionId) return null;
+  const data = await apiJson(`/api/sessions/${sessionId}`);
+  state.currentSessionId = data.session.id;
+  state.currentSessionSummary = data.session;
+  state.messages = (data.session.messages || [])
+    .filter((message) => ["user", "assistant", "system"].includes(message.role) && typeof message.content === "string")
+    .map((message) => ({ role: message.role, content: message.content }));
+  if (dom.projectMode) dom.projectMode.value = data.session.projectMode || "existing_project";
+  if (dom.projectName) dom.projectName.value = data.session.projectName || "Tutor-Tron";
+  if (dom.projectSelect) {
+    dom.projectSelect.value = data.session.projectName || "Tutor-Tron";
+    if (dom.projectSelect.value !== data.session.projectName) {
+      state.projects = [...new Set([...state.projects, data.session.projectName].filter(Boolean))];
+    }
+  }
+  renderMessages();
+  await refreshSessions();
+  setTurn(`Opened chat: ${data.session.title}.`);
+  return data.session;
+}
+
+async function ensureActiveSession(source = "browser") {
+  if (state.currentSessionId) return state.currentSessionSummary;
+  return createSession(source);
+}
+
+function appendSessionMessage(role, content, meta = {}) {
+  if (!state.currentSessionId || !content?.trim()) return Promise.resolve();
+  return apiJson(`/api/sessions/${state.currentSessionId}/messages`, {
+    method: "POST",
+    body: JSON.stringify({
+      role,
+      content,
+      source: meta.source || "browser",
+      route: meta.route || (useCodexPilot() ? "codex_pilot" : "tutor_llm"),
+    }),
+  })
+    .then((data) => {
+      state.currentSessionSummary = data.session;
+      return refreshSessions();
+    })
+    .catch((error) => {
+      if (dom.sessionState) dom.sessionState.textContent = `Session save failed: ${error.message}`;
+    });
+}
+
 function loadStudentConversation(studentId = activeStudentId()) {
   try {
     const stored = localStorage.getItem(conversationStorageKey(studentId));
@@ -472,12 +674,11 @@ function activateStudentProfile(profileId, profileName = profileId, opts = {}) {
   if (dom.studentProfile) dom.studentProfile.value = profileId;
   if (dom.studentProfileName) dom.studentProfileName.value = profileName;
   state.currentStudentId = activeStudentId();
-  loadStudentConversation(state.currentStudentId);
+  if (!state.currentSessionId) loadStudentConversation(state.currentStudentId);
   loadTurnTakingProfile(state.currentStudentId);
   loadSpeechFlowConfig(state.currentStudentId);
   loadSpeechHistory(state.currentStudentId);
-  dom.messages.innerHTML = "";
-  addMessage("system", `Active student profile: ${activeStudentName()} (${state.currentStudentId}).`);
+  if (!state.currentSessionId) renderMessages();
   updateActiveSpeakerState();
   const profile = state.speakerProfiles[state.currentStudentId];
   if (profile?.samples) {
@@ -488,6 +689,7 @@ function activateStudentProfile(profileId, profileName = profileId, opts = {}) {
   if (opts.announce) {
     addMessage("system", `Speaker matched ${activeStudentName()}; routed this turn to that student's memory.`);
   }
+  renderSessionUi();
 }
 
 function selectedStudentLabel() {
@@ -1285,6 +1487,7 @@ function scheduleTurnSubmit() {
 }
 
 async function startVoiceSession() {
+  await ensureActiveSession("browser_voice");
   state.active = true;
   state.interrupted = false;
   dom.startBtn.disabled = true;
@@ -1297,7 +1500,7 @@ async function startVoiceSession() {
       : 'Ask anything. Pause for about a second when you are done. Browser STT is active.',
   );
 
-  addMessage("system", "Voice session started. Ask Tutor-Tron any prompt; the system prompt in the left panel controls behavior.");
+  addMessage("system", `Voice session started in ${state.currentSessionSummary?.projectName || "this project"}.`);
   await loadSpeakerProfiles();
 
   try {
@@ -1333,6 +1536,11 @@ function stopVoiceSession() {
   dom.interruptBtn.disabled = true;
   setAgentState("Idle", "");
   setTurn("Session stopped.");
+  if (state.currentSessionId) {
+    fetch(`/api/sessions/${state.currentSessionId}/end`, { method: "POST" })
+      .then(() => refreshSessions())
+      .catch(() => {});
+  }
 }
 
 function interruptTutor(reason, opts = {}) {
@@ -1376,6 +1584,7 @@ function interruptTutor(reason, opts = {}) {
 
 async function sendUserTurn(text, meta = {}) {
   if (!text.trim()) return;
+  await ensureActiveSession(meta.source === "browser" || meta.source === "whisperx" ? "browser_voice" : "typed");
 
   const normalizedTurn = normalizeSpeechText(text);
   if (normalizedTurn === state.lastSubmittedUserText && performance.now() - state.lastSubmittedAt < 2500) return;
@@ -1392,6 +1601,10 @@ async function sendUserTurn(text, meta = {}) {
 
   state.messages.push({ role: "user", content: text });
   saveStudentConversation();
+  appendSessionMessage("user", text, {
+    source: meta.source || "typed",
+    route: useCodexPilot() ? "codex_pilot" : "tutor_llm",
+  });
   addMessage("user", text);
 
   state.currentAssistantText = "";
@@ -1410,6 +1623,10 @@ async function sendUserTurn(text, meta = {}) {
         client: {
           student_id: state.currentStudentId,
           student_name: activeStudentName(),
+          session_id: state.currentSessionId,
+          session_title: state.currentSessionSummary?.title || null,
+          project_name: state.currentSessionSummary?.projectName || selectedProjectName(),
+          project_mode: state.currentSessionSummary?.projectMode || dom.projectMode?.value || "existing_project",
           stt_provider: dom.sttProvider.value,
           voice_rate: Number(dom.rateSlider.value),
           auto_speak: dom.autoSpeakToggle.checked,
@@ -1433,6 +1650,10 @@ async function sendUserTurn(text, meta = {}) {
     if (state.currentAssistantText.trim()) {
       state.messages.push({ role: "assistant", content: state.currentAssistantText.trim() });
       saveStudentConversation();
+      appendSessionMessage("assistant", state.currentAssistantText.trim(), {
+        source: meta.source || "typed",
+        route: useCodexPilot() ? "codex_pilot" : "tutor_llm",
+      });
     }
     state.abortController = null;
     state.thinking = false;
@@ -1715,6 +1936,29 @@ dom.sttProvider.addEventListener("change", () => {
 });
 dom.studentProfile.addEventListener("change", switchStudentProfile);
 dom.studentProfileName.addEventListener("change", switchStudentProfile);
+dom.projectMode?.addEventListener("change", renderSessionUi);
+dom.projectSelect?.addEventListener("change", () => {
+  if (dom.projectName) dom.projectName.value = dom.projectSelect.value;
+  renderSessionUi();
+});
+dom.projectName?.addEventListener("input", renderSessionUi);
+dom.newSessionBtn?.addEventListener("click", () => {
+  createSession("browser").catch((error) => {
+    dom.sessionState.textContent = `Could not start chat: ${error.message}`;
+  });
+});
+dom.loadSessionBtn?.addEventListener("click", () => {
+  loadSession().catch((error) => {
+    dom.sessionState.textContent = `Could not open chat: ${error.message}`;
+  });
+});
+dom.sessionHistoryList?.addEventListener("click", (event) => {
+  const target = event.target.closest("[data-session-id]");
+  if (!target) return;
+  loadSession(target.dataset.sessionId).catch((error) => {
+    dom.sessionState.textContent = `Could not open chat: ${error.message}`;
+  });
+});
 [dom.flowCleanupLevel, dom.flowWritingStyle, dom.flowLanguage, dom.flowDictionary, dom.flowSnippets]
   .filter(Boolean)
   .forEach((element) => {
@@ -1729,6 +1973,7 @@ dom.textForm.addEventListener("submit", (event) => {
 });
 
 switchStudentProfile();
+refreshSessions();
 updateProviderStatus();
 if (!supportsSpeechRecognition()) {
   setTurn("Browser speech recognition unavailable. WhisperX or typed fallback is ready.");

@@ -93,3 +93,43 @@ test("codex pilot status exposes local exec integration", async ({ request }) =>
   expect(status.command).toContain("codex");
   expect(status.sandbox).toBeTruthy();
 });
+
+test("voice sessions persist project chat history", async ({ request }) => {
+  const projectName = `Test project ${Date.now()}`;
+  const create = await request.post("/api/sessions", {
+    data: {
+      projectMode: "new_project",
+      projectName,
+      title: "API session smoke",
+      studentId: "user_a",
+      studentName: "User A",
+      source: "test",
+    },
+  });
+  expect(create.ok()).toBeTruthy();
+  const created = await create.json();
+  expect(created.session.projectName).toBe(projectName);
+
+  const append = await request.post(`/api/sessions/${created.session.id}/messages`, {
+    data: {
+      role: "user",
+      content: "Can you keep this chat in history?",
+      source: "test",
+      route: "tutor_llm",
+    },
+  });
+  expect(append.ok()).toBeTruthy();
+
+  const loaded = await request.get(`/api/sessions/${created.session.id}`);
+  expect(loaded.ok()).toBeTruthy();
+  const session = await loaded.json();
+  expect(session.session.messages).toEqual(
+    expect.arrayContaining([expect.objectContaining({ role: "user", content: "Can you keep this chat in history?" })]),
+  );
+
+  const list = await request.get("/api/sessions");
+  expect(list.ok()).toBeTruthy();
+  const history = await list.json();
+  expect(history.projects).toContain(projectName);
+  expect(history.sessions.some((item) => item.id === created.session.id)).toBe(true);
+});

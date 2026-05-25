@@ -133,6 +133,22 @@ CODEX_PILOT_TIMEOUT_MS=300000
 
 For full-machine control, Codex itself must be configured for that level of access. The default desktop route intentionally keeps voice-triggered edits inside this repository.
 
+## Project and Call History
+
+The app starts each work session from an explicit context picker:
+
+- choose an existing project or create a new one
+- open an existing chat/call history item
+- start a new chat attached to the selected project
+
+Session history is stored locally in:
+
+```text
+data/voice-sessions.json
+```
+
+That file is intentionally ignored by git. Browser, typed, and phone-bridge turns can all be attached to the same session model, so the receptionist can resume the right work context instead of treating every call as a blank chat.
+
 ## Phone Calls Without Rebuilding Voice Infra
 
 Do not hand-roll Twilio audio transport. The phone path should use Pipecat:

@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "web");
 const testRunsDir = path.join(__dirname, "data", "test-runs");
+const voiceSessionsPath = path.join(__dirname, "data", "voice-sessions.json");
 const port = Number(process.env.PORT ?? 3000);
 let activeTestRun = null;
 
@@ -141,6 +142,141 @@ function readJsonFile(filePath, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function writeJsonFile(filePath, data) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+}
+
+function safeText(value, fallback = "") {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function safeId(value, fallback = "default") {
+  return safeText(value, fallback)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "") || fallback;
+}
+
+function readVoiceSessions() {
+  const stored = readJsonFile(voiceSessionsPath, { sessions: [] });
+  return Array.isArray(stored.sessions) ? stored.sessions : [];
+}
+
+function writeVoiceSessions(sessions) {
+  writeJsonFile(voiceSessionsPath, {
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    sessions: sessions.slice(0, 200),
+  });
+}
+
+function sessionSummary(session) {
+  return {
+    id: session.id,
+    title: session.title,
+    projectMode: session.projectMode,
+    projectName: session.projectName,
+    studentId: session.studentId,
+    studentName: session.studentName,
+    source: session.source,
+    status: session.status,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    endedAt: session.endedAt || null,
+    turnCount: session.turnCount || 0,
+    messageCount: Array.isArray(session.messages) ? session.messages.length : 0,
+    lastUserText: session.lastUserText || "",
+    lastAssistantText: session.lastAssistantText || "",
+  };
+}
+
+function sessionTitleFromText(text, fallback = "Untitled chat") {
+  const normalized = safeText(text, fallback).replace(/\s+/g, " ");
+  return normalized.length > 58 ? `${normalized.slice(0, 55)}...` : normalized;
+}
+
+function createVoiceSession(input = {}) {
+  const now = new Date().toISOString();
+  const projectMode = input.projectMode === "new_project" ? "new_project" : "existing_project";
+  const projectName = safeText(input.projectName, projectMode === "new_project" ? "New project" : "Tutor-Tron");
+  const title = safeText(input.title, `${projectName} chat`);
+  return {
+    id: randomUUID(),
+    title,
+    projectMode,
+    projectName,
+    studentId: safeId(input.studentId, "user_a"),
+    studentName: safeText(input.studentName, "User A"),
+    source: safeText(input.source, "browser"),
+    status: "active",
+    createdAt: now,
+    updatedAt: now,
+    endedAt: null,
+    turnCount: 0,
+    lastUserText: "",
+    lastAssistantText: "",
+    messages: [],
+  };
+}
+
+function appendVoiceSessionMessage(sessionId, input = {}) {
+  const sessions = readVoiceSessions();
+  const index = sessions.findIndex((session) => session.id === sessionId);
+  if (index === -1) return null;
+
+  const role = ["user", "assistant", "system"].includes(input.role) ? input.role : "user";
+  const content = safeText(input.content);
+  if (!content) return null;
+
+  const now = new Date().toISOString();
+  const message = {
+    id: randomUUID(),
+    role,
+    content,
+    source: safeText(input.source, sessions[index].source || "browser"),
+    route: safeText(input.route, ""),
+    createdAt: now,
+  };
+  sessions[index].messages = [...(sessions[index].messages || []), message].slice(-500);
+  sessions[index].updatedAt = now;
+  sessions[index].status = input.status === "ended" ? "ended" : "active";
+  if (role === "user") {
+    sessions[index].turnCount = Number(sessions[index].turnCount || 0) + 1;
+    sessions[index].lastUserText = content;
+    if (!sessions[index].title || sessions[index].title.endsWith(" chat")) {
+      sessions[index].title = sessionTitleFromText(content, sessions[index].title);
+    }
+  }
+  if (role === "assistant") sessions[index].lastAssistantText = content;
+
+  sessions.splice(index, 1, sessions[index]);
+  sessions.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  writeVoiceSessions(sessions);
+  return { session: sessions.find((session) => session.id === sessionId), message };
+}
+
+function recordPhoneBridgeExchange(messages = [], assistantText = "") {
+  const safeMessages = Array.isArray(messages) ? messages : [];
+  const latestUser = [...safeMessages].reverse().find((message) => message?.role === "user" && typeof message.content === "string")?.content;
+  if (!latestUser && !assistantText) return;
+  if (/\b(no-phone|no-call|smoke test)\b/i.test(latestUser || "")) return;
+
+  const session = createVoiceSession({
+    source: "phone_bridge",
+    projectMode: "existing_project",
+    projectName: "Phone coding assistant",
+    title: sessionTitleFromText(latestUser || "Phone call"),
+    studentId: "phone_caller",
+    studentName: "Phone caller",
+  });
+  const sessions = readVoiceSessions();
+  sessions.unshift(session);
+  writeVoiceSessions(sessions);
+  if (latestUser) appendVoiceSessionMessage(session.id, { role: "user", content: latestUser, source: "phone_bridge", route: "codex_pilot" });
+  if (assistantText) appendVoiceSessionMessage(session.id, { role: "assistant", content: assistantText, source: "phone_bridge", route: "codex_pilot" });
 }
 
 function normalizeMessages(messages = [], systemPrompt = DEFAULT_AGENT_PROMPT) {
@@ -957,6 +1093,7 @@ async function handlePhoneCodexCompletion(req, res) {
         (code === 0
           ? "Codex finished, but did not return a spoken summary."
           : `Codex exited with code ${code}.${fallbackDetail ? ` ${fallbackDetail}` : ""}`);
+      recordPhoneBridgeExchange(body.messages, text);
       writeOpenAIChunk(res, id, { content: text.slice(0, 1800) });
       state.sentFinal = true;
     }
@@ -1436,6 +1573,87 @@ function handleTestRunHistory(_req, res) {
   json(res, 200, { history });
 }
 
+function handleListVoiceSessions(_req, res) {
+  const sessions = readVoiceSessions()
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
+    .map(sessionSummary);
+  const projects = [...new Set(sessions.map((session) => session.projectName).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b),
+  );
+  json(res, 200, { sessions, projects });
+}
+
+async function handleCreateVoiceSession(req, res) {
+  const body = await readJson(req).catch(() => ({}));
+  const session = createVoiceSession(body);
+  const sessions = readVoiceSessions();
+  sessions.unshift(session);
+  writeVoiceSessions(sessions);
+  json(res, 201, { session });
+}
+
+function handleGetVoiceSession(sessionId, res) {
+  const session = readVoiceSessions().find((item) => item.id === sessionId);
+  if (!session) {
+    json(res, 404, { error: "Session not found." });
+    return;
+  }
+  json(res, 200, { session });
+}
+
+async function handleUpdateVoiceSession(req, res, sessionId) {
+  const body = await readJson(req).catch(() => ({}));
+  const sessions = readVoiceSessions();
+  const index = sessions.findIndex((session) => session.id === sessionId);
+  if (index === -1) {
+    json(res, 404, { error: "Session not found." });
+    return;
+  }
+  const now = new Date().toISOString();
+  sessions[index] = {
+    ...sessions[index],
+    title: safeText(body.title, sessions[index].title),
+    projectName: safeText(body.projectName, sessions[index].projectName),
+    projectMode: body.projectMode === "new_project" ? "new_project" : sessions[index].projectMode,
+    status: body.status === "ended" ? "ended" : sessions[index].status || "active",
+    endedAt: body.status === "ended" ? now : sessions[index].endedAt || null,
+    updatedAt: now,
+  };
+  writeVoiceSessions(sessions);
+  json(res, 200, { session: sessions[index] });
+}
+
+function handleEndVoiceSession(sessionId, res) {
+  const sessions = readVoiceSessions();
+  const index = sessions.findIndex((session) => session.id === sessionId);
+  if (index === -1) {
+    json(res, 404, { error: "Session not found." });
+    return;
+  }
+  const now = new Date().toISOString();
+  sessions[index] = {
+    ...sessions[index],
+    status: "ended",
+    endedAt: now,
+    updatedAt: now,
+  };
+  writeVoiceSessions(sessions);
+  json(res, 200, { session: sessions[index] });
+}
+
+async function handleAppendVoiceSessionMessage(req, res, sessionId) {
+  const body = await readJson(req).catch(() => ({}));
+  const result = appendVoiceSessionMessage(sessionId, body);
+  if (!result) {
+    json(res, 404, { error: "Session not found or message content missing." });
+    return;
+  }
+  json(res, 201, {
+    session: sessionSummary(result.session),
+    message: result.message,
+  });
+}
+
 async function handleStartTestRun(req, res) {
   if (activeTestRun) {
     json(res, 409, {
@@ -1570,6 +1788,37 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/test-runs/run" && req.method === "POST") {
       await handleStartTestRun(req, res);
       return;
+    }
+
+    if (url.pathname === "/api/sessions" && req.method === "GET") {
+      handleListVoiceSessions(req, res);
+      return;
+    }
+
+    if (url.pathname === "/api/sessions" && req.method === "POST") {
+      await handleCreateVoiceSession(req, res);
+      return;
+    }
+
+    const sessionMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(messages|end))?$/);
+    if (sessionMatch) {
+      const [, sessionId, child] = sessionMatch;
+      if (!child && req.method === "GET") {
+        handleGetVoiceSession(sessionId, res);
+        return;
+      }
+      if (!child && req.method === "PATCH") {
+        await handleUpdateVoiceSession(req, res, sessionId);
+        return;
+      }
+      if (child === "messages" && req.method === "POST") {
+        await handleAppendVoiceSessionMessage(req, res, sessionId);
+        return;
+      }
+      if (child === "end" && req.method === "POST") {
+        handleEndVoiceSession(sessionId, res);
+        return;
+      }
     }
 
     if (url.pathname === "/favicon.ico") {

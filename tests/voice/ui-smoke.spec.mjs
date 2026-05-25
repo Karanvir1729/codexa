@@ -9,6 +9,10 @@ test("main voice UI exposes installable speech-layer controls", async ({ page })
   await expect(page.locator("#flowWritingStyle")).toBeVisible();
   await expect(page.locator("#flowDictionary")).toContainText("derivitives");
   await expect(page.locator("#flowSnippets")).toContainText("quiz me");
+  await expect(page.getByRole("heading", { name: "Choose a project and chat" })).toBeVisible();
+  await expect(page.locator("#projectMode")).toBeVisible();
+  await expect(page.locator("#sessionSelect")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start new chat" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Test dashboard" })).toBeVisible();
 
   const manifestResponse = await page.request.get("/manifest.webmanifest");

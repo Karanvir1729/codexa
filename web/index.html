@@ -159,6 +159,54 @@ office hours => My office hours are Monday at 3 PM.</textarea>
         </aside>
 
         <section class="conversation panel">
+          <section class="session-planner">
+            <div class="session-planner-head">
+              <div>
+                <p class="label">Work context</p>
+                <h2>Choose a project and chat</h2>
+              </div>
+              <p id="sessionState" class="session-state">Pick an existing chat or start a new one.</p>
+            </div>
+
+            <div class="session-grid">
+              <label class="field">
+                <span>Project mode</span>
+                <select id="projectMode">
+                  <option value="existing_project" selected>Existing project</option>
+                  <option value="new_project">New project</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>Existing project</span>
+                <select id="projectSelect">
+                  <option value="Tutor-Tron">Tutor-Tron</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>Project name</span>
+                <input id="projectName" value="Tutor-Tron" placeholder="Tutor-Tron, Daybot, New calculus tutor..." />
+              </label>
+
+              <label class="field">
+                <span>Chat / call history</span>
+                <select id="sessionSelect">
+                  <option value="">No saved chats yet</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="session-actions">
+              <label class="field">
+                <span>New chat title</span>
+                <input id="chatTitle" placeholder="Voice coding session, calculus lesson, debugging call..." />
+              </label>
+              <button id="loadSessionBtn" type="button" class="secondary">Open selected chat</button>
+              <button id="newSessionBtn" type="button" class="primary">Start new chat</button>
+            </div>
+          </section>
+
           <div class="live">
             <div>
               <p class="label">Live transcript</p>
@@ -193,6 +241,9 @@ office hours => My office hours are Monday at 3 PM.</textarea>
           <p id="codexPilotState" class="live-text muted">
             Off by default. Turn on Codex pilot mode to route voice commands through Codex exec for repo-level work.
           </p>
+
+          <p class="label">Call / chat history</p>
+          <div id="sessionHistoryList" class="history-list"></div>
 
           <p class="label">Current system limits</p>
           <ul class="path">
