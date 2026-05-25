@@ -1,4 +1,5 @@
 .env
+.venv-pipecat/
 .venv-whisperx/
 node_modules/
 test-results/

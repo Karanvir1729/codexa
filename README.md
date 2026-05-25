@@ -159,6 +159,34 @@ Local free-tier development flow:
 4. Assign the TwiML Bin to the trial number.
 5. Call from a verified caller ID.
 
+The repo now includes a local Pipecat/Twilio bot:
+
+```bash
+npm run phone:install
+npm run phone
+```
+
+Expose it from a second terminal:
+
+```bash
+ngrok http 7860
+```
+
+Then wire the claimed Twilio number to the runner's generated TwiML endpoint:
+
+```bash
+npm run twilio:configure
+```
+
+That writes `TWILIO_WEBHOOK_BASE_URL` and `PIPECAT_PUBLIC_WS_URL` to `.env` and configures the Twilio number's Voice webhook to `POST https://YOUR_NGROK_DOMAIN/`. Pipecat's runner returns TwiML that connects the call to `wss://YOUR_NGROK_DOMAIN/ws`.
+
+The first call may take longer because local Whisper and Kokoro models can download/warm up. The current phone runtime uses:
+
+- Twilio Media Streams transport through Pipecat's runner.
+- Local Whisper STT through `WhisperSTTService`.
+- Local Ollama `qwen3.5` through `OLLamaLLMService`.
+- Local Kokoro TTS through `KokoroTTSService`.
+
 Production/demo path:
 
 ```text
