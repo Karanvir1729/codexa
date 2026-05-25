@@ -4,6 +4,7 @@ from fastapi import WebSocket
 
 from .config import Settings
 from .feedback import PromptRepository
+from .local_voice_runtime import build_system_instruction
 
 
 async def run_pipecat_twilio_bot(websocket: WebSocket, settings: Settings, prompt_repo: PromptRepository) -> None:
@@ -63,7 +64,7 @@ async def run_pipecat_twilio_bot(websocket: WebSocket, settings: Settings, promp
         base_url=settings.active_base_url,
         settings=OpenAILLMService.Settings(
             model=settings.active_model,
-            system_instruction=prompt_repo.active().compiled,
+            system_instruction=build_system_instruction(settings, prompt_repo),
             temperature=settings.llm_temperature,
             top_p=settings.llm_top_p,
             max_tokens=settings.max_completion_tokens,

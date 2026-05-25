@@ -25,9 +25,9 @@ class Settings(BaseSettings):
     local_llm_model: str = "Llama-3_3-Nemotron-Super-49B-v1_5"
 
     reasoning_mode: Literal["on", "off"] = "on"
-    llm_temperature: float = 0.6
+    llm_temperature: float = 0.3
     llm_top_p: float = 0.95
-    max_completion_tokens: int = 512
+    max_completion_tokens: int = 128
     llm_timeout_seconds: float = 60
 
     cost_guard_enabled: bool = True
@@ -57,10 +57,17 @@ class Settings(BaseSettings):
     local_audio_output_device_index: int | None = None
     local_audio_input_sample_rate: int = Field(default=16000, ge=8000)
     local_audio_output_sample_rate: int = Field(default=24000, ge=8000)
-    local_stt_model: str = "mlx-community/whisper-large-v3-turbo-q4"
+    local_audio_output_10ms_chunks: int = Field(default=1, ge=1)
+    local_audio_output_end_silence_secs: int = Field(default=0, ge=0)
+    local_stt_provider: Literal["whisperx", "mlx_whisper"] = "whisperx"
+    local_stt_model: str = "large-v3"
     local_stt_no_speech_prob: float = Field(default=0.6, ge=0, le=1)
     local_stt_temperature: float = Field(default=0.0, ge=0)
-    local_stt_ttfs_p99_latency: float = Field(default=1.25, ge=0)
+    local_stt_ttfb_timeout: float = Field(default=0.6, ge=0)
+    local_stt_ttfs_p99_latency: float = Field(default=0.8, ge=0)
+    local_whisperx_device: Literal["auto", "cpu", "cuda"] = "auto"
+    local_whisperx_compute_type: str = "auto"
+    local_whisperx_batch_size: int = Field(default=1, ge=1)
     local_tts_provider: Literal["auto", "kokoro", "fish_speech"] = "auto"
     local_tts_voice: str = "af_heart"
     fish_speech_base_url: str = "http://127.0.0.1:8080"
@@ -73,11 +80,14 @@ class Settings(BaseSettings):
     fish_speech_repetition_penalty: float = Field(default=1.1, ge=0)
     fish_speech_temperature: float = Field(default=0.8, ge=0)
     fish_speech_timeout_seconds: float = Field(default=120, ge=1)
-    local_vad_confidence: float = Field(default=0.65, ge=0, le=1)
-    local_vad_start_secs: float = Field(default=0.15, ge=0)
-    local_vad_stop_secs: float = Field(default=0.25, ge=0)
-    local_vad_min_volume: float = Field(default=0.35, ge=0)
-    local_user_speech_timeout: float = Field(default=0.45, ge=0)
+    local_vad_confidence: float = Field(default=0.5, ge=0, le=1)
+    local_vad_start_secs: float = Field(default=0.05, ge=0)
+    local_vad_stop_secs: float = Field(default=0.12, ge=0)
+    local_vad_min_volume: float = Field(default=0.2, ge=0)
+    local_vad_speech_activity_period: float = Field(default=0.05, ge=0)
+    local_vad_audio_idle_timeout: float = Field(default=0.35, ge=0)
+    local_user_speech_timeout: float = Field(default=0.2, ge=0)
+    local_user_turn_stop_timeout: float = Field(default=1.0, ge=0.1)
 
     latency_target_ms: int = Field(default=1200, ge=100)
     eval_suite_path: str = "backend/evals/customer_intake.yml"

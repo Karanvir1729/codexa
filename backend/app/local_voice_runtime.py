@@ -18,6 +18,7 @@ class LocalVoiceConversationRecorder:
     channel: str = "local_pipecat"
     transport_name: str = "pipecat.local_audio"
     conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    _last_recorded_turn: dict[str, tuple[str, float]] = field(default_factory=dict, init=False)
 
     def start(self) -> None:
         self.db.execute(
@@ -32,8 +33,11 @@ class LocalVoiceConversationRecorder:
                     {
                         "llm_provider": self.settings.llm_provider,
                         "model": self.settings.active_model,
+                        "stt_provider": self.settings.local_stt_provider,
                         "stt_model": self.settings.local_stt_model,
                         "stt_language": self.settings.local_stt_language,
+                        "whisperx_device": self.settings.local_whisperx_device,
+                        "whisperx_compute_type": self.settings.local_whisperx_compute_type,
                         "tts_provider": self.settings.local_tts_provider,
                         "tts_voice": self.settings.local_tts_voice,
                         "fish_speech_reference_id": self.settings.fish_speech_reference_id,
@@ -54,6 +58,12 @@ class LocalVoiceConversationRecorder:
         text = content.strip()
         if not text:
             return ""
+        normalized = " ".join(text.casefold().split())
+        now = time.perf_counter()
+        last = self._last_recorded_turn.get(role)
+        if last and last[0] == normalized and now - last[1] <= 1.25:
+            return ""
+        self._last_recorded_turn[role] = (normalized, now)
         turn_id = str(uuid.uuid4())
         self.db.execute(
             """
@@ -89,6 +99,14 @@ def require_openai_compatible_llm(settings: Settings) -> None:
 
 def build_system_instruction(settings: Settings, prompt_repo: PromptRepository) -> str:
     instruction = prompt_repo.active().compiled
+    instruction = (
+        f"{instruction}\n\n"
+        "Live voice constraints:\n"
+        "- Answer immediately in one short sentence by default.\n"
+        "- Keep normal spoken replies under 35 words; use two sentences only when necessary.\n"
+        "- If the user asks for a long story or explanation, ask how long they want it before continuing.\n"
+        "- Do not mention model identity, internal policy, or provider names unless the user asks."
+    )
     if settings.reasoning_mode == "off":
         return f"/no_think\n{instruction}"
     return instruction
@@ -139,6 +157,38 @@ async def create_local_tts_service(settings: Settings):
     )
 
 
+def create_local_stt_service(settings: Settings):
+    if settings.local_stt_provider == "whisperx":
+        from .whisperx_stt import WhisperXSTTService
+
+        return "whisperx", WhisperXSTTService(
+            model=settings.local_stt_model,
+            device=settings.local_whisperx_device,
+            compute_type=settings.local_whisperx_compute_type,
+            batch_size=settings.local_whisperx_batch_size,
+            language=_language_or_auto(settings.local_stt_language or settings.local_voice_language),
+            no_speech_prob=settings.local_stt_no_speech_prob,
+            sample_rate=settings.local_audio_input_sample_rate,
+            stt_ttfb_timeout=settings.local_stt_ttfb_timeout,
+            ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
+        )
+
+    from pipecat.services.whisper.stt import WhisperSTTServiceMLX
+
+    stt_language = resolve_stt_language(settings)
+    return "mlx_whisper", WhisperSTTServiceMLX(
+        settings=WhisperSTTServiceMLX.Settings(
+            model=settings.local_stt_model,
+            language=stt_language,
+            no_speech_prob=settings.local_stt_no_speech_prob,
+            temperature=settings.local_stt_temperature,
+        ),
+        sample_rate=settings.local_audio_input_sample_rate,
+        stt_ttfb_timeout=settings.local_stt_ttfb_timeout,
+        ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
+    )
+
+
 async def _run_voice_pipeline(
     *,
     settings: Settings,
@@ -159,7 +209,11 @@ async def _run_voice_pipeline(
         LLMFullResponseEndFrame,
         LLMFullResponseStartFrame,
         TextFrame,
+        TTSAudioRawFrame,
+        TTSStoppedFrame,
         TranscriptionFrame,
+        VADUserStartedSpeakingFrame,
+        VADUserStoppedSpeakingFrame,
     )
     from pipecat.pipeline.pipeline import Pipeline
     from pipecat.pipeline.runner import PipelineRunner
@@ -172,9 +226,21 @@ async def _run_voice_pipeline(
     from pipecat.processors.audio.vad_processor import VADProcessor
     from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
     from pipecat.services.openai.llm import OpenAILLMService
-    from pipecat.services.whisper.stt import WhisperSTTServiceMLX
+    from pipecat.turns.user_start import TranscriptionUserTurnStartStrategy, VADUserTurnStartStrategy
     from pipecat.turns.user_stop import SpeechTimeoutUserTurnStopStrategy
     from pipecat.turns.user_turn_strategies import UserTurnStrategies
+
+    @dataclass
+    class VoiceLatencyState:
+        user_vad_started_at: float = 0.0
+        user_vad_stopped_at: float = 0.0
+        user_transcript_at: float = 0.0
+        assistant_llm_started_at: float = 0.0
+        assistant_first_text_at: float = 0.0
+        assistant_first_audio_at: float = 0.0
+        assistant_speaking: bool = False
+
+    latency_state = VoiceLatencyState()
 
     class TranscriptCaptureProcessor(FrameProcessor):
         def __init__(self, *, capture_user: bool = False, capture_assistant: bool = False):
@@ -186,52 +252,112 @@ async def _run_voice_pipeline(
 
         async def process_frame(self, frame: Frame, direction: FrameDirection):
             await super().process_frame(frame, direction)
+            if isinstance(frame, VADUserStartedSpeakingFrame):
+                latency_state.user_vad_started_at = time.perf_counter()
+            elif isinstance(frame, VADUserStoppedSpeakingFrame):
+                latency_state.user_vad_stopped_at = time.perf_counter()
+
             if self._capture_user and isinstance(frame, TranscriptionFrame):
                 text = frame.text.strip()
                 if text:
+                    now = time.perf_counter()
+                    latency_state.user_transcript_at = now
+                    language = str(frame.language) if frame.language else None
+                    vad_to_transcript_ms = (
+                        int((now - latency_state.user_vad_started_at) * 1000)
+                        if latency_state.user_vad_started_at
+                        else None
+                    )
+                    speech_end_to_transcript_ms = (
+                        int((now - latency_state.user_vad_stopped_at) * 1000)
+                        if latency_state.user_vad_stopped_at
+                        else None
+                    )
                     recorder.record_turn(
                         "user",
                         text,
-                        metrics={"language": str(frame.language), "source": "local_whisper"},
+                        metrics={
+                            "language": language,
+                            "source": settings.local_stt_provider,
+                            "stt_model": settings.local_stt_model,
+                            "vad_to_transcript_ms": vad_to_transcript_ms,
+                            "speech_end_to_transcript_ms": speech_end_to_transcript_ms,
+                        },
                     )
                     logger.info(f"USER: {text}")
             elif self._capture_assistant and isinstance(frame, LLMFullResponseStartFrame):
                 self._assistant_parts = []
                 self._assistant_started_at = time.perf_counter()
+                latency_state.assistant_llm_started_at = self._assistant_started_at
+                latency_state.assistant_first_text_at = 0.0
+                latency_state.assistant_first_audio_at = 0.0
+                latency_state.assistant_speaking = False
             elif self._capture_assistant and isinstance(frame, TextFrame):
+                if not latency_state.assistant_first_text_at:
+                    latency_state.assistant_first_text_at = time.perf_counter()
                 self._assistant_parts.append(frame.text)
             elif self._capture_assistant and isinstance(frame, LLMFullResponseEndFrame):
                 text = "".join(self._assistant_parts).strip()
-                latency_ms = (
+                completed_at = time.perf_counter()
+                generation_ms = (
                     int((time.perf_counter() - self._assistant_started_at) * 1000)
                     if self._assistant_started_at
                     else None
                 )
+                speech_to_first_text_ms = (
+                    int((latency_state.assistant_first_text_at - latency_state.user_transcript_at) * 1000)
+                    if latency_state.user_transcript_at and latency_state.assistant_first_text_at
+                    else None
+                )
+                speech_to_first_audio_ms = (
+                    int((latency_state.assistant_first_audio_at - latency_state.user_transcript_at) * 1000)
+                    if latency_state.user_transcript_at and latency_state.assistant_first_audio_at
+                    else None
+                )
+                latency_ms = speech_to_first_audio_ms or speech_to_first_text_ms or generation_ms
                 if text:
                     recorder.record_turn(
                         "assistant",
                         text,
                         latency_ms=latency_ms,
-                        metrics={"source": "local_pipecat"},
+                        metrics={
+                            "source": "local_pipecat",
+                            "generation_ms": generation_ms,
+                            "speech_to_first_text_ms": speech_to_first_text_ms,
+                            "speech_to_first_audio_ms": speech_to_first_audio_ms,
+                            "completed_after_user_transcript_ms": (
+                                int((completed_at - latency_state.user_transcript_at) * 1000)
+                                if latency_state.user_transcript_at
+                                else None
+                            ),
+                        },
                     )
                     logger.info(f"ASSISTANT: {text}")
             elif isinstance(frame, InterruptionFrame):
-                logger.info("INTERRUPTION: user speech interrupted the assistant")
+                since_user_start_ms = (
+                    int((time.perf_counter() - latency_state.user_vad_started_at) * 1000)
+                    if latency_state.user_vad_started_at
+                    else None
+                )
+                logger.info(
+                    "INTERRUPTION: user speech interrupted the assistant "
+                    f"after {since_user_start_ms} ms"
+                )
             elif isinstance(frame, ErrorFrame):
                 logger.error(f"PIPELINE ERROR: {frame.error}")
             await self.push_frame(frame, direction)
 
-    stt_language = resolve_stt_language(settings)
-    stt = WhisperSTTServiceMLX(
-        settings=WhisperSTTServiceMLX.Settings(
-            model=settings.local_stt_model,
-            language=stt_language,
-            no_speech_prob=settings.local_stt_no_speech_prob,
-            temperature=settings.local_stt_temperature,
-        ),
-        sample_rate=settings.local_audio_input_sample_rate,
-        ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
-    )
+    class OutputAudioProbeProcessor(FrameProcessor):
+        async def process_frame(self, frame: Frame, direction: FrameDirection):
+            await super().process_frame(frame, direction)
+            if isinstance(frame, TTSAudioRawFrame) and not latency_state.assistant_first_audio_at:
+                latency_state.assistant_first_audio_at = time.perf_counter()
+                latency_state.assistant_speaking = True
+            elif isinstance(frame, TTSStoppedFrame):
+                latency_state.assistant_speaking = False
+            await self.push_frame(frame, direction)
+
+    stt_provider, stt = create_local_stt_service(settings)
     llm = OpenAILLMService(
         api_key=settings.active_api_key,
         base_url=settings.active_base_url,
@@ -256,20 +382,24 @@ async def _run_voice_pipeline(
                 stop_secs=settings.local_vad_stop_secs,
                 min_volume=settings.local_vad_min_volume,
             ),
-        )
+        ),
+        speech_activity_period=settings.local_vad_speech_activity_period,
+        audio_idle_timeout=settings.local_vad_audio_idle_timeout,
     )
     context = LLMContext()
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
-        user_params=LLMUserAggregatorParams(
+            user_params=LLMUserAggregatorParams(
+            audio_idle_timeout=settings.local_vad_audio_idle_timeout,
             user_turn_strategies=UserTurnStrategies(
+                start=[VADUserTurnStartStrategy(), TranscriptionUserTurnStartStrategy(use_interim=False)],
                 stop=[
                     SpeechTimeoutUserTurnStopStrategy(
                         user_speech_timeout=settings.local_user_speech_timeout
                     )
                 ]
             ),
-            user_turn_stop_timeout=4.0,
+            user_turn_stop_timeout=settings.local_user_turn_stop_timeout,
         ),
     )
     pipeline = Pipeline(
@@ -282,6 +412,7 @@ async def _run_voice_pipeline(
             llm,
             TranscriptCaptureProcessor(capture_assistant=True),
             tts,
+            OutputAudioProbeProcessor(),
             transport.output(),
             assistant_aggregator,
         ]
@@ -306,7 +437,7 @@ async def _run_voice_pipeline(
     logger.info("Local Pipecat voice agent is live.")
     logger.info(f"Conversation ID: {recorder.conversation_id}")
     logger.info(
-        f"STT={settings.local_stt_model} language={settings.local_stt_language} "
+        f"STT={stt_provider}:{settings.local_stt_model} language={settings.local_stt_language} "
         f"TTS={tts_provider} LLM={settings.active_model}"
     )
     logger.info("Speak into the Mac microphone. Start talking over the assistant to test interruption.")
@@ -336,6 +467,8 @@ async def run_local_pipecat_voice_agent(
             audio_out_enabled=True,
             audio_in_sample_rate=settings.local_audio_input_sample_rate,
             audio_out_sample_rate=settings.local_audio_output_sample_rate,
+            audio_out_10ms_chunks=settings.local_audio_output_10ms_chunks,
+            audio_out_end_silence_secs=settings.local_audio_output_end_silence_secs,
             audio_in_passthrough=True,
             input_device_index=settings.local_audio_input_device_index,
             output_device_index=settings.local_audio_output_device_index,
@@ -385,6 +518,8 @@ async def run_browser_pipecat_voice_agent(
             audio_out_enabled=True,
             audio_in_sample_rate=settings.local_audio_input_sample_rate,
             audio_out_sample_rate=settings.local_audio_output_sample_rate,
+            audio_out_10ms_chunks=settings.local_audio_output_10ms_chunks,
+            audio_out_end_silence_secs=settings.local_audio_output_end_silence_secs,
             audio_in_passthrough=True,
         ),
     )

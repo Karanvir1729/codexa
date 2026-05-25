@@ -2,14 +2,15 @@
 from __future__ import annotations
 
 import asyncio
+import io
+import wave
 
 from app.config import get_settings
-from app.local_voice_runtime import create_local_tts_service, resolve_stt_language
+from app.local_voice_runtime import create_local_stt_service, create_local_tts_service
 
 
 async def main() -> None:
     from pipecat.frames.frames import ErrorFrame, TTSAudioRawFrame, TranscriptionFrame
-    from pipecat.services.whisper.stt import WhisperSTTServiceMLX
 
     settings = get_settings()
 
@@ -26,25 +27,26 @@ async def main() -> None:
             raise RuntimeError(frame.error)
     print(f"{tts_provider} ready ({audio_frames} audio frames generated).")
 
-    print(f"Prewarming MLX Whisper model {settings.local_stt_model}...")
-    stt = WhisperSTTServiceMLX(
-        settings=WhisperSTTServiceMLX.Settings(
-            model=settings.local_stt_model,
-            language=resolve_stt_language(settings),
-            no_speech_prob=settings.local_stt_no_speech_prob,
-            temperature=settings.local_stt_temperature,
-        ),
-        sample_rate=settings.local_audio_input_sample_rate,
-        ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
-    )
-    silence = b"\0" * settings.local_audio_input_sample_rate * 2
+    stt_provider, stt = create_local_stt_service(settings)
+    print(f"Prewarming {stt_provider} STT model {settings.local_stt_model}...")
+    silence = _silence_wav(settings.local_audio_input_sample_rate)
     transcriptions = 0
     async for frame in stt.run_stt(silence):
         if isinstance(frame, TranscriptionFrame):
             transcriptions += 1
         elif isinstance(frame, ErrorFrame):
             raise RuntimeError(frame.error)
-    print(f"MLX Whisper ready ({transcriptions} silence transcriptions ignored).")
+    print(f"{stt_provider} ready ({transcriptions} silence transcriptions ignored).")
+
+
+def _silence_wav(sample_rate: int) -> bytes:
+    content = io.BytesIO()
+    with wave.open(content, "wb") as wav:
+        wav.setsampwidth(2)
+        wav.setnchannels(1)
+        wav.setframerate(sample_rate)
+        wav.writeframes(b"\0" * sample_rate * 2)
+    return content.getvalue()
 
 
 if __name__ == "__main__":

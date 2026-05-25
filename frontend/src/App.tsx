@@ -70,6 +70,14 @@ type Turn = {
   prompt_version?: number;
 };
 
+function appendTurn(current: Turn[], next: Turn) {
+  const last = current[current.length - 1];
+  if (last?.role === next.role && last.content.trim() === next.content.trim()) {
+    return current;
+  }
+  return [...current, next];
+}
+
 type EvalRun = {
   id: string;
   suite: string;
@@ -192,18 +200,16 @@ export function App() {
         onUserTranscript: (data: TranscriptData) => {
           const text = data.text?.trim();
           if (!data.final || !text) return;
-          setTurns((current) => [
-            ...current,
-            { id: crypto.randomUUID(), role: "user", content: text }
-          ]);
+          setTurns((current) =>
+            appendTurn(current, { id: crypto.randomUUID(), role: "user", content: text })
+          );
         },
         onBotOutput: (data: BotOutputData) => {
           const text = data.text?.trim();
           if (!text || !data.spoken) return;
-          setTurns((current) => [
-            ...current,
-            { id: crypto.randomUUID(), role: "assistant", content: text }
-          ]);
+          setTurns((current) =>
+            appendTurn(current, { id: crypto.randomUUID(), role: "assistant", content: text })
+          );
         }
       }
     });
@@ -270,7 +276,9 @@ export function App() {
     if (!text || busy) return null;
     setBusy(true);
     setNotice(null);
-    setTurns((current) => [...current, { id: crypto.randomUUID(), role: "user", content: text }]);
+    setTurns((current) =>
+      appendTurn(current, { id: crypto.randomUUID(), role: "user", content: text })
+    );
     setMessage("");
     try {
       const response = await sendMessage(text, conversationId);
@@ -288,16 +296,15 @@ export function App() {
   function applyAssistantResponse(response: ChatResponse) {
     setConversationId(response.conversation_id);
     setCost(response.cost_guard);
-    setTurns((current) => [
-      ...current,
-      {
+    setTurns((current) =>
+      appendTurn(current, {
         id: response.assistant_turn_id,
         role: "assistant",
         content: response.message,
         latency_ms: response.latency_ms,
         prompt_version: response.prompt_version
-      }
-    ]);
+      })
+    );
   }
 
   async function rate(rating: number, label: string) {

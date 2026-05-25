@@ -103,6 +103,16 @@ def test_local_voice_uses_auto_detect_stt_and_explicit_tts_language():
     assert str(resolve_tts_language(settings)) == "en"
 
 
+def test_local_voice_defaults_to_whisperx_and_fast_turn_timing():
+    settings = Settings()
+
+    assert settings.local_stt_provider == "whisperx"
+    assert settings.local_stt_model == "large-v3"
+    assert settings.max_completion_tokens <= 128
+    assert settings.local_vad_start_secs <= 0.05
+    assert settings.local_user_speech_timeout <= 0.2
+
+
 def test_local_voice_records_turns_in_feedback_database(tmp_path: Path):
     settings = Settings(
         database_path=str(tmp_path / "agent.sqlite3"),
@@ -129,6 +139,30 @@ def test_local_voice_records_turns_in_feedback_database(tmp_path: Path):
     assert assistant_turn_id
 
 
+def test_local_voice_recorder_deduplicates_repeated_final_transcripts(tmp_path: Path):
+    settings = Settings(
+        database_path=str(tmp_path / "agent.sqlite3"),
+        llm_provider="ollama",
+        ollama_model="qwen2.5:0.5b",
+    )
+    db = Database(settings.database_path)
+    repo = PromptRepository(db)
+    recorder = LocalVoiceConversationRecorder(db, settings, repo.active().version)
+
+    recorder.start()
+    first_turn_id = recorder.record_turn("user", "Hello.", metrics={"source": "test"})
+    second_turn_id = recorder.record_turn("user", " hello. ", metrics={"source": "test"})
+
+    rows = db.all(
+        "SELECT role, content FROM turns WHERE conversation_id = ? ORDER BY rowid",
+        (recorder.conversation_id,),
+    )
+
+    assert first_turn_id
+    assert second_turn_id == ""
+    assert [(row["role"], row["content"]) for row in rows] == [("user", "Hello.")]
+
+
 def test_local_voice_system_instruction_respects_no_think(tmp_path: Path):
     settings = Settings(
         database_path=str(tmp_path / "agent.sqlite3"),
@@ -137,7 +171,10 @@ def test_local_voice_system_instruction_respects_no_think(tmp_path: Path):
     )
     repo = PromptRepository(Database(settings.database_path))
 
-    assert build_system_instruction(settings, repo).startswith("/no_think\n")
+    instruction = build_system_instruction(settings, repo)
+
+    assert instruction.startswith("/no_think\n")
+    assert "under 35 words" in instruction
 
 
 @pytest.mark.asyncio

@@ -24,7 +24,7 @@ Built locally:
   - `/twilio/inbound` TwiML route.
   - Pipecat Cloud WebSocket shortcut support.
   - self-hosted Pipecat runtime module for STT/LLM/TTS pipeline wiring.
-  - local Pipecat microphone/speaker runtime with open-source MLX Whisper STT, Fish Speech/Kokoro TTS, Silero VAD, and VAD-driven interruption.
+  - local Pipecat microphone/speaker runtime with WhisperX STT, Fish Speech/Kokoro TTS, Silero VAD, and VAD-driven interruption.
 - React operator console:
   - session simulator.
   - feedback submission.
@@ -157,17 +157,19 @@ Run the local Pipecat voice agent:
 Default local voice stack:
 
 - Transport: Pipecat `LocalAudioTransport` using the Mac microphone and speaker.
-- STT: `WhisperSTTServiceMLX` with `mlx-community/whisper-large-v3-turbo-q4` and `LOCAL_STT_LANGUAGE=auto` for multilingual auto-detect.
+- STT: WhisperX with `LOCAL_STT_MODEL=large-v3`, `LOCAL_STT_LANGUAGE=auto`, CPU `int8` on Mac, and CUDA `float16` when a GPU is available.
 - TTS: `LOCAL_TTS_PROVIDER=auto`, which uses a healthy local Fish Speech server when available and falls back to `KokoroTTSService` with voice `af_heart`.
-- VAD/interruption: Pipecat Silero VAD with `SpeechTimeoutUserTurnStopStrategy`.
+- VAD/interruption: Pipecat Silero VAD with a 50 ms speech-start window, 120 ms speech-stop window, 200 ms user speech timeout, and 10 ms output chunks.
 - LLM: Ollama OpenAI-compatible API using `qwen2.5:0.5b`.
 
-On the first run, Kokoro downloads its ONNX model/voice files and MLX Whisper downloads the selected Whisper model. macOS may ask for microphone permission for the terminal app. Speak over the assistant while it is talking to test interruption.
+On the first run, Kokoro downloads its ONNX model/voice files and WhisperX downloads the selected Whisper model. macOS may ask for microphone permission for the terminal app. Speak over the assistant while it is talking to test interruption.
 
-For the fastest smoke test, override STT back to the tiny model:
+For an Apple-Silicon MLX fallback, switch provider and model explicitly:
 
 ```bash
-LOCAL_STT_MODEL=mlx-community/whisper-tiny ./scripts/run_local_voice.sh
+LOCAL_STT_PROVIDER=mlx_whisper \
+LOCAL_STT_MODEL=mlx-community/whisper-large-v3-turbo-q4 \
+./scripts/run_local_voice.sh
 ```
 
 For Fish Speech TTS, start the Fish Speech API server separately and keep this app pointed at it:
@@ -364,9 +366,9 @@ Export curated positive-feedback and passing-eval examples:
   - NVIDIA or AWS-hosted vLLM.
   - Pipecat Cloud, or Deepgram/Cartesia for Twilio self-hosted Pipecat.
 - Run Fish Speech server on a GPU box for production-grade multilingual/multi-speaker TTS.
-- Add WhisperX as a post-call eval/alignment step for diarization and word-level timing; keep local Whisper MLX in the live loop.
+- Add WhisperX alignment/diarization as a post-call eval step for word-level timing; the live loop already uses WhisperX ASR without alignment to protect turn latency.
 - Run a live phone-call test through Twilio.
-- Add latency benchmarking around Twilio media stream, Pipecat transport, model response time, TTS, and end-to-end turn-taking.
+- Expand latency benchmarking around Twilio media stream, Pipecat transport, STT, model first token, TTS first audio, and end-to-end turn-taking.
 - Add more eval suites for:
   - interruption handling.
   - tool-call correctness.

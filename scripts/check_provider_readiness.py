@@ -265,6 +265,7 @@ def check_pipecat(file_env: dict[str, str]) -> Check:
             "av": "pipecat-ai[webrtc]",
             "cv2": "opencv-python from pipecat-ai[webrtc]",
             "pyaudio": "pipecat-ai[local] plus Homebrew portaudio on macOS",
+            "whisperx": "WhisperX live STT",
             "mlx_whisper": "pipecat-ai[mlx-whisper]",
             "kokoro_onnx": "pipecat-ai[kokoro]",
             "ormsgpack": "Fish Speech HTTP msgpack client",
@@ -305,7 +306,7 @@ def check_pipecat(file_env: dict[str, str]) -> Check:
         return Check(
             "pipecat",
             "ready",
-            "Local Pipecat voice runtime is installed with PyAudio, MLX Whisper, Kokoro, "
+            "Local Pipecat voice runtime is installed with PyAudio, WhisperX, MLX fallback, Kokoro, "
             f"Fish Speech client support, and Silero VAD. {fish_detail}",
         )
     if voice_runtime == "pipecat" and deepgram and cartesia:
