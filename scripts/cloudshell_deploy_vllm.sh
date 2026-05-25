@@ -22,6 +22,16 @@ MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
 AUTO_STOP_HOURS="${AUTO_STOP_HOURS:-4}"
 HUGGINGFACE_TOKEN="${HUGGINGFACE_TOKEN:-}"
 REQUIRE_BUDGET="${REQUIRE_BUDGET:-true}"
+AWS_SPEND_CAP_USD="${AWS_SPEND_CAP_USD:-95}"
+INSTANCE_HOURLY_USD_ESTIMATE="${INSTANCE_HOURLY_USD_ESTIMATE:-1.25}"
+ESTIMATED_NEW_COST_USD="${ESTIMATED_NEW_COST_USD:-$(python3 - "$AUTO_STOP_HOURS" "$INSTANCE_HOURLY_USD_ESTIMATE" <<'PY'
+import sys
+
+hours = float(sys.argv[1])
+hourly = float(sys.argv[2])
+print(f"{hours * hourly:.2f}")
+PY
+)}"
 
 if [[ "$INSTANCE_TYPE" != "g5.xlarge" && "${ALLOW_EXPENSIVE_PROFILE:-false}" != "true" ]]; then
   echo "Refusing to deploy $INSTANCE_TYPE without ALLOW_EXPENSIVE_PROFILE=true." >&2
@@ -41,6 +51,10 @@ if [[ "$REQUIRE_BUDGET" == "true" ]]; then
     fi
   fi
 fi
+
+AWS_SPEND_CAP_USD="$AWS_SPEND_CAP_USD" \
+ESTIMATED_NEW_COST_USD="$ESTIMATED_NEW_COST_USD" \
+"$(dirname "$0")/cloudshell_cost_guard.sh"
 
 G_QUOTA="$(aws service-quotas get-service-quota \
   --region "$REGION" \
@@ -68,6 +82,8 @@ About to create/update CloudFormation stack:
   Model: $MODEL_ID
   Allowed CIDR: $ALLOWED_CIDR
   Auto-stop: ${AUTO_STOP_HOURS}h
+  Local AWS spend cap: \$$AWS_SPEND_CAP_USD
+  Estimated max instance cost: \$$ESTIMATED_NEW_COST_USD
 
 This launches GPU EC2 capacity that should draw from AWS credits if credits are active.
 The instance is configured to stop automatically after ${AUTO_STOP_HOURS}h.

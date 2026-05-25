@@ -11,6 +11,7 @@ case "$PROFILE" in
     export TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-1}"
     export MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
     export AUTO_STOP_HOURS="${AUTO_STOP_HOURS:-4}"
+    export INSTANCE_HOURLY_USD_ESTIMATE="${INSTANCE_HOURLY_USD_ESTIMATE:-1.25}"
     ;;
   short-49b)
     if [[ "${ALLOW_EXPENSIVE_PROFILE:-false}" != "true" ]]; then
@@ -23,6 +24,7 @@ case "$PROFILE" in
     export TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-4}"
     export MAX_MODEL_LEN="${MAX_MODEL_LEN:-32768}"
     export AUTO_STOP_HOURS="${AUTO_STOP_HOURS:-2}"
+    export INSTANCE_HOURLY_USD_ESTIMATE="${INSTANCE_HOURLY_USD_ESTIMATE:-15.00}"
     ;;
   *)
     echo "Unknown profile: $PROFILE" >&2

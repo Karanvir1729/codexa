@@ -1,3 +1,12 @@
+export type CostGuard = {
+  enabled: boolean;
+  cap_usd: number;
+  used_usd: number;
+  remaining_usd: number;
+  reserved_usd: number;
+  actual_usd: number;
+};
+
 export type Health = {
   status: string;
   environment: string;
@@ -6,6 +15,7 @@ export type Health = {
   voice_runtime: string;
   prompt_version: number;
   reasoning_mode: string;
+  cost_guard: CostGuard;
 };
 
 export type ChatResponse = {
@@ -17,6 +27,7 @@ export type ChatResponse = {
   model: string;
   provider: string;
   prompt_version: number;
+  cost_guard: CostGuard;
 };
 
 export type PromptState = {
@@ -49,6 +60,10 @@ export function getHealth() {
 
 export function getPrompt() {
   return request<PromptState>("/api/prompt");
+}
+
+export function getCost() {
+  return request<{ cost_guard: CostGuard }>("/api/cost");
 }
 
 export function sendMessage(message: string, conversationId?: string) {
@@ -95,4 +110,3 @@ export function listEvalRuns() {
     }>;
   }>("/api/evals/runs");
 }
-

@@ -36,9 +36,11 @@ Built locally:
   - optional short benchmark profile for larger 49B Nemotron runs gated behind an explicit opt-in.
 - Cost controls:
   - deploy script refuses GPU launch without budget guardrail or `BUDGET_EMAIL`.
+  - deploy script checks AWS Cost Explorer month-to-date account spend before GPU launch.
   - deploy script checks GPU quota before launch.
   - default GPU instance auto-stops after 4 hours.
   - budget and no-compute guardrail helper scripts are included.
+  - app runtime blocks LLM calls when the local estimated spend cap would be exceeded.
 
 Verified locally:
 
@@ -60,6 +62,8 @@ There is no universal AWS switch that blocks every paid action, especially while
 - destroy GPU stacks immediately after testing.
 
 AWS credits should be consumed before normal billing only if the credits are active and applicable to the launched service/region/instance type. Always verify credits and budgets in the AWS console before launching compute.
+
+AWS applies eligible credits automatically before charging remaining eligible usage. This project still defaults to a `$95` local cap rather than `$100` so there is a buffer for delayed billing data, Cost Explorer checks, taxes, or non-eligible charges.
 
 ## Repository Secret Policy
 
@@ -107,6 +111,16 @@ LLM_PROVIDER=mock
 
 That mode is intentionally free and does not call paid APIs.
 
+The local runtime cap is enabled by default:
+
+```bash
+COST_GUARD_ENABLED=true
+COST_GUARD_CAP_USD=95
+COST_GUARD_RESERVE_USD_PER_CALL=0.01
+```
+
+Every model call reserves estimated cost before the LLM request starts. If the next request would exceed the local cap, the API returns HTTP `402` and does not call the model provider.
+
 ## NVIDIA NIM Mode
 
 Set:
@@ -147,6 +161,12 @@ Deploy the credit-safe profile:
 
 ```bash
 ./scripts/cloudshell_deploy_profiles.sh credit-safe
+```
+
+The deploy script runs `scripts/cloudshell_cost_guard.sh` before creating the GPU stack. It checks AWS Cost Explorer month-to-date unblended cost and refuses to deploy if projected spend would exceed `AWS_SPEND_CAP_USD`:
+
+```bash
+AWS_SPEND_CAP_USD=95 ./scripts/cloudshell_deploy_profiles.sh credit-safe
 ```
 
 After the stack is ready, set the backend to the vLLM endpoint:

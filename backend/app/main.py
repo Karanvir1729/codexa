@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from .agent import AgentService
 from .config import Settings, get_settings
+from .cost_guard import CostGuard, CostLimitExceeded
 from .db import Database, dumps, loads
 from .evaluator import EvalRunner
 from .feedback import FeedbackLearner, PromptRepository
@@ -47,11 +48,26 @@ class ExportTrainingDataRequest(BaseModel):
 
 
 settings: Settings = get_settings()
+REPO_ROOT = Path(__file__).resolve().parents[2]
 db = Database(settings.database_path)
 prompt_repo = PromptRepository(db)
 learner = FeedbackLearner(db, prompt_repo, settings.latency_target_ms)
-agent = AgentService(db, settings, make_llm_client(settings))
+cost_guard = CostGuard(db, settings)
+agent = AgentService(db, settings, make_llm_client(settings), cost_guard)
 eval_runner = EvalRunner(db, agent, learner)
+
+
+def resolve_repo_path(path: str) -> Path:
+    candidate = Path(path)
+    if candidate.is_absolute():
+        return candidate
+    repo_candidate = REPO_ROOT / candidate
+    if repo_candidate.exists():
+        return repo_candidate
+    backend_candidate = REPO_ROOT / "backend" / candidate
+    if backend_candidate.exists():
+        return backend_candidate
+    return repo_candidate
 
 app = FastAPI(title="Voice Agent Feedback Engine", version="0.1.0")
 app.add_middleware(
@@ -61,6 +77,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(CostLimitExceeded)
+async def cost_limit_handler(_request: Request, exc: CostLimitExceeded) -> Response:
+    return Response(
+        content=dumps(
+            {
+                "detail": str(exc),
+                "cost_guard": exc.snapshot.to_dict(),
+                "attempted_usd": round(exc.attempted_usd, 6),
+            }
+        ),
+        status_code=402,
+        media_type="application/json",
+    )
 
 
 @app.get("/health")
@@ -74,6 +105,7 @@ async def health() -> dict[str, Any]:
         "voice_runtime": settings.voice_runtime,
         "prompt_version": prompt.version,
         "reasoning_mode": settings.reasoning_mode,
+        "cost_guard": cost_guard.snapshot().to_dict(),
     }
 
 
@@ -86,7 +118,13 @@ async def config() -> dict[str, Any]:
         "voice_runtime": settings.voice_runtime,
         "twilio_ready": bool(settings.twilio_account_sid and settings.twilio_auth_token),
         "pipecat_cloud_ready": bool(settings.pipecat_cloud_ws_url and settings.pipecat_cloud_service_host),
+        "cost_guard": cost_guard.snapshot().to_dict(),
     }
+
+
+@app.get("/api/cost")
+async def cost() -> dict[str, Any]:
+    return {"cost_guard": cost_guard.snapshot().to_dict()}
 
 
 @app.post("/api/chat")
@@ -161,7 +199,7 @@ async def prompt() -> dict[str, Any]:
 
 @app.post("/api/evals/run")
 async def run_eval(payload: EvalRunRequest) -> dict[str, Any]:
-    path = Path(payload.suite_path)
+    path = resolve_repo_path(payload.suite_path)
     return await eval_runner.run_suite(path, apply_feedback=payload.apply_feedback)
 
 

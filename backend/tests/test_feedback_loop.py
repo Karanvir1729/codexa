@@ -7,6 +7,7 @@ import pytest
 
 from app.agent import AgentService
 from app.config import Settings
+from app.cost_guard import CostGuard, CostLimitExceeded
 from app.db import Database
 from app.evaluator import EvalRunner
 from app.feedback import FeedbackLearner, PromptRepository
@@ -52,6 +53,31 @@ def test_feedback_rebuilds_active_prompt(runtime):
     assert "clarifying question" in after.learned_hints
 
 
+def test_cost_guard_blocks_when_local_cap_would_be_exceeded(tmp_path: Path):
+    settings = Settings(
+        database_path=str(tmp_path / "agent.sqlite3"),
+        cost_guard_cap_usd=0.01,
+        cost_guard_reserve_usd_per_call=0.02,
+    )
+    guard = CostGuard(Database(settings.database_path), settings)
+
+    with pytest.raises(CostLimitExceeded):
+        guard.reserve(0.02, source="llm_call", provider="nvidia", model="test-model")
+
+
+def test_cost_guard_records_actual_estimated_spend(tmp_path: Path):
+    settings = Settings(database_path=str(tmp_path / "agent.sqlite3"), cost_guard_cap_usd=1)
+    guard = CostGuard(Database(settings.database_path), settings)
+
+    event_id = guard.reserve(0.01, source="llm_call", provider="nvidia", model="test-model")
+    guard.finalize(event_id, 0.005, units={"total_tokens": 100})
+
+    snapshot = guard.snapshot()
+    assert snapshot.actual_usd == 0.005
+    assert snapshot.reserved_usd == 0
+    assert snapshot.remaining_usd == 0.995
+
+
 @pytest.mark.asyncio
 async def test_eval_suite_records_results(runtime):
     _settings, db, repo, learner, agent = runtime
@@ -63,4 +89,3 @@ async def test_eval_suite_records_results(runtime):
     assert result["status"] == "passed"
     assert result["aggregate_score"] == 1.0
     assert repo.active().version == result["prompt_version"]
-

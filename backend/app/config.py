@@ -27,6 +27,15 @@ class Settings(BaseSettings):
     max_completion_tokens: int = 512
     llm_timeout_seconds: float = 60
 
+    cost_guard_enabled: bool = True
+    cost_guard_cap_usd: float = Field(default=95.0, ge=0)
+    cost_guard_reserve_usd_per_call: float = Field(default=0.01, ge=0)
+    cost_guard_mock_call_usd: float = Field(default=0.0, ge=0)
+    cost_guard_local_call_usd: float = Field(default=0.0, ge=0)
+    cost_guard_nvidia_call_usd: float = Field(default=0.01, ge=0)
+    cost_guard_nvidia_input_per_1m_tokens_usd: float = Field(default=0.0, ge=0)
+    cost_guard_nvidia_output_per_1m_tokens_usd: float = Field(default=0.0, ge=0)
+
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
     twilio_from_number: str | None = None
@@ -73,4 +82,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-

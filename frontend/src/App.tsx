@@ -10,12 +10,15 @@ import {
   RefreshCcw,
   Send,
   Server,
+  ShieldCheck,
   Sparkles,
   ThumbsDown,
   ThumbsUp
 } from "lucide-react";
 import {
   ChatResponse,
+  CostGuard,
+  getCost,
   getHealth,
   getPrompt,
   Health,
@@ -58,13 +61,20 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [evalBusy, setEvalBusy] = useState(false);
   const [evalRuns, setEvalRuns] = useState<EvalRun[]>([]);
+  const [cost, setCost] = useState<CostGuard | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   async function refresh() {
-    const [healthState, promptState, runs] = await Promise.all([getHealth(), getPrompt(), listEvalRuns()]);
+    const [healthState, promptState, runs, costState] = await Promise.all([
+      getHealth(),
+      getPrompt(),
+      listEvalRuns(),
+      getCost()
+    ]);
     setHealth(healthState);
     setPrompt(promptState);
     setEvalRuns(runs.runs);
+    setCost(costState.cost_guard);
   }
 
   useEffect(() => {
@@ -95,6 +105,7 @@ export function App() {
 
   function applyAssistantResponse(response: ChatResponse) {
     setConversationId(response.conversation_id);
+    setCost(response.cost_guard);
     setTurns((current) => [
       ...current,
       {
@@ -166,6 +177,12 @@ export function App() {
           <Metric icon={<PhoneCall />} label="Voice" value={health?.voice_runtime ?? "loading"} detail="Twilio + Pipecat path" />
           <Metric icon={<Gauge />} label="Latency" value={`${latency} ms`} detail="latest assistant turn" />
           <Metric icon={<CheckCircle2 />} label="Prompt" value={`v${prompt?.version ?? "-"}`} detail={health?.reasoning_mode ?? ""} />
+          <Metric
+            icon={<ShieldCheck />}
+            label="Local cap"
+            value={`$${(cost?.remaining_usd ?? 0).toFixed(2)} left`}
+            detail={`of $${(cost?.cap_usd ?? 0).toFixed(2)}`}
+          />
         </section>
 
         <section className="mainGrid">
@@ -265,4 +282,3 @@ function Metric({ icon, label, value, detail }: { icon: JSX.Element; label: stri
     </div>
   );
 }
-

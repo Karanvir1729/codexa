@@ -4,17 +4,25 @@ import uuid
 from typing import Any
 
 from .config import Settings
+from .cost_guard import CostGuard
 from .db import Database, dumps, loads
 from .feedback import PromptRepository
 from .llm import LLMClient, Message
 
 
 class AgentService:
-    def __init__(self, db: Database, settings: Settings, llm: LLMClient) -> None:
+    def __init__(
+        self,
+        db: Database,
+        settings: Settings,
+        llm: LLMClient,
+        cost_guard: CostGuard | None = None,
+    ) -> None:
         self.db = db
         self.settings = settings
         self.llm = llm
         self.prompts = PromptRepository(db)
+        self.cost_guard = cost_guard or CostGuard(db, settings)
 
     def ensure_conversation(
         self,
@@ -69,12 +77,31 @@ class AgentService:
         )
         prompt = self.prompts.active()
         messages = self.history(cid)
-        result = await self.llm.generate(messages, prompt.compiled)
+        reservation_id = self.cost_guard.reserve(
+            self.cost_guard.reserve_amount_for_provider(self.settings.llm_provider),
+            source="llm_call",
+            provider=self.settings.llm_provider,
+            model=self.settings.active_model,
+            metadata={"conversation_id": cid, "channel": channel},
+        )
+        try:
+            result = await self.llm.generate(messages, prompt.compiled)
+        except Exception as exc:
+            self.cost_guard.release(reservation_id, {"error": type(exc).__name__})
+            raise
+        actual_cost = self.cost_guard.estimate_llm_call(result.provider, result.raw)
+        self.cost_guard.finalize(
+            reservation_id,
+            actual_cost,
+            units=result.raw.get("usage", {}),
+            metadata={"conversation_id": cid, "channel": channel},
+        )
         assistant_turn_id = str(uuid.uuid4())
         metrics = {
             "provider": result.provider,
             "raw": result.raw,
             "latency_target_ms": self.settings.latency_target_ms,
+            "estimated_cost_usd": actual_cost,
         }
         self.db.execute(
             """
@@ -102,6 +129,7 @@ class AgentService:
             "model": result.model,
             "provider": result.provider,
             "prompt_version": prompt.version,
+            "cost_guard": self.cost_guard.snapshot().to_dict(),
         }
 
     def transcript(self, conversation_id: str) -> list[dict[str, Any]]:
@@ -127,4 +155,3 @@ class AgentService:
             }
             for row in rows
         ]
-

@@ -82,9 +82,22 @@ CREATE TABLE IF NOT EXISTS prompt_versions (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS cost_events (
+    id TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT,
+    amount_usd REAL NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('reserved', 'actual', 'released')),
+    units_json TEXT NOT NULL DEFAULT '{}',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_turns_conversation ON turns(conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_feedback_conversation ON feedback(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_eval_results_run ON eval_results(run_id);
+CREATE INDEX IF NOT EXISTS idx_cost_events_status ON cost_events(status, created_at);
 """
 
 
