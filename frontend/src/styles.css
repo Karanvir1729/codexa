@@ -110,7 +110,6 @@ button:disabled {
 .sectionHead,
 .feedbackActions,
 .buttonRow,
-.voiceLab,
 .composer,
 .statusGrid,
 .metric,
@@ -313,27 +312,6 @@ h2 {
   padding: 0 18px 18px;
 }
 
-.voiceLab {
-  justify-content: space-between;
-  gap: 14px;
-  margin: 0 18px 18px;
-  border: 1px solid #26313a;
-  border-radius: 8px;
-  background: #0a0e12;
-  padding: 12px;
-}
-
-.voiceLab strong,
-.voiceLab span {
-  display: block;
-}
-
-.voiceLab span {
-  margin-top: 3px;
-  color: #91a0aa;
-  font-size: 13px;
-}
-
 .promptChips button {
   flex: 0 0 auto;
   background: #172027;
@@ -487,14 +465,8 @@ pre {
   }
 
   .feedbackActions,
-  .voiceLab,
   .composer button {
     width: 100%;
-  }
-
-  .voiceLab {
-    align-items: stretch;
-    flex-direction: column;
   }
 
   .turn {

@@ -24,9 +24,9 @@ Built locally:
   - `/twilio/inbound` TwiML route.
   - Pipecat Cloud WebSocket shortcut support.
   - self-hosted Pipecat runtime module for STT/LLM/TTS pipeline wiring.
+  - local Pipecat microphone/speaker runtime with open-source MLX Whisper STT, Kokoro TTS, Silero VAD, and VAD-driven interruption.
 - React operator console:
   - session simulator.
-  - browser voice lab for microphone input and spoken local responses.
   - feedback submission.
   - eval run controls.
   - scheduled eval start/stop controls.
@@ -54,6 +54,7 @@ Verified locally:
 - Frontend production build passes.
 - Eval runner passes.
 - Training-data export works.
+- Local Pipecat voice dependencies install on macOS with Homebrew `portaudio`.
 
 ## Important Cost Boundary
 
@@ -133,6 +134,38 @@ OLLAMA_MODEL=qwen2.5:0.5b \
 
 `qwen2.5:0.5b` is intentionally the tiny test model. It is for proving the voice, eval, feedback, and routing loop locally; swap the model later for NVIDIA NIM or AWS vLLM without changing the application flow.
 
+## Local Pipecat Voice
+
+This is the current no-paid-provider voice path. It does not use browser speech APIs, Deepgram, Cartesia, Pipecat Cloud, Twilio, NVIDIA credits, or AWS GPU quota.
+
+Install the local voice dependencies:
+
+```bash
+brew install portaudio
+source .venv/bin/activate
+pip install -e "backend[voice]"
+./scripts/setup_ollama_local.sh
+PYTHONPATH=backend .venv/bin/python scripts/prewarm_local_voice_models.py
+```
+
+Run the local Pipecat voice agent:
+
+```bash
+./scripts/run_local_voice.sh
+```
+
+Default local voice stack:
+
+- Transport: Pipecat `LocalAudioTransport` using the Mac microphone and speaker.
+- STT: `WhisperSTTServiceMLX` with `mlx-community/whisper-tiny`.
+- TTS: `KokoroTTSService` with voice `af_heart`.
+- VAD/interruption: Pipecat Silero VAD with `SpeechTimeoutUserTurnStopStrategy`.
+- LLM: Ollama OpenAI-compatible API using `qwen2.5:0.5b`.
+
+On the first run, Kokoro downloads its ONNX model/voice files and MLX Whisper downloads the tiny Whisper model. macOS may ask for microphone permission for the terminal app. Speak over the assistant while it is talking to test interruption.
+
+Local voice turns are written to the same SQLite `conversations` and `turns` tables as the text/API loop, so later eval export and feedback work against the same data store.
+
 The local runtime cap is enabled by default:
 
 ```bash
@@ -171,7 +204,8 @@ Current known deployment reality:
 - AWS GPU EC2 cannot be launched until AWS approves the rejected G/VT quota request.
 - Hosted NVIDIA NIM is the immediate fallback for the high-reasoning model path.
 - Twilio requires `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM_NUMBER`.
-- Pipecat requires either `PIPECAT_CLOUD_WS_URL` + `PIPECAT_CLOUD_SERVICE_HOST`, or self-hosted `VOICE_RUNTIME=pipecat` with Deepgram and Cartesia keys.
+- Local Pipecat voice uses `VOICE_RUNTIME=local_pipecat` and the open-source local dependencies above.
+- Twilio Pipecat provider mode still requires either `PIPECAT_CLOUD_WS_URL` + `PIPECAT_CLOUD_SERVICE_HOST`, or `VOICE_RUNTIME=pipecat` with Deepgram and Cartesia keys.
 
 An AWS quota appeal draft is in `docs/aws_quota_appeal.md`.
 
@@ -258,6 +292,13 @@ CARTESIA_API_KEY=<from provider>
 PUBLIC_BASE_URL=https://<your-api-host>
 ```
 
+For local open-source voice without telephony:
+
+```bash
+VOICE_RUNTIME=local_pipecat
+./scripts/run_local_voice.sh
+```
+
 Point the Twilio voice webhook to:
 
 ```text
@@ -305,7 +346,7 @@ Export curated positive-feedback and passing-eval examples:
 - Add real provider credentials locally:
   - Twilio.
   - NVIDIA or AWS-hosted vLLM.
-  - Pipecat Cloud, or Deepgram/Cartesia for self-hosted Pipecat.
+  - Pipecat Cloud, or Deepgram/Cartesia for Twilio self-hosted Pipecat.
 - Run a live phone-call test through Twilio.
 - Add latency benchmarking around Twilio media stream, Pipecat transport, model response time, TTS, and end-to-end turn-taking.
 - Add more eval suites for:
@@ -355,4 +396,16 @@ No check the chrome profile (Mehar (work))
 
 ```text
 push changes to a repo, add Karanvir1729, make a readme file with the current stuff that is done. and stuff that needs to be done along with all the prompts that I have given you so far. make the repo private and push all the secrets too so that karan can work on his device.
+```
+
+```text
+Okay, so if we're using NVIDIA for a high-resing model, can't we just use a local model to just test things out first? I have Olama installed. I feel there should be a very fast open-source model that you can install on my own computer. Make sure that model is less than a gigabyte, and you could use actually a Quinn, like a few hundred million parameter models, and just make that entire workflow almost instant. Like, we wanna just test the voice agent, right? The backend model can be changed constantly. The high-resing model, it's going to be a bit tough to navigate, so currently what we need to do is use a self-hosted pipeline for the pipecat, and see if our current system even works, right? And then once later on, we can incorporate the AWS GPU and other things. And for now, if possible, can you open up a case and make that use case more specific on why we need this GPU usage, because AWS is not letting us use the GPU, right? So we need that, otherwise we can't even do this hackathon. So go ahead and actually do this, because I don't wanna run this, I wanna actually try this out, make changes, and try to get this done.
+```
+
+```text
+does the voice agent work? can I talk, does interruption work?
+```
+
+```text
+Why the hell are we using the browser stuff, take a look at pipecat and almost all of pipecat's used stt and tts are opensource why the hell are we not downloading it and using it. BUILD IT and MAKE IT WORK. I want a full voice agent not a hardcoded siri.
 ```

@@ -6,7 +6,6 @@ import {
   Clock3,
   Gauge,
   MessageSquare,
-  Mic,
   PhoneCall,
   Play,
   RefreshCcw,
@@ -16,8 +15,7 @@ import {
   Sparkles,
   Square,
   ThumbsDown,
-  ThumbsUp,
-  Volume2
+  ThumbsUp
 } from "lucide-react";
 import {
   ChatResponse,
@@ -53,31 +51,6 @@ type EvalRun = {
   aggregate_score: number;
 };
 
-type SpeechRecognitionResultEvent = {
-  results: ArrayLike<ArrayLike<{ transcript: string }>>;
-};
-
-type SpeechRecognitionLike = {
-  lang: string;
-  continuous: boolean;
-  interimResults: boolean;
-  maxAlternatives: number;
-  onend: (() => void) | null;
-  onerror: ((event: { error?: string }) => void) | null;
-  onresult: ((event: SpeechRecognitionResultEvent) => void) | null;
-  start: () => void;
-  stop: () => void;
-};
-
-type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
-
-declare global {
-  interface Window {
-    SpeechRecognition?: SpeechRecognitionConstructor;
-    webkitSpeechRecognition?: SpeechRecognitionConstructor;
-  }
-}
-
 const prompts = [
   "Hello, I need help with my account.",
   "I want to cancel an order and get a refund.",
@@ -97,9 +70,6 @@ export function App() {
   const [scheduler, setScheduler] = useState<EvalSchedulerState | null>(null);
   const [cost, setCost] = useState<CostGuard | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [voiceSupported, setVoiceSupported] = useState(false);
-  const [listening, setListening] = useState(false);
-  const [voiceTranscript, setVoiceTranscript] = useState("");
 
   async function refresh() {
     const [healthState, promptState, runs, costState, schedulerState] = await Promise.all([
@@ -118,13 +88,12 @@ export function App() {
 
   useEffect(() => {
     refresh().catch((error) => setNotice(error.message));
-    setVoiceSupported(Boolean(window.SpeechRecognition || window.webkitSpeechRecognition));
   }, []);
 
   const lastAssistant = useMemo(() => [...turns].reverse().find((turn) => turn.role === "assistant"), [turns]);
   const latency = lastAssistant?.latency_ms ?? 0;
 
-  async function submit(event?: FormEvent, override?: string, speakResponse = false) {
+  async function submit(event?: FormEvent, override?: string) {
     event?.preventDefault();
     const text = (override ?? message).trim();
     if (!text || busy) return null;
@@ -135,7 +104,6 @@ export function App() {
     try {
       const response = await sendMessage(text, conversationId);
       applyAssistantResponse(response);
-      if (speakResponse) speak(response.message);
       await refresh();
       return response;
     } catch (error) {
@@ -202,41 +170,6 @@ export function App() {
     }
   }
 
-  function speak(text: string) {
-    if (!window.speechSynthesis || !text.trim()) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 1.05;
-    utterance.pitch = 1;
-    window.speechSynthesis.speak(utterance);
-  }
-
-  function startVoiceTurn() {
-    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!Recognition) {
-      setNotice("Browser speech recognition is not available.");
-      return;
-    }
-    const recognition = new Recognition();
-    recognition.lang = "en-US";
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
-    recognition.onend = () => setListening(false);
-    recognition.onerror = (event) => {
-      setListening(false);
-      setNotice(event.error ? `Voice input failed: ${event.error}` : "Voice input failed");
-    };
-    recognition.onresult = (event) => {
-      const transcript = event.results[0]?.[0]?.transcript?.trim() ?? "";
-      setVoiceTranscript(transcript);
-      if (transcript) void submit(undefined, transcript, true);
-    };
-    setListening(true);
-    setNotice(null);
-    recognition.start();
-  }
-
   return (
     <main className="shell">
       <aside className="rail">
@@ -267,7 +200,7 @@ export function App() {
 
         <section className="statusGrid">
           <Metric icon={<Brain />} label="Model" value={health?.model ?? "loading"} detail={health?.llm_provider ?? ""} />
-          <Metric icon={<PhoneCall />} label="Voice" value={health?.voice_runtime ?? "loading"} detail="Twilio + Pipecat path" />
+          <Metric icon={<PhoneCall />} label="Voice" value={health?.voice_runtime ?? "loading"} detail="Pipecat local/Twilio path" />
           <Metric icon={<Gauge />} label="Latency" value={`${latency} ms`} detail="latest assistant turn" />
           <Metric icon={<CheckCircle2 />} label="Prompt" value={`v${prompt?.version ?? "-"}`} detail={health?.reasoning_mode ?? ""} />
           <Metric
@@ -301,7 +234,7 @@ export function App() {
               {turns.length === 0 ? (
                 <div className="emptyState">
                   <Activity size={22} />
-                  <p>Start a web turn or connect Twilio to stream live calls into the same feedback loop.</p>
+                  <p>Start a text turn here, or run the local Pipecat voice agent to stream microphone audio into the same feedback loop.</p>
                 </div>
               ) : (
                 turns.map((turn) => (
@@ -312,21 +245,6 @@ export function App() {
                   </article>
                 ))
               )}
-            </div>
-
-            <div className="voiceLab">
-              <div>
-                <strong>Browser Voice</strong>
-                <span>{voiceTranscript || "Local speech test path"}</span>
-              </div>
-              <div className="buttonRow">
-                <button disabled={!voiceSupported || busy || listening} onClick={startVoiceTurn}>
-                  <Mic size={16} /> {listening ? "Listening" : "Talk"}
-                </button>
-                <button disabled={!lastAssistant} onClick={() => speak(lastAssistant?.content ?? "")}>
-                  <Volume2 size={16} /> Speak
-                </button>
-              </div>
             </div>
 
             <div className="promptChips">

@@ -46,10 +46,25 @@ class Settings(BaseSettings):
 
     pipecat_cloud_ws_url: str | None = None
     pipecat_cloud_service_host: str | None = None
-    voice_runtime: Literal["text", "pipecat"] = "text"
+    voice_runtime: Literal["text", "pipecat", "local_pipecat"] = "text"
     deepgram_api_key: str | None = None
     cartesia_api_key: str | None = None
     cartesia_voice_id: str = "71a7ad14-091c-4e8e-a314-022ece01c121"
+    local_voice_language: str = "en"
+    local_audio_input_device_index: int | None = None
+    local_audio_output_device_index: int | None = None
+    local_audio_input_sample_rate: int = Field(default=16000, ge=8000)
+    local_audio_output_sample_rate: int = Field(default=24000, ge=8000)
+    local_stt_model: str = "mlx-community/whisper-tiny"
+    local_stt_no_speech_prob: float = Field(default=0.6, ge=0, le=1)
+    local_stt_temperature: float = Field(default=0.0, ge=0)
+    local_stt_ttfs_p99_latency: float = Field(default=1.25, ge=0)
+    local_tts_voice: str = "af_heart"
+    local_vad_confidence: float = Field(default=0.65, ge=0, le=1)
+    local_vad_start_secs: float = Field(default=0.15, ge=0)
+    local_vad_stop_secs: float = Field(default=0.25, ge=0)
+    local_vad_min_volume: float = Field(default=0.35, ge=0)
+    local_user_speech_timeout: float = Field(default=0.45, ge=0)
 
     latency_target_ms: int = Field(default=1200, ge=100)
     eval_suite_path: str = "backend/evals/customer_intake.yml"

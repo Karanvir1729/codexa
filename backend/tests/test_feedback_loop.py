@@ -14,6 +14,13 @@ from app.eval_scheduler import EvalScheduler
 from app.evaluator import EvalRunner
 from app.feedback import FeedbackLearner, PromptRepository
 from app.llm import MockLLMClient
+from app.local_voice_runtime import (
+    LocalVoiceConversationRecorder,
+    build_system_instruction,
+    require_openai_compatible_llm,
+)
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture()
@@ -80,11 +87,55 @@ def test_cost_guard_records_actual_estimated_spend(tmp_path: Path):
     assert snapshot.remaining_usd == 0.995
 
 
+def test_local_voice_requires_real_llm_provider(tmp_path: Path):
+    settings = Settings(database_path=str(tmp_path / "agent.sqlite3"), llm_provider="mock")
+
+    with pytest.raises(RuntimeError, match="LLM_PROVIDER=ollama"):
+        require_openai_compatible_llm(settings)
+
+
+def test_local_voice_records_turns_in_feedback_database(tmp_path: Path):
+    settings = Settings(
+        database_path=str(tmp_path / "agent.sqlite3"),
+        llm_provider="ollama",
+        ollama_model="qwen2.5:0.5b",
+    )
+    db = Database(settings.database_path)
+    repo = PromptRepository(db)
+    recorder = LocalVoiceConversationRecorder(db, settings, repo.active().version)
+
+    recorder.start()
+    recorder.record_turn("user", "hello from microphone", metrics={"source": "test"})
+    assistant_turn_id = recorder.record_turn("assistant", "hello back", latency_ms=123)
+
+    rows = db.all(
+        "SELECT role, content, latency_ms, model FROM turns WHERE conversation_id = ? ORDER BY rowid",
+        (recorder.conversation_id,),
+    )
+
+    assert [row["role"] for row in rows] == ["user", "assistant"]
+    assert rows[0]["content"] == "hello from microphone"
+    assert rows[1]["latency_ms"] == 123
+    assert rows[1]["model"] == "qwen2.5:0.5b"
+    assert assistant_turn_id
+
+
+def test_local_voice_system_instruction_respects_no_think(tmp_path: Path):
+    settings = Settings(
+        database_path=str(tmp_path / "agent.sqlite3"),
+        llm_provider="ollama",
+        reasoning_mode="off",
+    )
+    repo = PromptRepository(Database(settings.database_path))
+
+    assert build_system_instruction(settings, repo).startswith("/no_think\n")
+
+
 @pytest.mark.asyncio
 async def test_eval_suite_records_results(runtime):
     _settings, db, repo, learner, agent = runtime
     runner = EvalRunner(db, agent, learner)
-    suite = Path(os.environ.get("EVAL_SUITE", "evals/customer_intake.yml"))
+    suite = Path(os.environ.get("EVAL_SUITE", str(BACKEND_ROOT / "evals/customer_intake.yml")))
 
     result = await runner.run_suite(suite, apply_feedback=True)
 
@@ -99,7 +150,7 @@ async def test_eval_scheduler_run_once_records_status(runtime):
     runner = EvalRunner(db, agent, learner)
     scheduler = EvalScheduler(
         runner,
-        lambda path: Path(path),
+        lambda path: Path(path) if Path(path).is_absolute() else BACKEND_ROOT / path,
         "evals/customer_intake.yml",
         interval_seconds=60,
         apply_feedback=True,

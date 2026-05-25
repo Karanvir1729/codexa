@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import importlib.util
 import json
 import os
 import subprocess
@@ -255,13 +256,42 @@ def check_pipecat(file_env: dict[str, str]) -> Check:
     cartesia = env_value("CARTESIA_API_KEY", file_env)
     if cloud_ws and cloud_host:
         return Check("pipecat", "ready", "Pipecat Cloud WebSocket route is configured.")
+    if voice_runtime == "local_pipecat":
+        required_modules = {
+            "pipecat": "pipecat-ai",
+            "pyaudio": "pipecat-ai[local] plus Homebrew portaudio on macOS",
+            "mlx_whisper": "pipecat-ai[mlx-whisper]",
+            "kokoro_onnx": "pipecat-ai[kokoro]",
+            "onnxruntime": "pipecat-ai base Silero VAD dependency",
+        }
+        missing = [name for name in required_modules if importlib.util.find_spec(name) is None]
+        if missing:
+            details = ", ".join(f"{name} ({required_modules[name]})" for name in missing)
+            return Check(
+                "pipecat",
+                "blocked",
+                f"Local Pipecat mode is selected, but missing modules: {details}.",
+                'Run: brew install portaudio && .venv/bin/python -m pip install -e "backend[voice]".',
+            )
+        return Check(
+            "pipecat",
+            "ready",
+            "Local Pipecat voice runtime is installed with PyAudio, MLX Whisper, Kokoro, and Silero VAD.",
+        )
     if voice_runtime == "pipecat" and deepgram and cartesia:
         return Check("pipecat", "ready", "Self-hosted Pipecat runtime has STT and TTS keys configured.")
+    if voice_runtime == "pipecat":
+        return Check(
+            "pipecat",
+            "blocked",
+            "VOICE_RUNTIME=pipecat is selected for Twilio media streams, but Deepgram/Cartesia keys are missing.",
+            "Set DEEPGRAM_API_KEY and CARTESIA_API_KEY, or use VOICE_RUNTIME=local_pipecat for local open-source voice testing.",
+        )
     return Check(
         "pipecat",
-        "blocked",
-        "No Pipecat Cloud route is set, and self-hosted VOICE_RUNTIME=pipecat is missing Deepgram/Cartesia keys.",
-        "Set PIPECAT_CLOUD_WS_URL + PIPECAT_CLOUD_SERVICE_HOST, or set VOICE_RUNTIME=pipecat with DEEPGRAM_API_KEY and CARTESIA_API_KEY.",
+        "info",
+        "Pipecat is not selected for the current runtime.",
+        "Set VOICE_RUNTIME=local_pipecat for local open-source voice, or configure Twilio/Pipecat provider mode later.",
     )
 
 

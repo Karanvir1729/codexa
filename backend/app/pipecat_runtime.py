@@ -32,6 +32,7 @@ async def run_pipecat_twilio_bot(websocket: WebSocket, settings: Settings, promp
         FastAPIWebsocketParams,
         FastAPIWebsocketTransport,
     )
+    from openai import NOT_GIVEN
 
     start_message = await websocket.receive_json()
     if start_message.get("event") != "start":
@@ -65,7 +66,8 @@ async def run_pipecat_twilio_bot(websocket: WebSocket, settings: Settings, promp
             system_instruction=prompt_repo.active().compiled,
             temperature=settings.llm_temperature,
             top_p=settings.llm_top_p,
-            max_completion_tokens=settings.max_completion_tokens,
+            max_tokens=settings.max_completion_tokens,
+            max_completion_tokens=NOT_GIVEN,
         ),
     )
     stt = DeepgramSTTService(api_key=settings.deepgram_api_key or "missing")
