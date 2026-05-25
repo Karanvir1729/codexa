@@ -13,10 +13,13 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:8000"
     allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
-    llm_provider: Literal["mock", "nvidia", "local"] = "mock"
+    llm_provider: Literal["mock", "nvidia", "local", "ollama"] = "mock"
     nvidia_api_key: str | None = None
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     nvidia_model: str = "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+    ollama_base_url: str = "http://localhost:11434/v1"
+    ollama_api_key: str = "ollama"
+    ollama_model: str = "qwen2.5:0.5b"
     local_llm_base_url: str = "http://localhost:5000/v1"
     local_llm_api_key: str = "dummy"
     local_llm_model: str = "Llama-3_3-Nemotron-Super-49B-v1_5"
@@ -61,6 +64,8 @@ class Settings(BaseSettings):
     def active_model(self) -> str:
         if self.llm_provider == "local":
             return self.local_llm_model
+        if self.llm_provider == "ollama":
+            return self.ollama_model
         if self.llm_provider == "nvidia":
             return self.nvidia_model
         return "mock-agent"
@@ -69,6 +74,8 @@ class Settings(BaseSettings):
     def active_base_url(self) -> str | None:
         if self.llm_provider == "local":
             return self.local_llm_base_url
+        if self.llm_provider == "ollama":
+            return self.ollama_base_url
         if self.llm_provider == "nvidia":
             return self.nvidia_base_url
         return None
@@ -77,6 +84,8 @@ class Settings(BaseSettings):
     def active_api_key(self) -> str | None:
         if self.llm_provider == "local":
             return self.local_llm_api_key
+        if self.llm_provider == "ollama":
+            return self.ollama_api_key
         if self.llm_provider == "nvidia":
             return self.nvidia_api_key
         return None

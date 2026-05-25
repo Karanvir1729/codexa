@@ -128,7 +128,7 @@ class CostGuard:
     def estimate_llm_call(self, provider: str, raw: dict[str, Any]) -> float:
         if provider == "mock":
             return self.settings.cost_guard_mock_call_usd
-        if provider == "local":
+        if provider in {"local", "ollama"}:
             return self.settings.cost_guard_local_call_usd
         if provider == "nvidia":
             usage = loads(dumps(raw.get("usage", {})), {})
@@ -144,4 +144,8 @@ class CostGuard:
     def reserve_amount_for_provider(self, provider: str) -> float:
         if provider == "mock":
             return self.settings.cost_guard_mock_call_usd
+        if provider in {"local", "ollama"}:
+            return self.settings.cost_guard_local_call_usd
+        if provider == "nvidia":
+            return self.settings.cost_guard_nvidia_call_usd
         return self.settings.cost_guard_reserve_usd_per_call

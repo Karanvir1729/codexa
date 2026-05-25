@@ -11,6 +11,7 @@ Built locally:
 - FastAPI backend with health checks, chat endpoint, Twilio inbound webhook, feedback capture, prompt-versioning, and eval APIs.
 - OpenAI-compatible LLM adapter supporting:
   - `mock` mode for free local testing.
+  - Ollama mode for local under-1GB workflow tests.
   - NVIDIA NIM endpoint mode.
   - self-hosted local/AWS vLLM endpoint mode.
 - Continuous feedback loop:
@@ -25,6 +26,7 @@ Built locally:
   - self-hosted Pipecat runtime module for STT/LLM/TTS pipeline wiring.
 - React operator console:
   - session simulator.
+  - browser voice lab for microphone input and spoken local responses.
   - feedback submission.
   - eval run controls.
   - scheduled eval start/stop controls.
@@ -36,6 +38,7 @@ Built locally:
   - CloudShell discovery/deploy/destroy scripts.
   - credit-safe deployment profile using `g5.xlarge`.
   - optional short benchmark profile for larger 49B Nemotron runs gated behind an explicit opt-in.
+  - provider readiness checker for AWS, NVIDIA NIM, Twilio, Pipecat, and local backend.
 - Cost controls:
   - deploy script refuses GPU launch without budget guardrail or `BUDGET_EMAIL`.
   - deploy script checks AWS Cost Explorer month-to-date account spend before GPU launch.
@@ -113,6 +116,23 @@ LLM_PROVIDER=mock
 
 That mode is intentionally free and does not call paid APIs.
 
+For a local model that is still fast enough for workflow testing, install Ollama and pull the under-1GB Qwen model:
+
+```bash
+./scripts/setup_ollama_local.sh
+```
+
+Then run the backend with:
+
+```bash
+LLM_PROVIDER=ollama \
+OLLAMA_BASE_URL=http://localhost:11434/v1 \
+OLLAMA_MODEL=qwen2.5:0.5b \
+./scripts/run_backend.sh
+```
+
+`qwen2.5:0.5b` is intentionally the tiny test model. It is for proving the voice, eval, feedback, and routing loop locally; swap the model later for NVIDIA NIM or AWS vLLM without changing the application flow.
+
 The local runtime cap is enabled by default:
 
 ```bash
@@ -132,6 +152,29 @@ docker-compose up --build
 
 The frontend container serves React through nginx on `http://localhost:8080` and proxies `/api`, `/health`, and `/twilio` traffic to the backend service.
 
+## Provider Readiness
+
+Run this before attempting real provider traffic:
+
+```bash
+./scripts/check_provider_readiness.sh
+```
+
+Add `--live` when credentials are present and you want to make real provider validation calls:
+
+```bash
+./scripts/check_provider_readiness.sh --live
+```
+
+Current known deployment reality:
+
+- AWS GPU EC2 cannot be launched until AWS approves the rejected G/VT quota request.
+- Hosted NVIDIA NIM is the immediate fallback for the high-reasoning model path.
+- Twilio requires `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM_NUMBER`.
+- Pipecat requires either `PIPECAT_CLOUD_WS_URL` + `PIPECAT_CLOUD_SERVICE_HOST`, or self-hosted `VOICE_RUNTIME=pipecat` with Deepgram and Cartesia keys.
+
+An AWS quota appeal draft is in `docs/aws_quota_appeal.md`.
+
 ## NVIDIA NIM Mode
 
 Set:
@@ -143,7 +186,7 @@ NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
 NVIDIA_MODEL=nvidia/llama-3.3-nemotron-super-49b-v1.5
 ```
 
-Use this only when credits or free access are confirmed.
+Use this when AWS GPU quota is blocked or when NVIDIA API trial access is available.
 
 ## AWS GPU vLLM Mode
 
