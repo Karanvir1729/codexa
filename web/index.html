@@ -16,23 +16,24 @@
   </head>
   <body>
     <main class="shell">
-      <section class="hero panel">
-        <div class="hero-copy">
+      <section class="app-header panel">
+        <div class="header-copy">
           <div class="brand-row">
             <img class="app-mark" src="/icons/agentic-coding-icon.svg" alt="" />
-            <p class="eyebrow">OpenClaw-style Codex voice control</p>
+            <p class="eyebrow">OpenClaw + Codex</p>
           </div>
-          <h1>Talk to your computer. Codex does the work.</h1>
+          <h1>Agentic Coding Assistant</h1>
           <p class="goal">
-            A focused voice UI for coding tasks: speak a request, route it through OpenClaw, let Codex edit and test,
-            then monitor the run in the activity log.
+            Voice, text, phone, and SMS control for Codex. Pick a project, send the request, and watch OpenClaw
+            mirror the work.
           </p>
           <div class="route-strip" aria-label="Agent route">
             <span>Voice</span>
+            <span>Text</span>
             <span>Phone/SMS</span>
             <span>OpenClaw</span>
             <span>Codex</span>
-            <span>Activity mirror</span>
+            <span>Activity log</span>
           </div>
         </div>
         <div class="status-card">
@@ -46,12 +47,12 @@
       <section class="stage">
         <aside class="controls panel">
           <div class="panel-head">
-            <p class="label">Talk to Codex</p>
-            <h2>Session controls</h2>
+            <p class="label">Input</p>
+            <h2>Voice + text</h2>
           </div>
 
           <div class="button-pair">
-            <button id="startBtn" class="primary">Start voice session</button>
+            <button id="startBtn" class="primary">Start voice</button>
             <button id="stopBtn" class="secondary" disabled>Stop</button>
           </div>
 
@@ -73,7 +74,7 @@
 
             <label class="toggle">
               <input id="speechIntentToggle" type="checkbox" checked />
-              <span>Clean speech into a prompt</span>
+              <span>Clean speech prompt</span>
             </label>
 
             <label class="toggle">
@@ -92,7 +93,7 @@
           </label>
 
           <details class="settings-block" open>
-            <summary>Speech input</summary>
+            <summary>Prompt cleanup</summary>
             <div class="settings-grid">
               <label class="field">
                 <span>Cleanup level</span>
@@ -139,7 +140,7 @@ ship it => Implement the change, verify it, then summarize files and checks.</te
           </details>
 
           <details class="settings-block">
-            <summary>Voice and profile</summary>
+            <summary>Audio + profile</summary>
             <label class="field">
               <span>Voice speed</span>
               <input id="rateSlider" type="range" min="0.85" max="1.25" step="0.05" value="1.02" />
@@ -189,9 +190,9 @@ ship it => Implement the change, verify it, then summarize files and checks.</te
             <div class="session-planner-head">
               <div>
                 <p class="label">Workspace</p>
-                <h2>Pick the project before you speak</h2>
+                <h2>Project + chat</h2>
               </div>
-              <p id="sessionState" class="session-state">Pick an existing chat or start a new one.</p>
+              <p id="sessionState" class="session-state">Choose a project or start a Codex-visible chat.</p>
             </div>
 
             <div class="session-grid">
@@ -235,7 +236,7 @@ ship it => Implement the change, verify it, then summarize files and checks.</te
 
           <div class="live">
             <div>
-              <p class="label">Live transcript</p>
+              <p class="label">Live input</p>
               <p id="liveTranscript" class="live-text">Start a session and ask for coding help.</p>
             </div>
             <div>
@@ -251,11 +252,11 @@ ship it => Implement the change, verify it, then summarize files and checks.</te
               id="textInput"
               autocomplete="off"
               aria-describedby="textRouteNote"
-              placeholder="Type a coding request..."
+              placeholder="Ask Codex to build, fix, test, or explain..."
             />
             <button type="submit">Send</button>
             <p id="textRouteNote" class="text-route-note">
-              Text uses the same project, chat, OpenClaw/Codex route, workspace, and activity mirror as voice.
+              Same project, chat, OpenClaw/Codex route, and activity mirror as voice.
             </p>
           </form>
         </section>
@@ -263,22 +264,22 @@ ship it => Implement the change, verify it, then summarize files and checks.</te
         <aside class="debug panel">
           <div class="panel-head">
             <p class="label">Activity proof</p>
-            <h2>OpenClaw + Codex</h2>
+            <h2>Codex proof</h2>
           </div>
 
           <div class="proof-card">
             <p class="label">Control route</p>
             <p id="codexPilotState" class="live-text muted">
-              On by default. Voice coding turns route OpenClaw -> Codex; workspace paths appear here while runs execute.
+              OpenClaw routes work into Codex. Workspace paths and run status appear here.
             </p>
           </div>
 
           <div class="pipeline">
-            <div><strong>1</strong><span>Speech cleaned into a coding prompt</span></div>
-            <div><strong>2</strong><span>OpenClaw controls Codex/system tools</span></div>
-            <div><strong>3</strong><span>Codex edits, tests, and reports back</span></div>
-            <div><strong>4</strong><span>Voice, SMS, and text share the same chat history</span></div>
-            <div><strong>5</strong><span>Read-only mirror lands in Codex activity</span></div>
+            <div><strong>1</strong><span>Clean prompt</span></div>
+            <div><strong>2</strong><span>Run OpenClaw</span></div>
+            <div><strong>3</strong><span>Codex edits + tests</span></div>
+            <div><strong>4</strong><span>Shared chat history</span></div>
+            <div><strong>5</strong><span>Visible in Codex</span></div>
           </div>
 
           <p class="label">Call / chat history</p>
@@ -298,7 +299,7 @@ ship it => Implement the change, verify it, then summarize files and checks.</te
             <summary>Speech diagnostics</summary>
             <p class="label">Flow layer</p>
             <p id="flowState" class="live-text muted">
-              Backtrack, filler cleanup, smart punctuation, lists, snippets, dictionary corrections, and style shaping are active.
+              Cleanup, snippets, dictionary corrections, and style shaping are active.
             </p>
 
             <p class="label">Recent speech history</p>

@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 test("main voice UI exposes installable speech-layer controls", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "Talk to your computer. Codex does the work." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Agentic Coding Assistant" })).toBeVisible();
   await expect(page.locator("#codexPilotToggle")).toBeVisible();
   await expect(page.locator("#codexPilotToggle")).toBeChecked();
   await expect(page.locator("#codexControlProvider")).toBeVisible();
@@ -13,12 +13,12 @@ test("main voice UI exposes installable speech-layer controls", async ({ page })
   await expect(page.locator("#flowWritingStyle")).toBeVisible();
   await expect(page.locator("#flowDictionary")).toContainText("Codex");
   await expect(page.locator("#flowSnippets")).toContainText("run tests");
-  await expect(page.getByRole("heading", { name: "Pick the project before you speak" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Project + chat" })).toBeVisible();
   await expect(page.locator("#projectMode")).toBeVisible();
   await expect(page.locator("#sessionSelect")).toBeVisible();
   await expect(page.getByRole("button", { name: "Start chat" })).toBeVisible();
   await expect(page.locator("#textInput")).toHaveAttribute("aria-describedby", "textRouteNote");
-  await expect(page.locator("#textRouteNote")).toContainText("same project, chat, OpenClaw/Codex route");
+  await expect(page.locator("#textRouteNote")).toContainText("Same project, chat, OpenClaw/Codex route");
   await expect(page.locator("#telephonyState")).toContainText("Twilio:");
   await expect(page.getByText("Phone/SMS")).toBeVisible();
   await expect(page.getByRole("link", { name: "Test dashboard" })).toBeVisible();
