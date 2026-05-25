@@ -787,6 +787,185 @@ function streamCodexJsonLine(res, line, state) {
   }
 }
 
+function writeOpenAIChunk(res, id, delta = {}, finishReason = null) {
+  const chunk = {
+    id,
+    object: "chat.completion.chunk",
+    created: Math.floor(Date.now() / 1000),
+    model: CODEX_PILOT_MODEL || "codex-pilot",
+    choices: [
+      {
+        index: 0,
+        delta,
+        finish_reason: finishReason,
+      },
+    ],
+  };
+  res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+}
+
+function extractPhoneMessages(messages = []) {
+  return Array.isArray(messages)
+    ? messages
+        .filter((message) => message && typeof message.content === "string" && ["user", "assistant", "system"].includes(message.role))
+        .slice(-CODEX_PILOT_MAX_CONTEXT_MESSAGES)
+    : [];
+}
+
+function buildPhoneCodexPrompt(messages = []) {
+  const recent = extractPhoneMessages(messages)
+    .map((message) => `${message.role.toUpperCase()}: ${message.content.trim()}`)
+    .join("\n\n");
+  const latestUser = [...extractPhoneMessages(messages)].reverse().find((message) => message.role === "user")?.content ?? "";
+
+  return [
+    CODEX_PILOT_SYSTEM_PROMPT,
+    "",
+    "You are currently powering Tutor-Tron over a phone call through Twilio and Pipecat.",
+    "Act like a concise coding receptionist for this repo: answer what you are doing, inspect/edit/test when asked, and summarize results in spoken language.",
+    "Keep the final response short enough to be read over a phone call. Avoid markdown tables and long logs.",
+    "",
+    "Recent phone conversation:",
+    recent || "(none)",
+    "",
+    "Latest caller request to satisfy now:",
+    latestUser,
+  ].join("\n");
+}
+
+async function handlePhoneCodexCompletion(req, res) {
+  const body = await readJson(req);
+  const id = `chatcmpl-phone-${randomUUID()}`;
+  const stream = body.stream !== false;
+
+  if (!stream) {
+    json(res, 400, { error: "Phone Codex bridge currently supports stream=true only." });
+    return;
+  }
+
+  if (!CODEX_PILOT_ENABLED || !fs.existsSync(CODEX_PILOT_COMMAND)) {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    writeOpenAIChunk(res, id, {
+      role: "assistant",
+      content: "Codex pilot is not available on this laptop yet.",
+    });
+    writeOpenAIChunk(res, id, {}, "stop");
+    res.write("data: [DONE]\n\n");
+    res.end();
+    return;
+  }
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  writeOpenAIChunk(res, id, { role: "assistant" });
+
+  const prompt = buildPhoneCodexPrompt(body.messages);
+  const args = [];
+  if (CODEX_PILOT_MODEL) args.push("-m", CODEX_PILOT_MODEL);
+  args.push("-a", CODEX_PILOT_APPROVAL);
+  args.push("exec", "--json", "--cd", __dirname, "--sandbox", CODEX_PILOT_SANDBOX, "-");
+
+  const child = spawn(CODEX_PILOT_COMMAND, args, {
+    cwd: __dirname,
+    env: {
+      ...process.env,
+      NO_COLOR: "1",
+      FORCE_COLOR: "0",
+    },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const state = { finalText: "", sentFinal: false };
+  const timeout = setTimeout(() => {
+    child.kill("SIGTERM");
+    if (!state.sentFinal) {
+      writeOpenAIChunk(res, id, {
+        content: "Codex is still working and hit the phone response timeout. Ask me for status in a moment.",
+      });
+      state.sentFinal = true;
+    }
+  }, CODEX_PILOT_TIMEOUT_MS);
+
+  let stdoutBuffer = "";
+  let stderrBuffer = "";
+
+  child.stdout.on("data", (chunk) => {
+    stdoutBuffer += chunk.toString();
+    const lines = stdoutBuffer.split("\n");
+    stdoutBuffer = lines.pop() ?? "";
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      try {
+        const parsed = JSON.parse(line);
+        if (parsed.type === "item.completed" && parsed.item?.type === "agent_message" && parsed.item.text) {
+          state.finalText = String(parsed.item.text).trim();
+        }
+      } catch {
+        // Ignore non-JSON diagnostics.
+      }
+    }
+  });
+
+  child.stderr.on("data", (chunk) => {
+    stderrBuffer += chunk.toString();
+  });
+
+  child.stdin.end(prompt);
+  req.on("close", () => {
+    if (child.exitCode === null) child.kill("SIGTERM");
+  });
+
+  child.on("error", (error) => {
+    clearTimeout(timeout);
+    if (!state.sentFinal) {
+      writeOpenAIChunk(res, id, {
+        content: `Codex failed to start: ${error instanceof Error ? error.message : "unknown error"}`,
+      });
+      state.sentFinal = true;
+    }
+    writeOpenAIChunk(res, id, {}, "stop");
+    res.write("data: [DONE]\n\n");
+    res.end();
+  });
+
+  child.on("close", (code) => {
+    clearTimeout(timeout);
+    if (stdoutBuffer.trim()) {
+      try {
+        const parsed = JSON.parse(stdoutBuffer.trim());
+        if (parsed.type === "item.completed" && parsed.item?.type === "agent_message" && parsed.item.text) {
+          state.finalText = String(parsed.item.text).trim();
+        }
+      } catch {
+        // Ignore trailing partial diagnostics.
+      }
+    }
+
+    if (!state.sentFinal) {
+      const fallbackDetail = stderrBuffer.trim().split("\n").filter(Boolean).slice(-1)[0];
+      const text =
+        state.finalText ||
+        (code === 0
+          ? "Codex finished, but did not return a spoken summary."
+          : `Codex exited with code ${code}.${fallbackDetail ? ` ${fallbackDetail}` : ""}`);
+      writeOpenAIChunk(res, id, { content: text.slice(0, 1800) });
+      state.sentFinal = true;
+    }
+    writeOpenAIChunk(res, id, {}, "stop");
+    res.write("data: [DONE]\n\n");
+    res.end();
+  });
+}
+
 async function handleCodexPilot(req, res) {
   const body = await readJson(req);
   const messages = Array.isArray(body.messages) ? body.messages : [];
@@ -1406,6 +1585,11 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === "/api/codex/exec" && req.method === "POST") {
       await handleCodexPilot(req, res);
+      return;
+    }
+
+    if (url.pathname === "/api/phone/v1/chat/completions" && req.method === "POST") {
+      await handlePhoneCodexCompletion(req, res);
       return;
     }
 

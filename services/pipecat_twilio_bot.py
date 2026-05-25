@@ -15,6 +15,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
 )
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
+from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.kokoro.tts import KokoroTTSService
 from pipecat.services.ollama.llm import OLLamaLLMService
 from pipecat.services.whisper.stt import Model, WhisperSTTService
@@ -65,15 +66,28 @@ async def run_bot(transport, handle_sigint: bool) -> None:
         language=Language.EN,
     )
 
-    llm = OLLamaLLMService(
-        base_url=_ollama_base_url(),
-        settings=OLLamaLLMService.Settings(
-            model=os.getenv("OLLAMA_MODEL", "qwen3.5"),
-            system_instruction=PHONE_AGENT_SYSTEM_PROMPT,
-            temperature=float(os.getenv("PHONE_LLM_TEMPERATURE", "0.35")),
-            max_tokens=int(os.getenv("PHONE_LLM_MAX_TOKENS", "180")),
-        ),
-    )
+    if os.getenv("PHONE_LLM_PROVIDER", "codex") == "codex":
+        llm = OpenAILLMService(
+            api_key=os.getenv("PHONE_CODEX_BRIDGE_API_KEY", "local-codex"),
+            base_url=os.getenv("PHONE_CODEX_BRIDGE_BASE_URL", "http://127.0.0.1:3000/api/phone/v1"),
+            settings=OpenAILLMService.Settings(
+                model=os.getenv("PHONE_CODEX_MODEL", "codex-pilot"),
+                system_instruction=PHONE_AGENT_SYSTEM_PROMPT,
+                temperature=float(os.getenv("PHONE_LLM_TEMPERATURE", "0.2")),
+                max_tokens=int(os.getenv("PHONE_LLM_MAX_TOKENS", "220")),
+            ),
+            retry_timeout_secs=float(os.getenv("PHONE_CODEX_TIMEOUT_SECS", "300")),
+        )
+    else:
+        llm = OLLamaLLMService(
+            base_url=_ollama_base_url(),
+            settings=OLLamaLLMService.Settings(
+                model=os.getenv("OLLAMA_MODEL", "qwen3.5"),
+                system_instruction=PHONE_AGENT_SYSTEM_PROMPT,
+                temperature=float(os.getenv("PHONE_LLM_TEMPERATURE", "0.35")),
+                max_tokens=int(os.getenv("PHONE_LLM_MAX_TOKENS", "180")),
+            ),
+        )
 
     tts = KokoroTTSService(
         settings=KokoroTTSService.Settings(
