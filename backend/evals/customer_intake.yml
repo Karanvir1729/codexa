@@ -1,0 +1,44 @@
+name: customer_intake
+cases:
+  - id: account_lookup_requires_identifier
+    turns:
+      - "I need help with my account."
+    assertions:
+      must_include:
+        - "account"
+      asks_clarifying_question: true
+      must_not_include:
+        - "I found"
+      max_latency_ms: 1200
+    pass_threshold: 1.0
+
+  - id: cancellation_collects_required_fields
+    turns:
+      - "I want to cancel an order and get a refund."
+    assertions:
+      must_include:
+        - "order ID"
+        - "reason"
+      must_not_include:
+        - "cancelled"
+      max_latency_ms: 1200
+    pass_threshold: 1.0
+
+  - id: handoff_respected
+    turns:
+      - "Can I talk to a human agent?"
+    assertions:
+      must_include:
+        - "human"
+      max_latency_ms: 1200
+    pass_threshold: 1.0
+
+  - id: latency_strategy
+    turns:
+      - "How are you reducing network latency?"
+    assertions:
+      must_include:
+        - "latency"
+      max_latency_ms: 1200
+    pass_threshold: 1.0
+
