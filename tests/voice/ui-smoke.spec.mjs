@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 test("main voice UI exposes installable speech-layer controls", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "Coding voice agent" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Talk to your computer. Codex does the work." })).toBeVisible();
   await expect(page.locator("#codexPilotToggle")).toBeVisible();
   await expect(page.locator("#codexPilotToggle")).toBeChecked();
   await expect(page.locator("#codexControlProvider")).toBeVisible();
@@ -13,10 +13,10 @@ test("main voice UI exposes installable speech-layer controls", async ({ page })
   await expect(page.locator("#flowWritingStyle")).toBeVisible();
   await expect(page.locator("#flowDictionary")).toContainText("Codex");
   await expect(page.locator("#flowSnippets")).toContainText("run tests");
-  await expect(page.getByRole("heading", { name: "Choose a project and chat" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pick the project before you speak" })).toBeVisible();
   await expect(page.locator("#projectMode")).toBeVisible();
   await expect(page.locator("#sessionSelect")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Start new chat" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start chat" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Test dashboard" })).toBeVisible();
 
   const manifestResponse = await page.request.get("/manifest.webmanifest");

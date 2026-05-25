@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Agentic Coding Assistant</title>
     <meta name="theme-color" content="#2563eb" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Coding Agent" />
@@ -15,14 +16,23 @@
   </head>
   <body>
     <main class="shell">
-      <section class="topbar">
-        <div>
-          <p class="eyebrow">Agentic Coding Assistant</p>
-          <h1>Coding voice agent</h1>
+      <section class="hero panel">
+        <div class="hero-copy">
+          <div class="brand-row">
+            <img class="app-mark" src="/icons/agentic-coding-icon.svg" alt="" />
+            <p class="eyebrow">OpenClaw-style Codex voice control</p>
+          </div>
+          <h1>Talk to your computer. Codex does the work.</h1>
           <p class="goal">
-            Goal: a full end-to-end voice agent with turn-based listening, Flow-style speech cleanup,
-            Codex/OpenClaw control, streaming responses, and spoken coding status.
+            A focused voice UI for coding tasks: speak a request, route it through OpenClaw, let Codex edit and test,
+            then monitor the run in the activity log.
           </p>
+          <div class="route-strip" aria-label="Agent route">
+            <span>Voice</span>
+            <span>OpenClaw</span>
+            <span>Codex</span>
+            <span>Activity mirror</span>
+          </div>
         </div>
         <div class="status-card">
           <span id="agentState" class="state-pill">Idle</span>
@@ -33,8 +43,15 @@
 
       <section class="stage">
         <aside class="controls panel">
-          <button id="startBtn" class="primary">Start voice session</button>
-          <button id="stopBtn" class="secondary" disabled>Stop</button>
+          <div class="panel-head">
+            <p class="label">Talk to Codex</p>
+            <h2>Session controls</h2>
+          </div>
+
+          <div class="button-pair">
+            <button id="startBtn" class="primary">Start voice session</button>
+            <button id="stopBtn" class="secondary" disabled>Stop</button>
+          </div>
 
           <div class="meter-wrap">
             <div class="meter-head">
@@ -46,23 +63,25 @@
             </div>
           </div>
 
-          <label class="toggle">
-            <input id="autoSpeakToggle" type="checkbox" checked />
-            <span>Speak AI responses</span>
-          </label>
+          <div class="quick-toggles">
+            <label class="toggle">
+              <input id="autoSpeakToggle" type="checkbox" checked />
+              <span>Speak responses</span>
+            </label>
 
-          <label class="toggle">
-            <input id="speechIntentToggle" type="checkbox" checked />
-            <span>Flow-style speech intent</span>
-          </label>
+            <label class="toggle">
+              <input id="speechIntentToggle" type="checkbox" checked />
+              <span>Clean speech into a prompt</span>
+            </label>
 
-          <label class="toggle">
-            <input id="codexPilotToggle" type="checkbox" checked />
-            <span>Codex pilot mode</span>
-          </label>
+            <label class="toggle">
+              <input id="codexPilotToggle" type="checkbox" checked />
+              <span>Use OpenClaw + Codex</span>
+            </label>
+          </div>
 
           <label class="field">
-            <span>Codex control plane</span>
+            <span>Control plane</span>
             <select id="codexControlProvider">
               <option value="openclaw" selected>OpenClaw controls Codex/system</option>
               <option value="codex">Direct Codex CLI</option>
@@ -70,40 +89,43 @@
             </select>
           </label>
 
-          <div class="flow-config">
-            <p class="label">Speech input layer</p>
-            <label class="field">
-              <span>Cleanup level</span>
-              <select id="flowCleanupLevel">
-                <option value="light">Light</option>
-                <option value="medium">Medium</option>
-                <option value="high" selected>High</option>
-              </select>
-            </label>
-            <label class="field">
-              <span>Writing style</span>
-              <select id="flowWritingStyle">
-                <option value="coding" selected>Coding prompt</option>
-                <option value="bullets">Bullets</option>
-                <option value="numbered">Numbered list</option>
-                <option value="formal">Formal</option>
-                <option value="casual">Casual</option>
-              </select>
-            </label>
-            <label class="field">
-              <span>Language hint</span>
-              <select id="flowLanguage">
-                <option value="auto" selected>Auto detect</option>
-                <option value="en-US">English US</option>
-                <option value="en-GB">English UK</option>
-                <option value="hinglish">Hinglish</option>
-                <option value="es">Spanish</option>
-                <option value="fr">French</option>
-              </select>
-            </label>
+          <details class="settings-block" open>
+            <summary>Speech input</summary>
+            <div class="settings-grid">
+              <label class="field">
+                <span>Cleanup level</span>
+                <select id="flowCleanupLevel">
+                  <option value="light">Light</option>
+                  <option value="medium">Medium</option>
+                  <option value="high" selected>High</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Writing style</span>
+                <select id="flowWritingStyle">
+                  <option value="coding" selected>Coding prompt</option>
+                  <option value="bullets">Bullets</option>
+                  <option value="numbered">Numbered list</option>
+                  <option value="formal">Formal</option>
+                  <option value="casual">Casual</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Language hint</span>
+                <select id="flowLanguage">
+                  <option value="auto" selected>Auto detect</option>
+                  <option value="en-US">English US</option>
+                  <option value="en-GB">English UK</option>
+                  <option value="hinglish">Hinglish</option>
+                  <option value="es">Spanish</option>
+                  <option value="fr">French</option>
+                </select>
+              </label>
+            </div>
+
             <label class="field">
               <span>Dictionary / corrections</span>
-              <textarea id="flowDictionary" rows="4" spellcheck="false">coat x => Codex
+              <textarea id="flowDictionary" rows="3" spellcheck="false">coat x => Codex
 open claw => OpenClaw
 cue when three point five => Qwen 3.5</textarea>
             </label>
@@ -112,61 +134,60 @@ cue when three point five => Qwen 3.5</textarea>
               <textarea id="flowSnippets" rows="3" spellcheck="false">run tests => Run the focused test suite after making the change.
 ship it => Implement the change, verify it, then summarize files and checks.</textarea>
             </label>
-          </div>
+          </details>
 
-          <label class="field">
-            <span>Voice speed</span>
-            <input id="rateSlider" type="range" min="0.85" max="1.25" step="0.05" value="1.02" />
-          </label>
+          <details class="settings-block">
+            <summary>Voice and profile</summary>
+            <label class="field">
+              <span>Voice speed</span>
+              <input id="rateSlider" type="range" min="0.85" max="1.25" step="0.05" value="1.02" />
+            </label>
+            <div class="settings-grid">
+              <label class="field">
+                <span>STT provider</span>
+                <select id="sttProvider">
+                  <option value="whisperx">WhisperX turn STT</option>
+                  <option value="browser">Browser STT fallback</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>TTS provider</span>
+                <select id="ttsProvider">
+                  <option value="browser">Browser Web Speech</option>
+                  <option value="fish">Fish Speech / Fish Audio</option>
+                  <option value="openai">OpenAI-compatible TTS</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>User profile</span>
+                <select id="userProfile">
+                  <option value="user_a">User A</option>
+                  <option value="user_b">User B</option>
+                  <option value="user_c">User C</option>
+                </select>
+              </label>
+            </div>
+            <label class="field">
+              <span>Profile display name</span>
+              <input id="userProfileName" value="User A" />
+            </label>
+          </details>
 
-          <label class="field">
-            <span>STT provider</span>
-            <select id="sttProvider">
-              <option value="whisperx">WhisperX turn STT</option>
-              <option value="browser">Browser STT fallback</option>
-            </select>
-          </label>
-
-          <label class="field">
-            <span>TTS provider</span>
-            <select id="ttsProvider">
-              <option value="browser">Browser Web Speech</option>
-              <option value="fish">Fish Speech / Fish Audio</option>
-              <option value="openai">OpenAI-compatible TTS</option>
-            </select>
-          </label>
-
-          <label class="field">
-            <span>User profile</span>
-            <select id="userProfile">
-              <option value="user_a">User A</option>
-              <option value="user_b">User B</option>
-              <option value="user_c">User C</option>
-            </select>
-          </label>
-
-          <label class="field">
-            <span>Profile display name</span>
-            <input id="userProfileName" value="User A" />
-          </label>
-
-          <label class="field">
-            <span>Agent system prompt</span>
-            <textarea id="systemPrompt" rows="7">You are an agentic coding voice assistant. Help the user code by inspecting files, explaining code, proposing concise next steps, and using Codex pilot mode when project changes or command execution are needed. Keep spoken responses concise and useful. Ask one clarifying question when the request is ambiguous.</textarea>
-          </label>
-
-          <div class="note">
-            WhisperX is the primary turn transcript path. Browser STT is only a fallback/debug mode.
-            Turns wait through natural pauses, then a Wispr Flow-style layer converts raw speech into the clearest user request.
-          </div>
+          <details class="settings-block">
+            <summary>Agent prompt</summary>
+            <label class="field">
+              <span>System prompt</span>
+              <textarea id="systemPrompt" rows="7">You are an agentic coding voice assistant. Help the user code by inspecting files, explaining code, proposing concise next steps, and using Codex pilot mode when project changes or command execution are needed. Keep spoken responses concise and useful. Ask one clarifying question when the request is ambiguous.</textarea>
+            </label>
+          </details>
         </aside>
 
         <section class="conversation panel">
           <section class="session-planner">
             <div class="session-planner-head">
               <div>
-                <p class="label">Work context</p>
-                <h2>Choose a project and chat</h2>
+                <p class="label">Workspace</p>
+                <h2>Pick the project before you speak</h2>
               </div>
               <p id="sessionState" class="session-state">Pick an existing chat or start a new one.</p>
             </div>
@@ -205,8 +226,8 @@ ship it => Implement the change, verify it, then summarize files and checks.</te
                 <span>New chat title</span>
                 <input id="chatTitle" placeholder="Voice coding session, debugging call, feature build..." />
               </label>
-              <button id="loadSessionBtn" type="button" class="secondary">Open selected chat</button>
-              <button id="newSessionBtn" type="button" class="primary">Start new chat</button>
+              <button id="loadSessionBtn" type="button" class="secondary">Open chat</button>
+              <button id="newSessionBtn" type="button" class="primary">Start chat</button>
             </div>
           </section>
 
@@ -224,64 +245,59 @@ ship it => Implement the change, verify it, then summarize files and checks.</te
           <div id="messages" class="messages"></div>
 
           <form id="textForm" class="text-form">
-            <input id="textInput" autocomplete="off" placeholder="Typed fallback: ask the coding agent something..." />
+            <input id="textInput" autocomplete="off" placeholder="Type instead of speaking..." />
             <button type="submit">Send</button>
           </form>
         </section>
 
         <aside class="debug panel">
-          <p class="label">Realtime path</p>
-          <ol class="path">
-            <li>Device mic / local VAD</li>
-            <li>Turn audio to WhisperX STT</li>
-            <li>Speech-to-intent rewrite</li>
-            <li>Streaming Ollama Qwen 3.5 request</li>
-            <li>Fish/browser sentence TTS queue</li>
-            <li>Assistant finishes speaking before the next mic turn</li>
-          </ol>
+          <div class="panel-head">
+            <p class="label">Activity proof</p>
+            <h2>OpenClaw + Codex</h2>
+          </div>
 
-          <p class="label">Codex pilot</p>
-          <p id="codexPilotState" class="live-text muted">
-            On by default. Voice coding turns route OpenClaw -> Codex; workspace paths appear here while runs execute.
-          </p>
+          <div class="proof-card">
+            <p class="label">Control route</p>
+            <p id="codexPilotState" class="live-text muted">
+              On by default. Voice coding turns route OpenClaw -> Codex; workspace paths appear here while runs execute.
+            </p>
+          </div>
+
+          <div class="pipeline">
+            <div><strong>1</strong><span>Speech cleaned into a coding prompt</span></div>
+            <div><strong>2</strong><span>OpenClaw controls Codex/system tools</span></div>
+            <div><strong>3</strong><span>Codex edits, tests, and reports back</span></div>
+            <div><strong>4</strong><span>Read-only mirror lands in Codex activity</span></div>
+          </div>
 
           <p class="label">Call / chat history</p>
           <div id="sessionHistoryList" class="history-list"></div>
 
-          <p class="label">Current system limits</p>
-          <ul class="path">
-            <li>WhisperX is turn-based, not streaming ASR.</li>
-            <li>Fish Speech is preferred TTS when configured.</li>
-            <li>Built-in device voice remains a no-key fallback.</li>
-          </ul>
+          <details class="settings-block" open>
+            <summary>Runtime metrics</summary>
+            <dl id="latencyLog" class="metrics">
+              <div><dt>Turn</dt><dd>not measured</dd></div>
+              <div><dt>First token</dt><dd>--</dd></div>
+              <div><dt>First speech</dt><dd>--</dd></div>
+              <div><dt>TTS provider</dt><dd>browser</dd></div>
+            </dl>
+          </details>
 
-          <p class="label">Turn-taking feedback</p>
-          <ul class="path">
-            <li>Predicts end-of-turn from stable silence.</li>
-            <li>Delays assistant speech while the mic is active.</li>
-            <li>Uses stable silence before starting the next response.</li>
-          </ul>
+          <details class="settings-block">
+            <summary>Speech diagnostics</summary>
+            <p class="label">Flow layer</p>
+            <p id="flowState" class="live-text muted">
+              Backtrack, filler cleanup, smart punctuation, lists, snippets, dictionary corrections, and style shaping are active.
+            </p>
 
-          <p class="label">Flow-style speech layer</p>
-          <p id="flowState" class="live-text muted">
-            Backtrack, filler cleanup, smart punctuation, lists, snippets, dictionary corrections, and style shaping are active.
-          </p>
+            <p class="label">Recent speech history</p>
+            <div id="flowHistory" class="history-list"></div>
 
-          <p class="label">Recent speech history</p>
-          <div id="flowHistory" class="history-list"></div>
-
-          <p class="label">Parallel speaker identity</p>
-          <p id="speakerGuardState" class="live-text muted">
-            NVIDIA target: NeMo Streaming Sortformer / TitaNet. Normal turns save the active user voice profile; assistant audio is ignored while the model is speaking.
-          </p>
-
-          <p class="label">Latency metrics</p>
-          <dl id="latencyLog" class="metrics">
-            <div><dt>Turn</dt><dd>not measured</dd></div>
-            <div><dt>First token</dt><dd>--</dd></div>
-            <div><dt>First speech</dt><dd>--</dd></div>
-            <div><dt>TTS provider</dt><dd>browser</dd></div>
-          </dl>
+            <p class="label">Speaker identity</p>
+            <p id="speakerGuardState" class="live-text muted">
+              NVIDIA target: NeMo Streaming Sortformer / TitaNet. Normal turns save the active user voice profile; assistant audio is ignored while the model is speaking.
+            </p>
+          </details>
         </aside>
       </section>
     </main>
