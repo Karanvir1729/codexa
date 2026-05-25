@@ -14,7 +14,6 @@ const dom = {
   micMeter: document.querySelector("#micMeter"),
   vadState: document.querySelector("#vadState"),
   autoSpeakToggle: document.querySelector("#autoSpeakToggle"),
-  bargeInToggle: document.querySelector("#bargeInToggle"),
   speechIntentToggle: document.querySelector("#speechIntentToggle"),
   codexPilotToggle: document.querySelector("#codexPilotToggle"),
   codexControlProvider: document.querySelector("#codexControlProvider"),
@@ -143,6 +142,14 @@ const voiceTestHarness = {
   },
 };
 window.__agenticCodingVoiceTest = voiceTestHarness;
+
+function bargeInEnabled() {
+  return false;
+}
+
+function setInterruptControlDisabled(disabled) {
+  if (dom.interruptBtn) dom.interruptBtn.disabled = disabled;
+}
 
 function setAgentState(label, kind = "") {
   dom.agentState.textContent = label;
@@ -960,7 +967,7 @@ function tickMicMeter() {
   const pct = Math.min(100, Math.round(rms * 420));
   dom.micMeter.style.width = `${pct}%`;
 
-  const voiceThreshold = state.speaking ? 0.052 : 0.034;
+  const voiceThreshold = 0.034;
   const isVoice = rms > voiceThreshold;
   const now = performance.now();
 
@@ -977,7 +984,7 @@ function tickMicMeter() {
 
   const quietFor = micQuietForMs(now);
   dom.vadState.textContent = isVoice
-    ? (state.speaking ? "barge-in?" : "voice")
+    ? (state.speaking ? "assistant speaking" : "voice")
     : `quiet ${Math.max(0, Math.round(quietFor / 100) / 10)}s`;
 
   state.vadFrames = isVoice ? state.vadFrames + 1 : 0;
@@ -1091,7 +1098,7 @@ function speakerGuardRejects(decision) {
 }
 
 function pauseAssistantForBargeInCandidate() {
-  if (state.bargeInPaused || !dom.bargeInToggle.checked || (!state.speaking && !state.speakingUtterance && !state.audioElement)) {
+  if (state.bargeInPaused || !bargeInEnabled() || (!state.speaking && !state.speakingUtterance && !state.audioElement)) {
     return;
   }
 
@@ -1165,10 +1172,10 @@ function startTurnRecording(meta = {}) {
 
   state.mediaRecorder.start(120);
   state.listening = true;
-  if (meta.bargeIn && dom.bargeInToggle.checked && startedWhileSpeaking) {
+  if (meta.bargeIn && bargeInEnabled() && startedWhileSpeaking) {
     pauseAssistantForBargeInCandidate();
   } else {
-    setTurn(meta.bargeIn ? "Checking interruption..." : "Recording your turn...");
+    setTurn("Recording your turn...");
   }
 }
 
@@ -1180,18 +1187,21 @@ function stopTurnRecording(reason) {
 
 function handleServerSttVad(isVoice) {
   if (!state.micStream || state.serverSttInFlight) return;
-  if (state.speaking && Date.now() < state.ignoreRecognitionUntil) return;
+  const withinAssistantTail = Date.now() - state.lastSpeechEndedAt < 1600;
+  if (state.speaking || state.thinking || state.speechStartWaiter || withinAssistantTail || Date.now() < state.ignoreRecognitionUntil) {
+    return;
+  }
   const recorderActive = Boolean(state.mediaRecorder);
   const elapsed = performance.now() - state.recordingStartedAt;
-  const isBargeIn = Boolean(state.recordingMeta?.bargeIn);
-  const minMs = isBargeIn ? TURN_CAPTURE.bargeInMinMs : TURN_CAPTURE.normalMinMs;
-  const maxMs = isBargeIn ? TURN_CAPTURE.bargeInMaxMs : TURN_CAPTURE.normalMaxMs;
-  const startFrames = state.speaking ? TURN_CAPTURE.bargeInStartVoiceFrames : TURN_CAPTURE.startVoiceFrames;
+  const isBargeIn = false;
+  const minMs = TURN_CAPTURE.normalMinMs;
+  const maxMs = TURN_CAPTURE.normalMaxMs;
+  const startFrames = TURN_CAPTURE.startVoiceFrames;
   const silenceMs = micQuietForMs();
   const turnEndConfidence = endOfTurnConfidence({ elapsed, silenceMs, isBargeIn });
 
   if (!recorderActive && isVoice && state.vadFrames >= startFrames) {
-    startTurnRecording({ bargeIn: state.speaking || state.thinking });
+    startTurnRecording({ bargeIn: false });
     return;
   }
 
@@ -1394,8 +1404,8 @@ function createRecognition() {
   };
 
   recognition.onspeechstart = () => {
-    if (state.speaking && dom.bargeInToggle.checked && Date.now() > state.ignoreRecognitionUntil) {
-      setTurn("Speech detected during assistant output. Waiting for non-echo words.");
+    if ((state.speaking || state.thinking) && Date.now() > state.ignoreRecognitionUntil) {
+      setTurn("Assistant is responding; mic turns resume after it finishes.");
     }
   };
 
@@ -1414,7 +1424,11 @@ function createRecognition() {
     }
 
     const heardText = (finalText || interim).trim();
-    if (state.speaking && Date.now() < state.ignoreRecognitionUntil) return;
+    if (state.speaking || state.thinking || Date.now() < state.ignoreRecognitionUntil) {
+      state.interimTranscript = "";
+      updateLiveTranscript();
+      return;
+    }
 
     const withinEchoTail = Date.now() - state.lastSpeechEndedAt < 2500;
     if ((state.speaking || withinEchoTail) && heardText) {
@@ -1427,7 +1441,7 @@ function createRecognition() {
       }
 
       if (state.speaking) {
-        if (dom.bargeInToggle.checked && isVerbalBargeIn(heardText, maxConfidence)) {
+        if (bargeInEnabled() && isVerbalBargeIn(heardText, maxConfidence)) {
           interruptAssistant("verbal interrupt");
           if (!finalText.trim() || isPureInterruptCommand(finalText)) {
             state.interimTranscript = "";
@@ -1436,7 +1450,7 @@ function createRecognition() {
             return;
           }
         } else {
-          setTurn('To interrupt verbally, say "wait", "stop", or "hold on" first.');
+          setTurn("Assistant is speaking; the next voice turn starts after it finishes.");
           return;
         }
       }
@@ -1506,7 +1520,7 @@ async function startVoiceSession() {
   state.interrupted = false;
   dom.startBtn.disabled = true;
   dom.stopBtn.disabled = false;
-  dom.interruptBtn.disabled = false;
+  setInterruptControlDisabled(false);
   setAgentState("Listening", "listening");
   setTurn(
     useServerStt()
@@ -1547,7 +1561,7 @@ function stopVoiceSession() {
   interruptAssistant("session stopped", { silent: true });
   dom.startBtn.disabled = false;
   dom.stopBtn.disabled = true;
-  dom.interruptBtn.disabled = true;
+  setInterruptControlDisabled(true);
   setAgentState("Idle", "");
   setTurn("Session stopped.");
   if (state.currentSessionId) {
@@ -1586,7 +1600,7 @@ function interruptAssistant(reason, opts = {}) {
     state.audioElement.src = "";
     state.audioElement = null;
   }
-  if (!state.active) dom.interruptBtn.disabled = true;
+  if (!state.active) setInterruptControlDisabled(true);
   if (!opts.silent) {
     setAgentState("Interrupted", "interrupted");
     setTurn(`Assistant interrupted: ${reason}. Listening for your correction.`);
@@ -1606,7 +1620,7 @@ async function sendUserTurn(text, meta = {}) {
   state.lastSubmittedAt = performance.now();
 
   interruptAssistant("new user turn", { silent: true });
-  dom.interruptBtn.disabled = false;
+  setInterruptControlDisabled(false);
   state.interrupted = false;
   state.thinking = true;
   resetMetrics(text);
@@ -1644,7 +1658,7 @@ async function sendUserTurn(text, meta = {}) {
           stt_provider: dom.sttProvider.value,
           voice_rate: Number(dom.rateSlider.value),
           auto_speak: dom.autoSpeakToggle.checked,
-          barge_in: dom.bargeInToggle.checked,
+          barge_in: false,
           raw_speech_text: meta.rawText || null,
           speech_intent: meta.speechIntent || null,
           speech_flow: getSpeechFlowConfig(),
@@ -1823,7 +1837,7 @@ async function speakNext() {
     state.lastSpeechEndedAt = Date.now();
     recordAssistantCompleted();
     state.assistantSpeechStartedAt = 0;
-    if (!state.active) dom.interruptBtn.disabled = true;
+    if (!state.active) setInterruptControlDisabled(true);
     if (!state.thinking && state.active) {
       setAgentState("Listening", "listening");
       setTurn("Listening for your next coding request.");
@@ -1854,14 +1868,14 @@ async function speakNext() {
     state.assistantTurnInterrupted = false;
     state.assistantSpeechStartedAt = performance.now();
     state.speakingUtterance = utterance;
-    dom.interruptBtn.disabled = false;
+    setInterruptControlDisabled(false);
     state.ignoreRecognitionUntil = Date.now() + 650;
     if (state.currentMetrics && !state.currentMetrics.firstSpeechAt) {
       state.currentMetrics.firstSpeechAt = performance.now();
       renderMetrics();
     }
     setAgentState("Speaking", "speaking");
-    setTurn('Assistant is speaking. Say "wait" or "stop" to interrupt.');
+    setTurn("Assistant is speaking. Mic turns resume when it finishes.");
   };
   utterance.onend = () => {
     state.speakingUtterance = null;
@@ -1885,10 +1899,10 @@ async function speakRemote(text, provider) {
   state.recentSpokenText = `${state.recentSpokenText} ${text}`.slice(-2200);
   state.speakingUtterance = null;
   state.ttsAbortController = new AbortController();
-  dom.interruptBtn.disabled = false;
+  setInterruptControlDisabled(false);
   state.ignoreRecognitionUntil = Date.now() + 650;
   setAgentState("Speaking", "speaking");
-  setTurn(`${provider} TTS is speaking. Say "wait" or "stop" to interrupt.`);
+  setTurn(`${provider} TTS is speaking. Mic turns resume when it finishes.`);
 
   try {
     const response = await fetch("/api/tts", {
@@ -1949,7 +1963,7 @@ async function speakRemote(text, provider) {
 
 dom.startBtn.addEventListener("click", startVoiceSession);
 dom.stopBtn.addEventListener("click", stopVoiceSession);
-dom.interruptBtn.addEventListener("click", () => interruptAssistant("manual interrupt"));
+dom.interruptBtn?.addEventListener("click", () => interruptAssistant("manual interrupt"));
 dom.codexPilotToggle?.addEventListener("change", () => {
   setTurn(useCodexPilot() ? `Codex pilot mode enabled through ${selectedControlProviderLabel()}.` : "Codex pilot mode disabled. Using assistant LLM path.");
 });

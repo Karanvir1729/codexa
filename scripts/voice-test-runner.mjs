@@ -76,7 +76,7 @@ const suiteRegistry = {
   },
   acoustic: {
     id: "acoustic",
-    name: "Speaker-to-mic acoustic interruption test",
+    name: "Speaker-to-mic acoustic voice capture test",
     category: "acoustic",
     command: ["npm", ["run", "test:voice:acoustic"]],
     required: false,

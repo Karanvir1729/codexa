@@ -4,7 +4,7 @@ Desktop-first end-to-end voice-agent system for an agentic coding assistant, wit
 
 Goal:
 
-> Build the first ChatGPT Voice style interaction kernel: microphone input, turn-level STT, Flow-style speech-to-intent, streaming local LLM response, interruptible speech playback, and a configurable system prompt.
+> Build the first ChatGPT Voice style interaction kernel: microphone input, turn-level STT, Flow-style speech-to-intent, streaming local LLM response, spoken playback, and a configurable system prompt.
 
 ## Current Stack
 
@@ -17,7 +17,7 @@ Goal:
   - Per-user dictionary corrections and voice snippets.
   - Writing style and language hint controls.
   - Recent speech history with raw/cleaned turns.
-- **Turn-taking:** adaptive social-silence predictor that delays end-of-turn and assistant speech based on interruption feedback.
+- **Turn-taking:** adaptive social-silence predictor that delays end-of-turn and assistant speech until the user has finished a turn.
 - **Speaker identity:** persistent per-user voice profiles behind `POST /api/speaker/*`.
   - Production target: NVIDIA NeMo Streaming Sortformer for online diarization and TitaNet-style speaker embeddings.
   - Local CPU fallback: SpeechBrain ECAPA embeddings until the NVIDIA runtime is available on GPU.
@@ -336,7 +336,7 @@ Device mic
 
 ## Testing Framework
 
-Agentic Coding Assistant has a local Cekura-style QA harness with a dashboard, persisted run history, deterministic evals, browser tests, and acoustic interruption tests.
+Agentic Coding Assistant has a local Cekura-style QA harness with a dashboard, persisted run history, deterministic evals, browser tests, and acoustic voice-capture tests.
 
 Dashboard:
 
@@ -365,7 +365,7 @@ Suites:
 - `api`: Playwright API contracts.
 - `ui`: Playwright browser smoke tests for the main app and dashboard.
 - `bench`: first-token and total response latency benchmark.
-- `acoustic`: speaker-to-mic prompt plus spoken barge-in interruption test.
+- `acoustic`: speaker-to-mic prompt capture test.
 
 Test run artifacts are written to:
 
@@ -410,7 +410,7 @@ The local runner is intentionally container-friendly. With GCP credits, the usef
 - **Cloud Storage:** store Playwright traces, audio snippets, failure traces, and replay artifacts.
 - **Cloud SQL Postgres:** persist run history, eval scores, strategy versions, and promotion status.
 - **Vertex AI Gen AI Evaluation:** add rubric-based or pairwise LLM judge scoring once the deterministic eval set is stable.
-- **Cloud Monitoring/Logging/Trace:** alert on first-token latency, failed barge-ins, eval regression, and STT/TTS provider failures.
+- **Cloud Monitoring/Logging/Trace:** alert on first-token latency, failed voice capture, eval regression, and STT/TTS provider failures.
 
 References:
 
@@ -420,9 +420,9 @@ References:
 
 ## Interruption Path
 
-Agentic Coding Assistant uses verified barge-in. When local VAD hears speech over the assistant, the browser records a short overlap window while the speaker identity model and WhisperX run in parallel. Assistant audio is interrupted only when the overlap matches a saved user profile or the speaker identity service is unavailable and the transcript clearly looks like a user correction.
+Agentic Coding Assistant currently uses turn-based conversation. While the assistant is thinking or speaking, mic audio is ignored so the app does not transcribe its own TTS as user input. The next voice turn starts after the assistant finishes speaking.
 
-Normal voice turns are intentionally less aggressive than the interruption path: the recorder waits through natural pauses before submitting the turn, then the speech cleanup layer removes filler and false starts. Long, messy spoken input can become a concise question or bullet list before it reaches the assistant.
+Normal voice turns wait through natural pauses before submitting the turn, then the speech cleanup layer removes filler and false starts. Long, messy spoken input can become a concise question or bullet list before it reaches the assistant.
 
 ## Social Turn-Taking Loop
 
@@ -433,8 +433,8 @@ user speaks
 -> VAD estimates stable silence instead of cutting on the first pause
 -> assistant response is queued
 -> assistant waits for socially acceptable silence before speaking
--> if user interrupts early, store the interruption point
--> increase future end-of-turn and speak-start silence thresholds
+-> wait for the assistant to finish speaking
+-> increase future end-of-turn and speak-start silence thresholds only from explicit feedback events
 -> next response waits longer before speaking
 ```
 
@@ -442,8 +442,8 @@ Stored feedback includes:
 
 ```json
 {
-  "type": "interruption",
-  "reason": "verified user barge-in",
+  "type": "turn_timing_feedback",
+  "reason": "user started speaking before the assistant was ready",
   "msSinceAssistantStart": 1800,
   "assistantTextChars": 240,
   "nextEndSilenceMs": 2060,
@@ -451,20 +451,18 @@ Stored feedback includes:
 }
 ```
 
-This is not model fine-tuning. It is a lightweight conversation policy loop that learns when this user tends to pause, restart, or interrupt.
+This is not model fine-tuning. It is a lightweight conversation policy loop that learns when this user tends to pause or restart.
 
 ```text
 first normal user turn
 -> active user profile enrolls and persists a voiceprint
 
-user says "wait" / "stop" / correction during assistant speech
--> VAD captures possible barge-in in short windows
--> speaker identity model checks whether audio matches a saved user profile
--> WhisperX transcribes it in parallel
--> speaker identity rejects assistant self-audio
--> verified user voice stops assistant audio
--> accepted user barge-in aborts LLM + TTS
--> next user turn is sent to the LLM
+assistant finishes speaking
+-> VAD captures the next user turn
+-> speaker identity updates the active voice profile
+-> WhisperX transcribes the completed turn
+-> Flow-style cleanup rewrites the transcript into a clear request
+-> next user turn is sent to the LLM or Codex pilot
 ```
 
 Profile behavior:
@@ -676,13 +674,7 @@ Acoustic speaker-to-mic test:
 npm run test:voice:acoustic
 ```
 
-The acoustic test opens the browser UI, starts a voice session, uses macOS `say` to speak through your selected speaker, waits for Agentic Coding Assistant to transcribe/respond, then speaks an interruption through the same speaker.
-
-By default this acoustic test disables speaker-identity blocking immediately before the interruption so it can isolate the physical speaker-to-mic barge-in path. Speaker identity itself is covered by API tests and can be required in the acoustic run with:
-
-```bash
-VOICE_TEST_REQUIRE_SPEAKER_IDENTITY=1 npm run test:voice:acoustic
-```
+The acoustic test opens the browser UI, starts a voice session, uses macOS `say` to speak through your selected speaker, waits for Agentic Coding Assistant to transcribe/respond, and verifies the turn-based voice loop.
 
 Requirements:
 
@@ -697,7 +689,6 @@ Useful overrides:
 ```bash
 VOICE_TEST_SAY_VOICE=Samantha \
 VOICE_TEST_USER_UTTERANCE="Explain what you are changing before you edit." \
-VOICE_TEST_INTERRUPT_UTTERANCE="Wait, run the tests first." \
 npm run test:voice:acoustic
 ```
 
@@ -746,7 +737,7 @@ curl -s -X POST http://localhost:3000/api/speaker/classify \
 
 ## Next Build Targets
 
-- Replace turn-based WhisperX with streaming ASR for lower interruption latency.
+- Replace turn-based WhisperX with streaming ASR when lower-latency turn capture is needed.
 - Add Daily/Pipecat transport.
 - Persist transcripts and latency traces.
 - Add coding-failure detection and an active tool/prompt strategy cache.

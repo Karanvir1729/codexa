@@ -88,7 +88,7 @@ Keep spoken responses concise: usually 1-5 sentences.
 Ask one clarifying question when the user's request is ambiguous.
 Do not use canned domain-specific answers unless the conversation calls for them.
 Do not expose hidden reasoning. Speak directly and conversationally.
-If interrupted, adapt to the user's latest words immediately.`;
+Wait for the user's next turn before changing direction.`;
 
 const SPEECH_INTENT_PROMPT =
   process.env.SPEECH_INTENT_PROMPT ??
@@ -1822,7 +1822,7 @@ async function handleProviderHealth(req, res) {
       url: SPEAKER_GUARD_URL || null,
       targetModel: "NVIDIA NeMo Streaming Sortformer / TitaNet speaker embeddings",
       localFallbackModel: "speechbrain/spkrec-ecapa-voxceleb",
-      purpose: "Parallel speaker identity for barge-in and persistent per-user voice profiles.",
+      purpose: "speaker identity for persistent per-user voice profiles.",
     },
     codexPilot: {
       enabled: CODEX_PILOT_ENABLED,

@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 test("main voice UI exposes installable speech-layer controls", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "Interruptible coding voice agent" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Coding voice agent" })).toBeVisible();
   await expect(page.locator("#codexPilotToggle")).toBeVisible();
   await expect(page.locator("#codexControlProvider")).toBeVisible();
   await expect(page.locator("#codexControlProvider")).toContainText("OpenClaw controls Codex/system");

@@ -18,10 +18,10 @@
       <section class="topbar">
         <div>
           <p class="eyebrow">Agentic Coding Assistant</p>
-          <h1>Interruptible coding voice agent</h1>
+          <h1>Coding voice agent</h1>
           <p class="goal">
-            Goal: a full end-to-end voice agent with continuous listening, barge-in interruption,
-            Flow-style speech cleanup, Codex/OpenClaw control, streaming responses, and spoken coding status.
+            Goal: a full end-to-end voice agent with turn-based listening, Flow-style speech cleanup,
+            Codex/OpenClaw control, streaming responses, and spoken coding status.
           </p>
         </div>
         <div class="status-card">
@@ -35,7 +35,6 @@
         <aside class="controls panel">
           <button id="startBtn" class="primary">Start voice session</button>
           <button id="stopBtn" class="secondary" disabled>Stop</button>
-          <button id="interruptBtn" class="danger" disabled>Interrupt assistant</button>
 
           <div class="meter-wrap">
             <div class="meter-head">
@@ -50,11 +49,6 @@
           <label class="toggle">
             <input id="autoSpeakToggle" type="checkbox" checked />
             <span>Speak AI responses</span>
-          </label>
-
-          <label class="toggle">
-            <input id="bargeInToggle" type="checkbox" checked />
-            <span>Cancel on interruption</span>
           </label>
 
           <label class="toggle">
@@ -158,7 +152,7 @@ ship it => Implement the change, verify it, then summarize files and checks.</te
 
           <label class="field">
             <span>Agent system prompt</span>
-            <textarea id="systemPrompt" rows="7">You are an agentic coding voice assistant. Help the user code by inspecting files, explaining code, proposing concise next steps, and using Codex pilot mode when project changes or command execution are needed. Keep spoken responses concise and useful. Ask one clarifying question when the request is ambiguous. If interrupted, adapt immediately to the user's latest words.</textarea>
+            <textarea id="systemPrompt" rows="7">You are an agentic coding voice assistant. Help the user code by inspecting files, explaining code, proposing concise next steps, and using Codex pilot mode when project changes or command execution are needed. Keep spoken responses concise and useful. Ask one clarifying question when the request is ambiguous.</textarea>
           </label>
 
           <div class="note">
@@ -243,7 +237,7 @@ ship it => Implement the change, verify it, then summarize files and checks.</te
             <li>Speech-to-intent rewrite</li>
             <li>Streaming Ollama Qwen 3.5 request</li>
             <li>Fish/browser sentence TTS queue</li>
-            <li>Interrupt cancels stream + speech</li>
+            <li>Assistant finishes speaking before the next mic turn</li>
           </ol>
 
           <p class="label">Codex pilot</p>
@@ -265,7 +259,7 @@ ship it => Implement the change, verify it, then summarize files and checks.</te
           <ul class="path">
             <li>Predicts end-of-turn from stable silence.</li>
             <li>Delays assistant speech while the mic is active.</li>
-            <li>Raises pause thresholds after early interruptions.</li>
+            <li>Uses stable silence before starting the next response.</li>
           </ul>
 
           <p class="label">Flow-style speech layer</p>
@@ -278,7 +272,7 @@ ship it => Implement the change, verify it, then summarize files and checks.</te
 
           <p class="label">Parallel speaker identity</p>
           <p id="speakerGuardState" class="live-text muted">
-            NVIDIA target: NeMo Streaming Sortformer / TitaNet. Normal turns save the active user voice profile; overlap audio is checked before it can interrupt the LLM.
+            NVIDIA target: NeMo Streaming Sortformer / TitaNet. Normal turns save the active user voice profile; assistant audio is ignored while the model is speaking.
           </p>
 
           <p class="label">Latency metrics</p>
