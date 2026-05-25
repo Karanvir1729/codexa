@@ -18,7 +18,7 @@
       <section class="topbar">
         <div>
           <p class="eyebrow">Tutor-Tron Voice System</p>
-          <h1>Interruptible browser voice tutor</h1>
+          <h1>Interruptible desktop voice tutor</h1>
           <p class="goal">
             Goal: a full end-to-end voice agent with continuous listening, barge-in interruption,
             Flow-style speech cleanup, streaming LLM response, and spoken tutor output.
@@ -176,7 +176,7 @@ office hours => My office hours are Monday at 3 PM.</textarea>
         <aside class="debug panel">
           <p class="label">Realtime path</p>
           <ol class="path">
-            <li>Browser mic / local VAD</li>
+            <li>Device mic / local VAD</li>
             <li>Turn audio to WhisperX STT</li>
             <li>Speech-to-intent rewrite</li>
             <li>Streaming Ollama Qwen 3.5 request</li>
@@ -188,7 +188,7 @@ office hours => My office hours are Monday at 3 PM.</textarea>
           <ul class="path">
             <li>WhisperX is turn-based, not streaming ASR.</li>
             <li>Fish Speech is preferred TTS when configured.</li>
-            <li>Browser voice remains a no-key fallback.</li>
+            <li>Built-in device voice remains a no-key fallback.</li>
           </ul>
 
           <p class="label">Turn-taking feedback</p>

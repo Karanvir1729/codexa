@@ -1,6 +1,6 @@
 # Tutor-Tron Voice System
 
-Browser-based end-to-end voice-agent system for Tutor-Tron.
+Desktop-first end-to-end voice-agent system for Tutor-Tron, with a Python AI/ML runtime and Electron shell.
 
 Goal:
 
@@ -24,9 +24,12 @@ Goal:
 - **TTS:** Fish Audio / Fish Speech `s2-pro` through `POST /api/tts` when `FISH_API_KEY` is set.
 - **Fallbacks:** browser STT and browser Web Speech TTS remain available for local debugging.
 - **Prompting:** no hardcoded tutor answer path. The UI sends the current conversation plus the editable system prompt to the LLM.
-- **Install surface:** the same voice core ships as a browser app and installable PWA for iPhone/Mac. A native Mac shell can wrap the same local server later for global hotkeys/background dictation.
+- **Desktop shell:** Electron starts/reuses the Node API and Python STT/ML service, opens Tutor-Tron in a native desktop window, and exposes the test dashboard/logs from the app menu.
+- **Install surface:** the same voice core also ships as a web/PWA surface for iPhone/Mac testing.
 
 ## Run End-to-End
+
+Requires Node.js `>=22.12` for the Electron desktop runtime.
 
 1. Pull the local LLM:
 
@@ -40,22 +43,19 @@ ollama pull qwen3.5
 npm run stt:install
 ```
 
-3. Start the WhisperX adapter:
+3. Start the desktop app:
+
+```bash
+npm run desktop
+```
+
+The Electron shell starts the Python STT/ML service and Node API if they are not already running. It reuses existing services on ports `9001` and `3000` when present.
+
+Manual service mode is still available:
 
 ```bash
 npm run stt
-```
-
-4. Start the web app in another terminal:
-
-```bash
-FISH_API_KEY=... TTS_PROVIDER=fish npm run dev
-```
-
-Without a Fish key, use:
-
-```bash
-TTS_PROVIDER=browser npm run dev
+npm run dev
 ```
 
 Open:
@@ -70,12 +70,60 @@ Open the local QA dashboard:
 http://localhost:3000/test-dashboard.html
 ```
 
+## Desktop App
+
+Run:
+
+```bash
+npm run desktop
+```
+
+The desktop app provides:
+
+- native Electron window for Tutor-Tron Voice
+- automatic Python STT/ML service startup
+- automatic Node API startup
+- microphone permission handling for the local app
+- menu shortcuts:
+  - `Cmd/Ctrl+1`: Voice App
+  - `Cmd/Ctrl+2`: Test Dashboard
+  - Provider Health JSON
+  - Open Logs Folder
+  - Reload / DevTools
+
+Desktop logs:
+
+```text
+tmp/desktop-api.log
+tmp/desktop-stt.log
+```
+
+## Manual Web Mode
+
+Start the WhisperX adapter:
+
+```bash
+npm run stt
+```
+
+Start the web app in another terminal:
+
+```bash
+FISH_API_KEY=... TTS_PROVIDER=fish npm run dev
+```
+
+Without a Fish key, use:
+
+```bash
+TTS_PROVIDER=browser npm run dev
+```
+
 ## iPhone and Mac Compatibility
 
-The app is now installable as a PWA:
+The app now has a native Electron desktop shell plus an installable PWA:
 
 - iPhone/iPad: serve the app over HTTPS, open it in Safari, then use Share -> Add to Home Screen.
-- Mac: open it in Safari or Chrome and install/add it to the Dock.
+- Mac: use `npm run desktop` for the native shell, or install the PWA from Safari/Chrome.
 - The live voice path still calls the same Node + Python services, so the phone must reach the backend over the network.
 - For production iPhone support, use HTTPS and keep STT/TTS server-side. Browser STT is only a fallback; WhisperX/server STT is the main path.
 
@@ -83,14 +131,15 @@ Recommended native path when we need OS-level control:
 
 ```text
 shared web UI + Node API + Python AI runtime
--> PWA for iPhone/Mac now
--> thin Tauri/Electron Mac shell later for hotkey, background mic, and system audio routing
+-> Electron desktop shell now
+-> PWA for iPhone now
+-> later: packaged Mac build with hotkey, background mic, and system audio routing
 ```
 
 ## Voice Interaction Path
 
 ```text
-Browser mic
+Device mic
 -> local VAD turn recorder
 -> /api/stt
 -> WhisperX adapter
@@ -99,8 +148,8 @@ Browser mic
 -> /api/chat
 -> Ollama qwen3.5 streaming response
 -> sentence TTS queue
--> Fish Audio TTS or browser TTS
--> browser speaker
+-> Fish Audio TTS or built-in device TTS
+-> device speaker
 ```
 
 ## Testing Framework

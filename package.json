@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "desktop/main.cjs",
   "scripts": {
+    "desktop": "electron desktop/main.cjs",
+    "desktop:dev": "electron desktop/main.cjs",
     "dev": "node server.mjs",
     "start": "node server.mjs",
     "stt": ".venv-whisperx/bin/python services/whisperx_adapter.py --port 9001",
@@ -18,9 +21,10 @@
     "test:voice": "playwright test tests/voice"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.12"
   },
   "devDependencies": {
-    "@playwright/test": "^1.60.0"
+    "@playwright/test": "^1.60.0",
+    "electron": "^42.2.0"
   }
 }
