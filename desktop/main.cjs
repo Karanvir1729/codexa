@@ -189,7 +189,7 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-function createWindow() {
+async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 960,
@@ -207,10 +207,8 @@ function createWindow() {
   });
 
   const session = mainWindow.webContents.session;
-  session.clearCache().catch(() => {});
-  session
-    .clearStorageData({ storages: ["serviceworkers", "cachestorage"] })
-    .catch(() => {});
+  await session.clearCache().catch(() => {});
+  await session.clearStorageData({ storages: ["serviceworkers", "cachestorage"] }).catch(() => {});
   session.setPermissionRequestHandler((_webContents, permission, callback) => {
     callback(permission === "media");
   });
@@ -228,7 +226,7 @@ function createWindow() {
     }
   });
 
-  mainWindow.loadURL(appUrl);
+  await mainWindow.loadURL(appUrl);
 }
 
 function stopManagedProcesses() {
@@ -246,7 +244,7 @@ app.whenReady().then(async () => {
   try {
     await ensurePythonSttService();
     await ensureNodeApiService();
-    createWindow();
+    await createWindow();
   } catch (error) {
     dialog.showErrorBox(
       "Agentic Coding Assistant failed to start",

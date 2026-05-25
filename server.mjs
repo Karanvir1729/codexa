@@ -95,6 +95,11 @@ const TWILIO_WEBHOOK_BASE_URL = process.env.TWILIO_WEBHOOK_BASE_URL ?? "";
 const TWILIO_SMS_STATUS_CALLBACK_URL = process.env.TWILIO_SMS_STATUS_CALLBACK_URL ?? "";
 const PIPECAT_PUBLIC_WS_URL = process.env.PIPECAT_PUBLIC_WS_URL ?? "";
 const PIPECAT_WS_PROXY_TARGET = process.env.PIPECAT_WS_PROXY_TARGET ?? "127.0.0.1:7860";
+const TWILIO_STATUS_PATH = "/api/twilio/status";
+const TWILIO_VOICE_PATH = "/api/twilio/voice";
+const TWILIO_SMS_PATH = "/api/twilio/sms";
+const PIPECAT_WS_PATH = "/ws";
+const TWILIO_SMS_MAX_BODY_CHARS = 1500;
 const CODEX_PILOT_SYSTEM_PROMPT =
   process.env.CODEX_PILOT_SYSTEM_PROMPT ??
   `You are the Codex pilot underneath an agentic coding voice assistant.
@@ -323,6 +328,7 @@ function appendVoiceSessionMessage(sessionId, input = {}) {
     content,
     source: safeText(input.source, sessions[index].source || "browser"),
     route: safeText(input.route, ""),
+    externalId: safeText(input.externalId, ""),
     createdAt: now,
   };
   sessions[index].messages = [...(sessions[index].messages || []), message].slice(-500);
@@ -380,6 +386,12 @@ function findOrCreateTelephonySession({ source, userId, userName, projectName, t
   sessions.unshift(session);
   writeVoiceSessions(sessions);
   return session;
+}
+
+function voiceSessionHasExternalMessage(sessionId, externalId) {
+  if (!externalId) return false;
+  const session = readVoiceSessions().find((item) => item.id === sessionId);
+  return Boolean(session?.messages?.some((message) => message.externalId === externalId));
 }
 
 function normalizeMessages(messages = [], systemPrompt = DEFAULT_AGENT_PROMPT) {
@@ -1740,7 +1752,7 @@ function twilioConfigured() {
 function twilioVoiceStreamUrl(req) {
   if (PIPECAT_PUBLIC_WS_URL) return PIPECAT_PUBLIC_WS_URL;
   const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
-  return `wss://${host}/ws`;
+  return `wss://${host}${PIPECAT_WS_PATH}`;
 }
 
 function twilioWebhookUrl(pathname) {
@@ -1762,7 +1774,7 @@ function sendTwilioSms({ to, from, body }) {
     body: new URLSearchParams({
       From: from,
       To: to,
-      Body: body.slice(0, 1500),
+      Body: body.slice(0, TWILIO_SMS_MAX_BODY_CHARS),
       ...(TWILIO_SMS_STATUS_CALLBACK_URL ? { StatusCallback: TWILIO_SMS_STATUS_CALLBACK_URL } : {}),
     }),
   })
@@ -1826,22 +1838,26 @@ async function runSmsAssistantTurn({ sessionId, from, to, messages }) {
 
   try {
     const text = await completeSmsAssistantText(messages, client);
-    appendVoiceSessionMessage(sessionId, {
-      role: "assistant",
-      content: text,
-      source: "sms_bridge",
-      route: "codex_pilot",
-    });
-    await sendTwilioSms({ to: from, from: to || TWILIO_PHONE_NUMBER, body: text });
+    await saveAndSendSmsAssistantReply({ sessionId, from, to, text });
   } catch (error) {
-    const text = `I hit an error while working on that SMS request: ${error instanceof Error ? error.message : String(error)}`.slice(0, 1500);
-    appendVoiceSessionMessage(sessionId, {
-      role: "assistant",
-      content: text,
-      source: "sms_bridge",
-      route: "codex_pilot",
+    const text = `I hit an error while working on that SMS request: ${error instanceof Error ? error.message : String(error)}`.slice(0, TWILIO_SMS_MAX_BODY_CHARS);
+    await saveAndSendSmsAssistantReply({ sessionId, from, to, text });
+  }
+}
+
+async function saveAndSendSmsAssistantReply({ sessionId, from, to, text }) {
+  appendVoiceSessionMessage(sessionId, {
+    role: "assistant",
+    content: text,
+    source: "sms_bridge",
+    route: "codex_pilot",
+  });
+  const result = await sendTwilioSms({ to: from, from: to || TWILIO_PHONE_NUMBER, body: text });
+  if (!result.ok) {
+    console.error("twilio sms send failed", {
+      status: result.status || null,
+      reason: result.reason || "twilio_api_error",
     });
-    await sendTwilioSms({ to: from, from: to || TWILIO_PHONE_NUMBER, body: text });
   }
 }
 
@@ -1866,6 +1882,7 @@ async function handleTwilioSmsWebhook(req, res, url) {
   const body = safeText(params.Body);
   const from = safeText(params.From, "unknown");
   const to = safeText(params.To, TWILIO_PHONE_NUMBER);
+  const messageSid = safeText(params.MessageSid || params.SmsMessageSid || params.SmsSid);
   const userId = safeId(`sms_${from}`, "sms_caller");
 
   if (/\b(no-sms|smoke test)\b/i.test(body)) {
@@ -1885,11 +1902,18 @@ async function handleTwilioSmsWebhook(req, res, url) {
     projectName: "SMS coding assistant",
     title: sessionTitleFromText(body, "SMS coding request"),
   });
+
+  if (messageSid && voiceSessionHasExternalMessage(session.id, messageSid)) {
+    sendTwiML(res, "<Message>I already received this request and am working on it.</Message>");
+    return;
+  }
+
   const appended = appendVoiceSessionMessage(session.id, {
     role: "user",
     content: body,
     source: "sms_bridge",
     route: "codex_pilot",
+    externalId: messageSid,
   });
   const messages = appended?.session?.messages || [{ role: "user", content: body }];
 
@@ -1905,12 +1929,13 @@ function handleTwilioStatus(res) {
   json(res, 200, {
     configured: twilioConfigured(),
     phoneNumber: TWILIO_PHONE_NUMBER || null,
-    voiceWebhookPath: "/api/twilio/voice",
-    smsWebhookPath: "/api/twilio/sms",
-    voiceWebhookUrl: twilioWebhookUrl("/api/twilio/voice"),
-    smsWebhookUrl: twilioWebhookUrl("/api/twilio/sms"),
+    statusPath: TWILIO_STATUS_PATH,
+    voiceWebhookPath: TWILIO_VOICE_PATH,
+    smsWebhookPath: TWILIO_SMS_PATH,
+    voiceWebhookUrl: twilioWebhookUrl(TWILIO_VOICE_PATH),
+    smsWebhookUrl: twilioWebhookUrl(TWILIO_SMS_PATH),
     mediaStreamUrl: PIPECAT_PUBLIC_WS_URL || null,
-    localMediaStreamProxy: `/ws -> ${PIPECAT_WS_PROXY_TARGET}/ws`,
+    localMediaStreamProxy: `${PIPECAT_WS_PATH} -> ${PIPECAT_WS_PROXY_TARGET}${PIPECAT_WS_PATH}`,
     voiceRuntime: "Twilio Programmable Voice -> Media Stream -> Pipecat -> Codex bridge",
     smsRuntime: "Twilio Programmable Messaging -> app webhook -> OpenClaw/Codex -> outbound SMS",
   });
@@ -2613,8 +2638,8 @@ async function handleProviderHealth(req, res) {
     twilio: {
       configured: twilioConfigured(),
       phoneNumber: TWILIO_PHONE_NUMBER || null,
-      voiceWebhookPath: "/api/twilio/voice",
-      smsWebhookPath: "/api/twilio/sms",
+      voiceWebhookPath: TWILIO_VOICE_PATH,
+      smsWebhookPath: TWILIO_SMS_PATH,
       mediaStreamConfigured: Boolean(PIPECAT_PUBLIC_WS_URL),
       purpose: "Phone calls and SMS route into the same OpenClaw/Codex coding assistant.",
     },
@@ -2855,8 +2880,8 @@ const server = http.createServer(async (req, res) => {
         openclawLocalMode: OPENCLAW_LOCAL,
         twilioConfigured: twilioConfigured(),
         twilioPhoneNumber: TWILIO_PHONE_NUMBER || null,
-        twilioVoiceWebhookPath: "/api/twilio/voice",
-        twilioSmsWebhookPath: "/api/twilio/sms",
+        twilioVoiceWebhookPath: TWILIO_VOICE_PATH,
+        twilioSmsWebhookPath: TWILIO_SMS_PATH,
       });
       return;
     }
@@ -2896,17 +2921,17 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (url.pathname === "/api/twilio/status" && req.method === "GET") {
+    if (url.pathname === TWILIO_STATUS_PATH && req.method === "GET") {
       handleTwilioStatus(res);
       return;
     }
 
-    if (url.pathname === "/api/twilio/voice" && (req.method === "POST" || req.method === "GET")) {
+    if (url.pathname === TWILIO_VOICE_PATH && (req.method === "POST" || req.method === "GET")) {
       await handleTwilioVoiceWebhook(req, res);
       return;
     }
 
-    if (url.pathname === "/api/twilio/sms" && (req.method === "POST" || req.method === "GET")) {
+    if (url.pathname === TWILIO_SMS_PATH && (req.method === "POST" || req.method === "GET")) {
       await handleTwilioSmsWebhook(req, res, url);
       return;
     }
@@ -3026,7 +3051,7 @@ const server = http.createServer(async (req, res) => {
 
 function proxyPipecatWebSocket(req, socket, head) {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-  if (url.pathname !== "/ws") {
+  if (url.pathname !== PIPECAT_WS_PATH) {
     socket.destroy();
     return;
   }
