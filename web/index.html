@@ -245,8 +245,16 @@ ship it => Implement the change, verify it, then summarize files and checks.</te
           <div id="messages" class="messages"></div>
 
           <form id="textForm" class="text-form">
-            <input id="textInput" autocomplete="off" placeholder="Type instead of speaking..." />
+            <input
+              id="textInput"
+              autocomplete="off"
+              aria-describedby="textRouteNote"
+              placeholder="Type a coding request..."
+            />
             <button type="submit">Send</button>
+            <p id="textRouteNote" class="text-route-note">
+              Text uses the same project, chat, OpenClaw/Codex route, workspace, and activity mirror as voice.
+            </p>
           </form>
         </section>
 

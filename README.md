@@ -24,7 +24,7 @@ Goal:
 - **TTS:** Fish Audio / Fish Speech `s2-pro` through `POST /api/tts` when `FISH_API_KEY` is set.
 - **Fallbacks:** browser STT and browser Web Speech TTS remain available for local debugging.
 - **Prompting:** no hardcoded coding answer path. The UI sends the current conversation plus the editable system prompt to the LLM.
-- **Codex pilot mode:** optional voice-command route that sends the cleaned user intent to `codex exec` so the desktop agent can inspect, edit, test, and operate this repo using Codex underneath.
+- **Codex pilot mode:** optional voice-command route that sends cleaned user intent to the Codex CLI so the desktop agent can inspect, edit, test, and operate the target workspace.
 - **Desktop shell:** Electron starts/reuses the Node API and Python STT/ML service, opens Agentic Coding Assistant in a native desktop window, and exposes the test dashboard/logs from the app menu.
 - **Install surface:** the same voice core also ships as a web/PWA surface for iPhone/Mac testing.
 
@@ -103,12 +103,13 @@ tmp/desktop-stt.log
 
 Turn on **Codex pilot mode** in the left control panel when a voice turn should be handled by Codex instead of the fast assistant LLM.
 
-The route is:
+The route is the same for spoken and typed coding turns:
 
 ```text
-voice/audio turn
--> WhisperX STT
--> Flow-style speech intent cleanup
+voice/audio turn -> WhisperX STT -> Flow-style speech intent cleanup
+typed text turn  -----------------------------------------------+
+                                                               |
+                                                               v
 -> /api/codex/exec
 -> OpenClaw local control plane
 -> Codex provider edits/checks the target workspace
@@ -118,18 +119,20 @@ voice/audio turn
 Codex pilot mode now has a **Codex control plane** selector:
 
 - **Direct Codex CLI:** current repo-local `codex exec` path.
-- **OpenClaw controls Codex/system:** sends the voice turn through `openclaw agent --local`, using OpenClaw's Codex provider and system-control tools.
+- **OpenClaw controls Codex/system:** sends the voice turn through `openclaw agent --local`; OpenClaw is the controller, and coding work should be delegated to the Codex CLI in the target workspace.
 - **Auto:** tries OpenClaw when available, then falls back to direct Codex.
 
 Default behavior:
 
 - Routes voice coding turns through OpenClaw by default, with direct Codex CLI still available from the selector.
+- Routes typed coding turns through the same project/session/workspace/control-plane path as voice. The text box is not a separate lightweight chatbot.
+- Infers project mode from the request: explicit "new project", "new app", or "from scratch" starts a fresh generated workspace; "current repo", "existing project", or fix/update/debug language stays on the existing project path.
 - Uses the project-local `@openai/codex` CLI from `node_modules/.bin/codex`.
 - Runs in `workspace-write` sandbox mode.
 - Uses non-interactive approval mode `never`.
-- Runs code/build requests in a target workspace. Existing-project chats default to this repo; new-project chats are placed under `tmp/codex-workspaces/`, or an explicit `workspaceDir` can be passed to `/api/codex/exec`.
+- Runs code/build requests in a target workspace. Existing-project chats default to this repo; new-project chats are placed under `~/agentic-coding-projects/` so generated apps show up as standalone Codex projects. Legacy `tmp/codex-workspaces/` paths are still accepted, and an explicit `workspaceDir` can be passed to `/api/codex/exec`.
 - Shows the active target workspace in the Codex pilot state while a control turn is running.
-- Mirrors successful OpenClaw runs into a read-only Codex exec session so the request, workspace, changed files, and result appear in Codex's native activity/thread store.
+- Registers generated projects with a normal Codex Desktop app chat in that same folder so they appear under Codex Projects. `codex exec` history alone is not enough for sidebar project visibility.
 - The Codex pilot prompt requires real file edits plus focused checks for build requests; it should not answer with canned demo code.
 - Keeps the final answer concise so it can be spoken.
 
@@ -141,10 +144,11 @@ CODEX_PILOT_COMMAND=/path/to/codex
 CODEX_PILOT_MODEL=gpt-5-codex
 CODEX_PILOT_SANDBOX=workspace-write
 CODEX_PILOT_TIMEOUT_MS=300000
-CODEX_WORKSPACE_ROOT=tmp/codex-workspaces
+CODEX_WORKSPACE_ROOT=~/agentic-coding-projects
 CODEX_CONTROL_PROVIDER=openclaw
-CODEX_ACTIVITY_MIRROR=1
-CODEX_ACTIVITY_MIRROR_SANDBOX=read-only
+CODEX_APP_CHAT_REGISTRATION=1
+CODEX_APP_CHAT_COMMAND=/Applications/Codex.app/Contents/Resources/codex
+CODEX_APP_CHAT_TIMEOUT_MS=90000
 OPENCLAW_LOCAL=1
 OPENCLAW_TIMEOUT_SECS=180
 OPENCLAW_THINKING=off

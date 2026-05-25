@@ -1,6 +1,14 @@
 #!/usr/bin/env node
 
+import fs from "node:fs";
+import path from "node:path";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const codexCommand =
+  process.env.CODEX_PILOT_COMMAND?.trim() ||
+  path.join(repoRoot, "node_modules", ".bin", process.platform === "win32" ? "codex.cmd" : "codex");
 
 function run(command, args, options = {}) {
   return new Promise((resolve) => {
@@ -68,6 +76,16 @@ async function main() {
     detail: pluginSummary.codex
       ? `${pluginSummary.codex.name} loaded as provider ${pluginSummary.codex.providerIds.join(",") || "none"}`
       : "Codex plugin missing; run: npx openclaw plugins install @openclaw/codex",
+  });
+
+  const codexVersion = fs.existsSync(codexCommand) ? await run(codexCommand, ["--version"]) : { exitCode: 1, stdout: "", stderr: "missing" };
+  checks.push({
+    name: "Codex CLI coding engine",
+    ok: codexVersion.exitCode === 0,
+    detail:
+      codexVersion.exitCode === 0
+        ? `${codexCommand} -> ${(codexVersion.stdout || codexVersion.stderr).trim().split("\n")[0]}`
+        : `Codex CLI missing or unavailable at ${codexCommand}`,
   });
 
   const doctor = await run("npx", [

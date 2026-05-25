@@ -17,6 +17,8 @@ test("main voice UI exposes installable speech-layer controls", async ({ page })
   await expect(page.locator("#projectMode")).toBeVisible();
   await expect(page.locator("#sessionSelect")).toBeVisible();
   await expect(page.getByRole("button", { name: "Start chat" })).toBeVisible();
+  await expect(page.locator("#textInput")).toHaveAttribute("aria-describedby", "textRouteNote");
+  await expect(page.locator("#textRouteNote")).toContainText("same project, chat, OpenClaw/Codex route");
   await expect(page.getByRole("link", { name: "Test dashboard" })).toBeVisible();
 
   const manifestResponse = await page.request.get("/manifest.webmanifest");
@@ -34,4 +36,44 @@ test("test dashboard can read latest run state", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Codex build smoke" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Run full suite" })).toBeVisible();
   await expect(page.locator("#suiteList")).toBeVisible();
+});
+
+test("typed request can infer and create a new project", async ({ page }) => {
+  await page.route("**/api/codex/exec", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/event-stream; charset=utf-8",
+      body: [
+        'event: meta\ndata: {"provider":"openclaw","model":"test","workspace":"/tmp/inferred"}',
+        'event: token\ndata: {"text":"Created the inferred React project."}',
+        'event: done\ndata: {}',
+        "",
+      ].join("\n\n"),
+    }),
+  );
+
+  await page.goto("/");
+  await page.locator("#textInput").fill("Make a new project aimed at making a website for a barbershop, using React.");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(page.locator("#sessionState")).toContainText("Barbershop React Website");
+  await expect(page.locator("#projectMode")).toHaveValue("new_project");
+  await expect(page.locator("#projectName")).toHaveValue("Barbershop React Website");
+  await expect(page.locator("#messages")).toContainText("Created the inferred React project.");
+});
+
+test("spoken assistant output strips noisy technical artifacts", async ({ page }) => {
+  await page.goto("/");
+
+  const cleaned = await page.evaluate(() =>
+    window.__agenticCodingVoiceTest.speechSafeText(
+      "Done. event: token thread_019e5dc8435771b2b12dbf586e090a03 /Users/karanvirkhanna/tmp/project-8e0a07d7-67d3-4188-b619-8fc87c7c3b02 1732554778123456789 [App.jsx](/Users/me/App.jsx)",
+    ),
+  );
+
+  expect(cleaned).toContain("Done.");
+  expect(cleaned).toContain("App.jsx");
+  expect(cleaned).not.toContain("/Users/");
+  expect(cleaned).not.toContain("8e0a07d7");
+  expect(cleaned).not.toContain("1732554778123456789");
 });

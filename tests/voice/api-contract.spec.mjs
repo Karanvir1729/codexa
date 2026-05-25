@@ -81,12 +81,13 @@ test("provider health exposes voice, intent, and speaker identity layers", async
   expect(health.stt.configuredProvider).toBeTruthy();
   expect(health.speechIntent.mode).toBeTruthy();
   expect(health.speakerGuard.purpose).toContain("speaker identity");
-  expect(health.codexPilot.purpose).toContain("Codex exec");
+  expect(health.codexPilot.purpose).toContain("Codex CLI");
   expect(health.codexPilot.workspaceRoot).toBeTruthy();
   expect(health.openclaw.purpose).toContain("OpenClaw");
+  expect(health.openclaw.purpose).toContain("Codex CLI");
 });
 
-test("codex pilot status exposes local exec integration", async ({ request }) => {
+test("codex pilot status exposes local CLI and app-chat integration", async ({ request }) => {
   const response = await request.get("/api/codex/status");
 
   expect(response.ok()).toBeTruthy();
@@ -97,8 +98,9 @@ test("codex pilot status exposes local exec integration", async ({ request }) =>
   expect(status.workspaceRoot).toBeTruthy();
   expect(status.openclaw.available).toBe(true);
   expect(status.defaultControlProvider).toBe("openclaw");
-  expect(status.activityMirror.enabled).toBe(true);
-  expect(status.activityMirror.sandbox).toBe("read-only");
+  expect(status.openclaw.codexCliCommand).toContain("codex");
+  expect(status.appChatRegistration.enabled).toBe(true);
+  expect(status.appChatRegistration.command).toContain("codex");
 });
 
 test("openclaw status exposes the system-control adapter", async ({ request }) => {

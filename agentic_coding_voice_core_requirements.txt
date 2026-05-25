@@ -11,6 +11,8 @@ Agentic Coding turns spoken developer intent into repo/system actions, captures 
 2. Primary Experience
 
 - Browser or desktop voice session with continuous listening.
+- Typed text interaction must be first-class and use the exact same project/session/control-plane path as voice.
+- Chat text should infer project intent: explicit "new project/new app/from scratch" creates a fresh workspace, while "current/existing repo" or fix/update/debug language stays in the existing project.
 - User can interrupt the assistant while it is speaking.
 - Assistant should distinguish user speech from its own TTS echo.
 - Speech input should be rewritten into clear developer intent, similar to Wispr Flow.
@@ -24,6 +26,7 @@ Agentic Coding turns spoken developer intent into repo/system actions, captures 
 - Preserve project and chat context across sessions.
 - Route coding tasks to Codex pilot mode.
 - Route whole-system/browser/app-control tasks to OpenClaw when enabled.
+- Text submissions should behave like direct Codex usage through the app: same target workspace, same chat history, same Codex/OpenClaw route, same activity mirror, same tests/checks.
 - Never hardcode a calculator or any specific app. Build from the user prompt.
 - After code changes, run focused tests/checks and report exact outcomes.
 

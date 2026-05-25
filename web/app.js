@@ -140,6 +140,9 @@ const voiceTestHarness = {
       lastSpeakerDecision: state.lastSpeakerDecision,
     };
   },
+  speechSafeText(value) {
+    return speechSafeText(value);
+  },
 };
 window.__agenticCodingVoiceTest = voiceTestHarness;
 
@@ -196,6 +199,79 @@ function selectedProjectName() {
     return (dom.projectName?.value || "New project").trim() || "New project";
   }
   return (dom.projectSelect?.value || dom.projectName?.value || "Current repo").trim() || "Current repo";
+}
+
+function titleCaseProjectName(value) {
+  return String(value || "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => {
+      if (/^(api|ui|ux|llm|tts|stt|pwa|crm|cms|pos|ai)$/i.test(word)) return word.toUpperCase();
+      if (/^react$/i.test(word)) return "React";
+      return `${word.charAt(0).toUpperCase()}${word.slice(1).toLowerCase()}`;
+    })
+    .join(" ");
+}
+
+function inferProjectSubject(text) {
+  const patterns = [
+    /\b(?:website|site|web app|app|landing page|project)\s+for\s+(?:a|an|the)?\s*([a-z0-9][a-z0-9 &'/-]{1,60}?)(?:,|\.|\busing\b|\bwith\b|\bthat\b|\bwhere\b|$)/i,
+    /\b(?:for|about)\s+(?:a|an|the)?\s*([a-z0-9][a-z0-9 &'/-]{1,60}?)(?:,|\.|\busing\b|\bwith\b|\bthat\b|\bwhere\b|$)/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) {
+      return match[1]
+        .replace(/\b(using|with|in|built|made|please|and|no|not)\b.*$/i, "")
+        .replace(/\b(project|website|site|app)\b$/i, "")
+        .trim();
+    }
+  }
+  return "";
+}
+
+function inferSessionIntentFromText(text) {
+  const raw = String(text || "");
+  const normalized = raw.toLowerCase();
+  const wantsNewProject =
+    /\b(new|fresh)\s+(project|app|website|site|repo|repository|workspace)\b/i.test(raw) ||
+    /\b(start|create|build|make|scaffold|generate)\s+(?:me\s+)?(?:a|an|the)?\s*new\b/i.test(raw) ||
+    /\bfrom scratch\b/i.test(raw);
+  const wantsExistingProject =
+    /\b(existing|current|this)\s+(project|repo|repository|codebase|workspace|app)\b/i.test(raw) ||
+    /\b(fix|debug|modify|update|change|refactor|continue|open)\b/i.test(raw);
+
+  if (!wantsNewProject && wantsExistingProject) {
+    return { projectMode: "existing_project", confidence: "explicit_existing" };
+  }
+
+  if (!wantsNewProject) return null;
+
+  const subject = inferProjectSubject(raw);
+  const pieces = [];
+  if (subject) pieces.push(titleCaseProjectName(subject));
+  if (/\breact\b/i.test(raw) && !pieces.some((piece) => /\breact\b/i.test(piece))) pieces.push("React");
+  if (/\b(website|site|landing page)\b/i.test(raw) && !pieces.some((piece) => /\b(website|site)\b/i.test(piece))) pieces.push("Website");
+  if (!pieces.length) pieces.push("New Project");
+
+  const projectName = titleCaseProjectName(pieces.join(" "));
+  return {
+    projectMode: "new_project",
+    projectName,
+    title: compactTitle(raw, `${projectName} build`),
+    confidence: "explicit_new",
+  };
+}
+
+function applySessionIntent(intent) {
+  if (!intent) return;
+  if (intent.projectMode && dom.projectMode) dom.projectMode.value = intent.projectMode;
+  if (intent.projectName && dom.projectName) dom.projectName.value = intent.projectName;
+  if (intent.title && dom.chatTitle && !dom.chatTitle.value.trim()) dom.chatTitle.value = intent.title;
+  renderSessionUi();
 }
 
 function sessionLabel(session) {
@@ -566,11 +642,12 @@ async function refreshSessions() {
   }
 }
 
-function sessionCreatePayload(source = "browser") {
-  const projectName = selectedProjectName();
-  const title = (dom.chatTitle?.value || "").trim() || `${projectName} voice chat`;
+function sessionCreatePayload(source = "browser", overrides = {}) {
+  const projectMode = overrides.projectMode || (dom.projectMode?.value === "new_project" ? "new_project" : "existing_project");
+  const projectName = (overrides.projectName || selectedProjectName()).trim() || (projectMode === "new_project" ? "New project" : "Current repo");
+  const title = (overrides.title || dom.chatTitle?.value || "").trim() || `${projectName} voice chat`;
   return {
-    projectMode: dom.projectMode?.value === "new_project" ? "new_project" : "existing_project",
+    projectMode,
     projectName,
     title,
     userId: state.currentUserId,
@@ -579,10 +656,10 @@ function sessionCreatePayload(source = "browser") {
   };
 }
 
-async function createSession(source = "browser") {
+async function createSession(source = "browser", overrides = {}) {
   const data = await apiJson("/api/sessions", {
     method: "POST",
-    body: JSON.stringify(sessionCreatePayload(source)),
+    body: JSON.stringify(sessionCreatePayload(source, overrides)),
   });
   state.currentSessionId = data.session.id;
   state.currentSessionSummary = data.session;
@@ -617,9 +694,17 @@ async function loadSession(sessionId = dom.sessionSelect?.value) {
   return data.session;
 }
 
-async function ensureActiveSession(source = "browser") {
+async function ensureActiveSession(source = "browser", text = "") {
+  const intent = inferSessionIntentFromText(text);
+  const shouldCreateNew = intent?.projectMode === "new_project";
+  if (shouldCreateNew) {
+    applySessionIntent(intent);
+    setTurn(`Starting inferred new project: ${intent.projectName}.`);
+    return createSession(source, intent);
+  }
+  if (intent?.projectMode === "existing_project") applySessionIntent(intent);
   if (state.currentSessionId) return state.currentSessionSummary;
-  return createSession(source);
+  return createSession(source, intent || {});
 }
 
 function appendSessionMessage(role, content, meta = {}) {
@@ -784,6 +869,9 @@ function selectedControlProviderLabel() {
 function compactWorkspacePath(value) {
   const text = String(value || "").trim();
   if (!text) return "";
+  const generatedMarker = "/agentic-coding-projects/";
+  const generatedIndex = text.indexOf(generatedMarker);
+  if (generatedIndex >= 0) return `agentic-coding-projects/${text.slice(generatedIndex + generatedMarker.length)}`;
   const workspaceMarker = "/tmp/codex-workspaces/";
   const workspaceIndex = text.indexOf(workspaceMarker);
   if (workspaceIndex >= 0) return `tmp/codex-workspaces/${text.slice(workspaceIndex + workspaceMarker.length)}`;
@@ -1624,7 +1712,7 @@ function interruptAssistant(reason, opts = {}) {
 
 async function sendUserTurn(text, meta = {}) {
   if (!text.trim()) return;
-  await ensureActiveSession(meta.source === "browser" || meta.source === "whisperx" ? "browser_voice" : "typed");
+  await ensureActiveSession(meta.source === "browser" || meta.source === "whisperx" ? "browser_voice" : "typed", text);
 
   const normalizedTurn = normalizeSpeechText(text);
   if (normalizedTurn === state.lastSubmittedUserText && performance.now() - state.lastSubmittedAt < 2500) return;
@@ -1758,12 +1846,13 @@ async function readSse(response) {
           ].filter(Boolean).join("; ");
           setCodexPilotState(details ? `OpenClaw control active: ${details}` : "OpenClaw control active.");
         }
-        if (event.data.provider === "codex_activity_mirror") {
+        if (event.data.provider === "codex_activity_mirror" || event.data.provider === "codex_app_chat_registration") {
           const details = [
             event.data.workspace ? `workspace ${compactWorkspacePath(event.data.workspace)}` : null,
+            event.data.command ? "Codex app-server chat" : null,
             event.data.sandbox ? `mirror sandbox ${event.data.sandbox}` : null,
           ].filter(Boolean).join("; ");
-          setCodexPilotState(details ? `OpenClaw run mirrored to Codex activity: ${details}` : "OpenClaw run mirrored to Codex activity.");
+          setCodexPilotState(details ? `Registered project in Codex app chat: ${details}` : "Registered project in Codex app chat.");
         }
       }
     }
@@ -1781,12 +1870,36 @@ function parseSse(raw) {
   return { type, data: JSON.parse(data) };
 }
 
+function speechSafeText(value) {
+  const text = String(value || "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\[([^\]]+)\]\((?:file:|app:|\/|https?:\/\/localhost|https?:\/\/127\.0\.0\.1)[^)]+\)/g, "$1")
+    .replace(/\/Users\/[^\s),;]+/g, "the workspace")
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "")
+    .replace(/\b[0-9a-f]{24,}\b/gi, "")
+    .replace(/\b(?:thread|session|run|trace|request)[_-]?[a-z0-9]{12,}\b/gi, "")
+    .replace(/\b\d{10,}\b/g, "")
+    .replace(/^\s*(event|data|debug|trace|stdout|stderr)\s*:\s*.*$/gim, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!text) return "";
+  const digitCount = text.replace(/\D/g, "").length;
+  const symbolCount = text.replace(/[\p{L}\p{N}\s.,!?;:'"()/-]/gu, "").length;
+  if (digitCount > Math.max(20, text.length * 0.25)) return "";
+  if (symbolCount > Math.max(12, text.length * 0.18)) return "";
+  return text;
+}
+
 function receiveAssistantToken(text) {
   state.currentAssistantText += text;
   appendMessage(state.currentAssistantEl, text);
 
   if (dom.autoSpeakToggle.checked) {
-    state.ttsBuffer += text;
+    const spokenText = speechSafeText(text);
+    if (!spokenText) return;
+    state.ttsBuffer += spokenText;
     maybeSpeakBufferedText();
   }
 }

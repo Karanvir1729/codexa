@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import http from "node:http";
+import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -40,7 +41,7 @@ const SPEECH_INTENT_TIMEOUT_MS = Number(process.env.SPEECH_INTENT_TIMEOUT_MS ?? 
 const SPEECH_INTENT_NUM_PREDICT = Number(process.env.SPEECH_INTENT_NUM_PREDICT ?? 220);
 const CODEX_PILOT_ENABLED = process.env.CODEX_PILOT_ENABLED !== "0";
 const CODEX_PILOT_COMMAND =
-  process.env.CODEX_PILOT_COMMAND ??
+  process.env.CODEX_PILOT_COMMAND?.trim() ||
   path.join(__dirname, "node_modules", ".bin", process.platform === "win32" ? "codex.cmd" : "codex");
 const CODEX_PILOT_MODEL = process.env.CODEX_PILOT_MODEL ?? "";
 const CODEX_PILOT_SANDBOX = process.env.CODEX_PILOT_SANDBOX ?? "workspace-write";
@@ -48,15 +49,21 @@ const CODEX_PILOT_APPROVAL = process.env.CODEX_PILOT_APPROVAL ?? "never";
 const CODEX_PILOT_TIMEOUT_MS = Number(process.env.CODEX_PILOT_TIMEOUT_MS ?? 300000);
 const CODEX_PILOT_MAX_CONTEXT_MESSAGES = Number(process.env.CODEX_PILOT_MAX_CONTEXT_MESSAGES ?? 8);
 const CODEX_CONTROL_PROVIDER = process.env.CODEX_CONTROL_PROVIDER ?? "openclaw";
-const CODEX_WORKSPACE_ROOT = path.resolve(process.env.CODEX_WORKSPACE_ROOT ?? path.join(__dirname, "tmp", "codex-workspaces"));
-const CODEX_ACTIVITY_MIRROR = process.env.CODEX_ACTIVITY_MIRROR !== "0";
-const CODEX_ACTIVITY_MIRROR_SANDBOX = process.env.CODEX_ACTIVITY_MIRROR_SANDBOX ?? "read-only";
-const CODEX_ACTIVITY_MIRROR_TIMEOUT_MS = Number(process.env.CODEX_ACTIVITY_MIRROR_TIMEOUT_MS ?? 120000);
+const LEGACY_CODEX_WORKSPACE_ROOT = path.resolve(path.join(__dirname, "tmp", "codex-workspaces"));
+const CODEX_WORKSPACE_ROOT = path.resolve(expandHomePath(process.env.CODEX_WORKSPACE_ROOT ?? path.join(os.homedir(), "agentic-coding-projects")));
+const CODEX_APP_CHAT_REGISTRATION = String(process.env.CODEX_APP_CHAT_REGISTRATION ?? process.env.CODEX_ACTIVITY_MIRROR ?? "1") !== "0";
+const CODEX_APP_CHAT_COMMAND = process.env.CODEX_APP_CHAT_COMMAND?.trim() || resolveCodexAppChatCommand();
+const CODEX_APP_CHAT_TIMEOUT_MS = Number(process.env.CODEX_APP_CHAT_TIMEOUT_MS ?? process.env.CODEX_ACTIVITY_MIRROR_TIMEOUT_MS ?? 90000);
+const CODEX_STATE_DB = process.env.CODEX_STATE_DB ?? "";
+const RESPONSE_POLISH_PROVIDER =
+  process.env.RESPONSE_POLISH_PROVIDER ?? (process.env.OPENAI_API_KEY ? "openai" : "codex");
+const RESPONSE_POLISH_TIMEOUT_MS = Number(process.env.RESPONSE_POLISH_TIMEOUT_MS ?? 60000);
+const RESPONSE_POLISH_MAX_INPUT_CHARS = Number(process.env.RESPONSE_POLISH_MAX_INPUT_CHARS ?? 6000);
 const OPENCLAW_COMMAND =
-  process.env.OPENCLAW_COMMAND ??
+  process.env.OPENCLAW_COMMAND?.trim() ||
   path.join(__dirname, "node_modules", ".bin", process.platform === "win32" ? "openclaw.cmd" : "openclaw");
 const OPENCLAW_LOCAL = process.env.OPENCLAW_LOCAL !== "0";
-const OPENCLAW_TIMEOUT_SECS = Number(process.env.OPENCLAW_TIMEOUT_SECS ?? 180);
+const OPENCLAW_TIMEOUT_SECS = Number(process.env.OPENCLAW_TIMEOUT_SECS ?? 45);
 const OPENCLAW_THINKING = process.env.OPENCLAW_THINKING ?? "off";
 const OPENCLAW_SESSION_PREFIX = process.env.OPENCLAW_SESSION_PREFIX ?? "agentic-coding-assistant";
 const PHONE_CODEX_CONTROL_PROVIDER = process.env.PHONE_CODEX_CONTROL_PROVIDER ?? CODEX_CONTROL_PROVIDER;
@@ -167,6 +174,13 @@ function writeJsonFile(filePath, data) {
 
 function safeText(value, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function expandHomePath(value) {
+  const text = String(value || "");
+  if (text === "~") return os.homedir();
+  if (text.startsWith("~/")) return path.join(os.homedir(), text.slice(2));
+  return text;
 }
 
 function safeId(value, fallback = "default") {
@@ -874,6 +888,20 @@ function codexPilotAvailable() {
   return CODEX_PILOT_ENABLED && fs.existsSync(CODEX_PILOT_COMMAND);
 }
 
+function resolveCodexAppChatCommand() {
+  const candidates = [
+    "/Applications/Codex.app/Contents/Resources/codex",
+    CODEX_PILOT_COMMAND,
+    "/opt/homebrew/bin/codex",
+    "/usr/local/bin/codex",
+  ].filter(Boolean);
+  return candidates.find((candidate) => fs.existsSync(candidate)) || CODEX_PILOT_COMMAND;
+}
+
+function codexAppChatAvailable() {
+  return CODEX_APP_CHAT_REGISTRATION && fs.existsSync(CODEX_APP_CHAT_COMMAND);
+}
+
 function openClawAvailable() {
   return fs.existsSync(OPENCLAW_COMMAND);
 }
@@ -882,11 +910,13 @@ function openClawStatusPayload() {
   return {
     available: openClawAvailable(),
     command: OPENCLAW_COMMAND,
+    codexCliCommand: CODEX_PILOT_COMMAND,
     localMode: OPENCLAW_LOCAL,
     timeoutSecs: OPENCLAW_TIMEOUT_SECS,
     thinking: OPENCLAW_THINKING,
     sessionPrefix: OPENCLAW_SESSION_PREFIX,
-    purpose: "Routes voice turns through OpenClaw so the voice agent can control Codex and broader system tools.",
+    purpose:
+      "Routes voice turns through OpenClaw as the system-control layer to control Codex CLI and broader system tools in the target workspace.",
   };
 }
 
@@ -921,8 +951,7 @@ function requestedWorkspaceFrom(body = {}, client = {}) {
 function generatedWorkspaceName(client = {}) {
   const base = safeText(client.project_name || client.session_title || client.session_id, "voice-project");
   const safeBase = safeId(base, "voice-project");
-  const suffix = safeId(client.session_id, "main");
-  return suffix && suffix !== "main" ? `${safeBase}-${suffix}` : safeBase;
+  return safeBase;
 }
 
 function resolveCodexWorkspace(body = {}, client = {}) {
@@ -936,7 +965,8 @@ function resolveCodexWorkspace(body = {}, client = {}) {
 
   const repoRoot = path.resolve(__dirname);
   const generatedRoot = path.resolve(CODEX_WORKSPACE_ROOT);
-  if (!isWithinDirectory(target, repoRoot) && !isWithinDirectory(target, generatedRoot)) {
+  const legacyGeneratedRoot = path.resolve(LEGACY_CODEX_WORKSPACE_ROOT);
+  if (!isWithinDirectory(target, repoRoot) && !isWithinDirectory(target, generatedRoot) && !isWithinDirectory(target, legacyGeneratedRoot)) {
     throw new Error(`Workspace is outside the allowed roots: ${target}`);
   }
 
@@ -1025,7 +1055,9 @@ function buildCodexPilotPrompt({ messages, systemPrompt, client, targetWorkspace
 function buildOpenClawPilotPrompt({ messages, systemPrompt, client, targetWorkspace = __dirname }) {
   return [
     "You are the OpenClaw control plane underneath an agentic coding voice assistant.",
-    "The user is speaking to a voice agent. Your job is to control Codex and system tools to satisfy system, repo, browser, and app-operation requests.",
+    "The user is speaking to a voice agent. Your job is to route and supervise system, repo, browser, and app-operation requests.",
+    "For coding changes, tests, project creation, or repo inspection, delegate to the Codex CLI as the coding engine in the target workspace.",
+    `Codex CLI command available to this environment: ${CODEX_PILOT_COMMAND}`,
     "Treat this as a voice-command turn: do the useful work, then return a concise spoken summary.",
     "",
     "Important operating context:",
@@ -1045,8 +1077,9 @@ function buildOpenClawPilotPrompt({ messages, systemPrompt, client, targetWorksp
       2,
     ),
     "",
-    "If the task needs code changes, testing, desktop/browser operation, or broader system state, use OpenClaw/Codex capabilities rather than only answering conversationally.",
-    "If the task needs code changes, operate in target_workspace above unless the user explicitly asks to modify the voice assistant repo.",
+    "If the task needs code changes or tests, use Codex CLI through OpenClaw's Codex provider rather than editing from an OpenClaw-only path.",
+    "If the task needs desktop/browser operation or broader system state, use OpenClaw tools around the Codex coding turn.",
+    "Operate in target_workspace above unless the user explicitly asks to modify the voice assistant repo.",
     "Do not hardcode one-off demos; implement the user's requested task as real editable files with checks.",
     "Keep the final answer short enough to speak out loud.",
     "",
@@ -1061,6 +1094,7 @@ function buildOpenClawPilotPrompt({ messages, systemPrompt, client, targetWorksp
 function runOpenClawAgent(prompt, client = {}, targetWorkspace = __dirname) {
   return new Promise((resolve) => {
     const startedAt = performance.now();
+    let settled = false;
     const args = [
       "agent",
       "--session-key",
@@ -1078,6 +1112,10 @@ function runOpenClawAgent(prompt, client = {}, targetWorkspace = __dirname) {
       cwd: targetWorkspace,
       env: {
         ...process.env,
+        CODEX_CLI: CODEX_PILOT_COMMAND,
+        CODEX_COMMAND: CODEX_PILOT_COMMAND,
+        OPENCLAW_CODEX_CLI: CODEX_PILOT_COMMAND,
+        PATH: `${path.dirname(CODEX_PILOT_COMMAND)}${path.delimiter}${process.env.PATH || ""}`,
         NO_COLOR: "1",
         FORCE_COLOR: "0",
       },
@@ -1086,6 +1124,22 @@ function runOpenClawAgent(prompt, client = {}, targetWorkspace = __dirname) {
 
     let stdout = "";
     let stderr = "";
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(result);
+    };
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      finish({
+        ok: false,
+        text: "",
+        error: `OpenClaw timed out after ${Math.max(15, OPENCLAW_TIMEOUT_SECS)} seconds`,
+        durationMs: Math.round(performance.now() - startedAt),
+        stderr,
+      });
+    }, Math.max(15, OPENCLAW_TIMEOUT_SECS) * 1000 + 1000);
     child.stdout.on("data", (chunk) => {
       stdout += chunk.toString();
     });
@@ -1093,7 +1147,7 @@ function runOpenClawAgent(prompt, client = {}, targetWorkspace = __dirname) {
       stderr += chunk.toString();
     });
     child.on("error", (error) => {
-      resolve({
+      finish({
         ok: false,
         text: "",
         error: error instanceof Error ? error.message : String(error),
@@ -1109,12 +1163,8 @@ function runOpenClawAgent(prompt, client = {}, targetWorkspace = __dirname) {
       } catch {
         parsed = null;
       }
-      const text = (parsed?.payloads || [])
-        .map((payload) => payload?.text)
-        .filter(Boolean)
-        .join("\n")
-        .trim();
-      resolve({
+      const text = extractOpenClawFinalText(parsed);
+      finish({
         ok: exitCode === 0 && Boolean(text),
         text,
         exitCode,
@@ -1126,6 +1176,17 @@ function runOpenClawAgent(prompt, client = {}, targetWorkspace = __dirname) {
   });
 }
 
+function extractOpenClawFinalText(parsed) {
+  const finalText = parsed?.meta?.finalAssistantVisibleText || parsed?.meta?.finalAssistantRawText;
+  if (typeof finalText === "string" && finalText.trim()) return finalText.trim();
+
+  return (parsed?.payloads || [])
+    .map((payload) => payload?.text)
+    .filter((text) => typeof text === "string" && text.trim())
+    .join("\n")
+    .trim();
+}
+
 function latestUserContent(messages = []) {
   return [...(Array.isArray(messages) ? messages : [])].reverse().find((message) => message?.role === "user" && message.content)?.content ?? "";
 }
@@ -1134,6 +1195,174 @@ function truncateText(value, maxLength = 3000) {
   const text = String(value || "").trim();
   if (text.length <= maxLength) return text;
   return `${text.slice(0, maxLength - 20).trim()}... [truncated]`;
+}
+
+function compactForPolish(value, maxLength = RESPONSE_POLISH_MAX_INPUT_CHARS) {
+  const text = String(value || "")
+    .replace(/\r/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .trim();
+  if (text.length <= maxLength) return text;
+  const head = text.slice(0, Math.floor(maxLength * 0.35)).trim();
+  const tail = text.slice(text.length - Math.floor(maxLength * 0.6)).trim();
+  return `${head}\n\n[middle omitted]\n\n${tail}`;
+}
+
+function cleanAssistantSummaryFallback(value) {
+  const text = String(value || "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\[([^\]]+)\]\((?:file:|app:|\/|https?:\/\/localhost|https?:\/\/127\.0\.0\.1)[^)]+\)/g, "$1")
+    .replace(/\/Users\/[^\s),;]+/g, "the workspace")
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "")
+    .replace(/\b[0-9a-f]{24,}\b/gi, "")
+    .replace(/\b(?:thread|session|run|trace|request)[_-]?[a-z0-9]{12,}\b/gi, "")
+    .replace(/\b\d{10,}\b/g, "")
+    .replace(/^\s*(event|data|debug|trace|stdout|stderr)\s*:\s*.*$/gim, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!text) return "";
+  const words = text.split(/\s+/).filter(Boolean);
+  const digitHeavy = text.replace(/\D/g, "").length > Math.max(20, text.length * 0.25);
+  if (words.length < 3 || digitHeavy) return "I finished the coding turn, but the raw model summary was too noisy to speak clearly.";
+  return text.slice(0, 1800);
+}
+
+function buildResponsePolishPrompt({ text, messages, client = {}, targetWorkspace = __dirname }) {
+  return [
+    "Rewrite this raw coding-agent transcript into the final answer for a voice/text coding assistant.",
+    "The answer will be shown in the chat UI and spoken aloud with text-to-speech.",
+    "",
+    "Rules:",
+    "- Return only the final user-facing answer.",
+    "- Do not include thread IDs, UUIDs, timestamps, raw JSON, random numbers, debug logs, command output, or internal tool chatter.",
+    "- Do not mention that you are rewriting or polishing.",
+    "- Preserve what matters: what was changed, what was created, checks run, and any concrete blocker.",
+    "- Keep it concise: one short paragraph or 2-6 bullets.",
+    "- Use plain language that sounds natural when spoken aloud.",
+    "",
+    "Latest user request:",
+    latestUserContent(messages) || "(unknown)",
+    "",
+    "Client context:",
+    JSON.stringify(
+      {
+        project: client?.project_name ?? null,
+        session: client?.session_title ?? null,
+        workspace: targetWorkspace,
+      },
+      null,
+      2,
+    ),
+    "",
+    "Raw transcript to rewrite:",
+    compactForPolish(text),
+  ].join("\n");
+}
+
+function parseCodexFinalFromJsonl(stdout) {
+  let finalText = "";
+  for (const rawLine of String(stdout || "").split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    try {
+      const parsed = JSON.parse(line);
+      if (parsed.type === "item.completed" && parsed.item?.type === "agent_message" && parsed.item.text) {
+        finalText = String(parsed.item.text).trim();
+      }
+    } catch {
+      // Ignore CLI diagnostics.
+    }
+  }
+  return finalText;
+}
+
+function polishWithCodexCli(prompt, targetWorkspace = __dirname) {
+  return new Promise((resolve, reject) => {
+    if (!codexPilotAvailable()) {
+      reject(new Error("Codex CLI is not available for response polishing."));
+      return;
+    }
+
+    const args = [];
+    if (CODEX_PILOT_MODEL) args.push("-m", CODEX_PILOT_MODEL);
+    args.push("-a", CODEX_PILOT_APPROVAL, "exec", "--json", "--cd", targetWorkspace, "--sandbox", "read-only", "-");
+
+    const child = spawn(CODEX_PILOT_COMMAND, args, {
+      cwd: targetWorkspace,
+      env: {
+        ...process.env,
+        NO_COLOR: "1",
+        FORCE_COLOR: "0",
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const finish = (error, text = "") => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (error) reject(error);
+      else resolve(text);
+    };
+    const timeout = setTimeout(() => {
+      if (child.exitCode === null) child.kill("SIGTERM");
+      finish(new Error("Response polishing timed out."));
+    }, RESPONSE_POLISH_TIMEOUT_MS);
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", (error) => finish(error));
+    child.on("close", (code) => {
+      const text = parseCodexFinalFromJsonl(stdout);
+      if (text) {
+        finish(null, text);
+        return;
+      }
+      finish(new Error(`Response polish Codex exited with code ${code}.${stderr ? ` ${stderr.slice(-500)}` : ""}`));
+    });
+    child.stdin.end(prompt);
+  });
+}
+
+async function polishAssistantResponse({ text, messages = [], client = {}, targetWorkspace = __dirname }) {
+  const fallback = cleanAssistantSummaryFallback(text);
+  if (!String(text || "").trim()) return "";
+
+  const provider = String(RESPONSE_POLISH_PROVIDER || "off").toLowerCase();
+  const prompt = buildResponsePolishPrompt({ text, messages, client, targetWorkspace });
+
+  try {
+    if (provider === "openai" || provider === "auto") {
+      if (process.env.OPENAI_API_KEY) {
+        const result = await completeOpenAI([{ role: "user", content: prompt }], "You rewrite noisy coding-agent output into clear final answers.", {
+          timeoutMs: RESPONSE_POLISH_TIMEOUT_MS,
+          maxTokens: 420,
+          temperature: 0.05,
+        });
+        return cleanAssistantSummaryFallback(result.text) || fallback;
+      }
+      if (provider === "openai") return fallback;
+    }
+
+    if ((provider === "codex" || provider === "auto") && codexPilotAvailable()) {
+      const polished = await polishWithCodexCli(prompt, targetWorkspace);
+      return cleanAssistantSummaryFallback(polished) || fallback;
+    }
+  } catch {
+    return fallback;
+  }
+
+  return fallback;
 }
 
 function collectWorkspaceEvidence(targetWorkspace) {
@@ -1172,19 +1401,70 @@ function collectWorkspaceEvidence(targetWorkspace) {
   return evidence;
 }
 
-function buildCodexActivityMirrorPrompt({ messages, client = {}, targetWorkspace, result }) {
+function codexStateDbPath() {
+  if (CODEX_STATE_DB && fs.existsSync(CODEX_STATE_DB)) return CODEX_STATE_DB;
+  const codexHome = path.join(os.homedir(), ".codex");
+  try {
+    const candidates = fs
+      .readdirSync(codexHome)
+      .filter((name) => /^state_\d+\.sqlite$/.test(name))
+      .map((name) => path.join(codexHome, name))
+      .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+    return candidates[0] || path.join(codexHome, "state_5.sqlite");
+  } catch {
+    return path.join(codexHome, "state_5.sqlite");
+  }
+}
+
+function sqliteQuote(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function codexAppChatExists(targetWorkspace) {
+  const dbPath = codexStateDbPath();
+  if (!fs.existsSync(dbPath)) return false;
+  try {
+    const result = spawnSync(
+      "sqlite3",
+      [
+        dbPath,
+        `select 1 from threads where cwd = ${sqliteQuote(targetWorkspace)} and source in ('vscode','app') limit 1;`,
+      ],
+      { encoding: "utf8", timeout: 5000, maxBuffer: 64 * 1024 },
+    );
+    return result.status === 0 && result.stdout.trim() === "1";
+  } catch {
+    return false;
+  }
+}
+
+function shouldRegisterCodexAppChat(targetWorkspace, client = {}) {
+  if (!CODEX_APP_CHAT_REGISTRATION || !targetWorkspace) return false;
+  const repoRoot = path.resolve(__dirname);
+  const generatedRoot = path.resolve(CODEX_WORKSPACE_ROOT);
+  const legacyGeneratedRoot = path.resolve(LEGACY_CODEX_WORKSPACE_ROOT);
+  const projectMode = String(client.project_mode || client.projectMode || "").toLowerCase();
+  if (path.resolve(targetWorkspace) === repoRoot) return false;
+  return (
+    projectMode === "new_project" ||
+    isWithinDirectory(path.resolve(targetWorkspace), generatedRoot) ||
+    isWithinDirectory(path.resolve(targetWorkspace), legacyGeneratedRoot)
+  );
+}
+
+function buildCodexAppChatRegistrationMessage({ messages, client = {}, targetWorkspace, result }) {
   const latestUser = latestUserContent(messages);
   const evidence = collectWorkspaceEvidence(targetWorkspace);
   return [
-    `Voice app OpenClaw activity audit: ${truncateText(latestUser || "voice coding turn", 180)}`,
+    `Project: ${path.basename(targetWorkspace)}`,
     "",
-    "This is a read-only Codex activity entry for monitoring a voice-triggered OpenClaw run.",
-    "Do not modify files. Do not run long commands. Summarize the activity so it appears in the normal Codex activity/thread log.",
+    "This chat registers a generated project folder in Codex Desktop so it appears under Projects.",
+    "Do not modify files. Do not run long commands. Reply with a concise project summary.",
     "",
-    "Activity context:",
+    "Project context:",
     JSON.stringify(
       {
-        route: "voice_app -> OpenClaw -> Codex",
+        route: "voice_app -> OpenClaw controller -> Codex CLI coding engine",
         workspace: targetWorkspace,
         project: client?.project_name ?? null,
         chat_session_id: client?.session_id ?? null,
@@ -1209,32 +1489,22 @@ function buildCodexActivityMirrorPrompt({ messages, client = {}, targetWorkspace
     "OpenClaw spoken result:",
     truncateText(result?.text || "", 3500),
     "",
-    "Return a concise audit summary with: request, workspace, key files or git status, checks reported, and whether this was mirrored from OpenClaw.",
+    "Return a concise summary with: user request, workspace, key files, checks reported, and that this project is now visible from a normal Codex app chat.",
   ].join("\n");
 }
 
-function mirrorOpenClawRunToCodexActivity({ messages, client, targetWorkspace, result }) {
-  if (!CODEX_ACTIVITY_MIRROR || !codexPilotAvailable()) return { queued: false, reason: "disabled_or_unavailable" };
+function registerCodexAppChatForWorkspace({ messages, client, targetWorkspace, result }) {
+  if (!shouldRegisterCodexAppChat(targetWorkspace, client)) return { queued: false, reason: "not_generated_project" };
+  if (!codexAppChatAvailable()) return { queued: false, reason: "disabled_or_unavailable" };
+  if (codexAppChatExists(targetWorkspace)) return { queued: false, reason: "already_registered" };
 
-  const mirrorDir = path.join(__dirname, "tmp", "codex-activity-mirror");
-  fs.mkdirSync(mirrorDir, { recursive: true });
-  const logPath = path.join(mirrorDir, `${Date.now()}-${randomUUID()}.jsonl`);
+  const registrationDir = path.join(__dirname, "tmp", "codex-app-chat-registration");
+  fs.mkdirSync(registrationDir, { recursive: true });
+  const logPath = path.join(registrationDir, `${Date.now()}-${randomUUID()}.log`);
   const out = fs.openSync(logPath, "a");
-  const args = [];
-  if (CODEX_PILOT_MODEL) args.push("-m", CODEX_PILOT_MODEL);
-  args.push(
-    "-a",
-    CODEX_PILOT_APPROVAL,
-    "exec",
-    "--json",
-    "--cd",
-    targetWorkspace,
-    "--sandbox",
-    CODEX_ACTIVITY_MIRROR_SANDBOX,
-    "-",
-  );
+  const args = ["debug", "app-server", "send-message-v2", buildCodexAppChatRegistrationMessage({ messages, client, targetWorkspace, result })];
 
-  const child = spawn(CODEX_PILOT_COMMAND, args, {
+  const child = spawn(CODEX_APP_CHAT_COMMAND, args, {
     cwd: targetWorkspace,
     env: {
       ...process.env,
@@ -1246,14 +1516,14 @@ function mirrorOpenClawRunToCodexActivity({ messages, client, targetWorkspace, r
 
   const timeout = setTimeout(() => {
     if (child.exitCode === null) child.kill("SIGTERM");
-  }, CODEX_ACTIVITY_MIRROR_TIMEOUT_MS);
+  }, CODEX_APP_CHAT_TIMEOUT_MS);
 
   child.on("close", () => {
     clearTimeout(timeout);
     try {
       fs.closeSync(out);
     } catch {
-      // Best-effort activity mirror only.
+      // Best-effort app chat registration only.
     }
   });
   child.on("error", () => {
@@ -1261,11 +1531,10 @@ function mirrorOpenClawRunToCodexActivity({ messages, client, targetWorkspace, r
     try {
       fs.closeSync(out);
     } catch {
-      // Best-effort activity mirror only.
+      // Best-effort app chat registration only.
     }
   });
 
-  child.stdin.end(buildCodexActivityMirrorPrompt({ messages, client, targetWorkspace, result }));
   return { queued: true, logPath };
 }
 
@@ -1286,8 +1555,11 @@ function streamCodexJsonLine(res, line, state) {
   if (parsed.type === "item.completed") {
     const item = parsed.item || {};
     if (item.type === "agent_message" && item.text) {
-      state.finalText = String(item.text);
-      sse(res, "token", { text: state.finalText });
+      const text = String(item.text).trim();
+      if (text) {
+        state.finalText = text;
+        if (Array.isArray(state.agentMessages)) state.agentMessages.push(text);
+      }
       return;
     }
 
@@ -1403,8 +1675,14 @@ async function handlePhoneCodexCompletion(req, res) {
     const text = result.ok
       ? result.text
       : `OpenClaw control failed and I could not complete the request. ${result.error || result.stderr?.trim().split("\n").filter(Boolean).slice(-1)[0] || ""}`.trim();
-    recordPhoneBridgeExchange(body.messages, text);
-    writeOpenAIChunk(res, id, { content: text.slice(0, 1800) });
+    const polishedText = await polishAssistantResponse({
+      text,
+      messages: body.messages,
+      client: { project_name: "Phone coding assistant", session_id: "phone" },
+      targetWorkspace: __dirname,
+    });
+    recordPhoneBridgeExchange(body.messages, polishedText || text);
+    writeOpenAIChunk(res, id, { content: (polishedText || text).slice(0, 1800) });
     writeOpenAIChunk(res, id, {}, "stop");
     res.write("data: [DONE]\n\n");
     res.end();
@@ -1479,7 +1757,7 @@ async function handlePhoneCodexCompletion(req, res) {
     res.end();
   });
 
-  child.on("close", (code) => {
+  child.on("close", async (code) => {
     clearTimeout(timeout);
     if (stdoutBuffer.trim()) {
       try {
@@ -1499,8 +1777,14 @@ async function handlePhoneCodexCompletion(req, res) {
         (code === 0
           ? "Codex finished, but did not return a spoken summary."
           : `Codex exited with code ${code}.${fallbackDetail ? ` ${fallbackDetail}` : ""}`);
-      recordPhoneBridgeExchange(body.messages, text);
-      writeOpenAIChunk(res, id, { content: text.slice(0, 1800) });
+      const polishedText = await polishAssistantResponse({
+        text,
+        messages: body.messages,
+        client: { project_name: "Phone coding assistant", session_id: "phone" },
+        targetWorkspace: __dirname,
+      });
+      recordPhoneBridgeExchange(body.messages, polishedText || text);
+      writeOpenAIChunk(res, id, { content: (polishedText || text).slice(0, 1800) });
       state.sentFinal = true;
     }
     writeOpenAIChunk(res, id, {}, "stop");
@@ -1551,8 +1835,9 @@ async function handleCodexPilot(req, res) {
       sse(res, "warning", { message: "OpenClaw is controlling Codex/system tools for this voice turn." });
       const result = await runOpenClawAgent(prompt, client, targetWorkspace);
       if (result.ok) {
-        const mirror = mirrorOpenClawRunToCodexActivity({ messages, client, targetWorkspace, result });
-        sse(res, "token", { text: result.text.slice(0, 2400) });
+        const appChat = registerCodexAppChatForWorkspace({ messages, client, targetWorkspace, result });
+        const polishedText = await polishAssistantResponse({ text: result.text, messages, client, targetWorkspace });
+        sse(res, "token", { text: (polishedText || result.text).slice(0, 2400) });
         sse(res, "meta", {
           provider: "openclaw",
           model: result.parsed?.meta?.agentMeta?.model || "openclaw-codex",
@@ -1561,13 +1846,13 @@ async function handleCodexPilot(req, res) {
           runner: result.parsed?.meta?.executionTrace?.runner || (OPENCLAW_LOCAL ? "local" : "gateway"),
           workspace: targetWorkspace,
         });
-        if (mirror.queued) {
+        if (appChat.queued) {
           sse(res, "meta", {
-            provider: "codex_activity_mirror",
-            model: CODEX_PILOT_MODEL || "default",
+            provider: "codex_app_chat_registration",
+            model: "Codex Desktop app-server",
             workspace: targetWorkspace,
-            sandbox: CODEX_ACTIVITY_MIRROR_SANDBOX,
-            logPath: mirror.logPath,
+            command: CODEX_APP_CHAT_COMMAND,
+            logPath: appChat.logPath,
           });
         }
         sse(res, "done", {});
@@ -1603,7 +1888,7 @@ async function handleCodexPilot(req, res) {
     },
     stdio: ["pipe", "pipe", "pipe"],
   });
-  const state = { finalText: "", threadId: null };
+  const state = { finalText: "", agentMessages: [], threadId: null };
   const startedAt = performance.now();
   const timeout = setTimeout(() => {
     child.kill("SIGTERM");
@@ -1659,14 +1944,27 @@ async function handleCodexPilot(req, res) {
     res.end();
   });
 
-  child.on("close", (code) => {
+  child.on("close", async (code) => {
     clearTimeout(timeout);
     if (stdoutBuffer.trim()) streamCodexJsonLine(res, stdoutBuffer.trim(), state);
-    if (code !== 0 && !state.finalText) {
+    const rawFinalText = state.agentMessages.length ? state.agentMessages.join("\n\n") : state.finalText;
+    const appChat =
+      code === 0
+        ? registerCodexAppChatForWorkspace({
+            messages,
+            client,
+            targetWorkspace,
+            result: { text: rawFinalText || "Direct Codex CLI run completed." },
+          })
+        : { queued: false };
+    if (code !== 0 && !rawFinalText) {
       const detail = stderrBuffer.trim().split("\n").filter(Boolean).slice(-4).join("\n");
       sse(res, "error", {
         message: `Codex pilot exited with code ${code}.${detail ? ` ${detail}` : ""}`,
       });
+    } else if (rawFinalText) {
+      const finalText = await polishAssistantResponse({ text: rawFinalText, messages, client, targetWorkspace });
+      if (finalText) sse(res, "token", { text: finalText });
     }
     sse(res, "meta", {
       provider: "codex",
@@ -1676,6 +1974,15 @@ async function handleCodexPilot(req, res) {
       workspace: targetWorkspace,
       timeoutMs: codexTimeoutMs,
     });
+    if (appChat.queued) {
+      sse(res, "meta", {
+        provider: "codex_app_chat_registration",
+        model: "Codex Desktop app-server",
+        workspace: targetWorkspace,
+        command: CODEX_APP_CHAT_COMMAND,
+        logPath: appChat.logPath,
+      });
+    }
     sse(res, "done", {});
     res.end();
   });
@@ -1990,11 +2297,16 @@ async function handleProviderHealth(req, res) {
       approval: CODEX_PILOT_APPROVAL,
       model: CODEX_PILOT_MODEL || "default",
       workspaceRoot: CODEX_WORKSPACE_ROOT,
-      purpose: "Routes voice-intent tasks into Codex exec so the desktop agent can inspect, edit, test, and operate this repo.",
-      activityMirror: {
-        enabled: CODEX_ACTIVITY_MIRROR,
-        sandbox: CODEX_ACTIVITY_MIRROR_SANDBOX,
-        purpose: "Mirrors successful OpenClaw turns into read-only Codex exec sessions for native Codex activity monitoring.",
+      legacyWorkspaceRoot: LEGACY_CODEX_WORKSPACE_ROOT,
+      purpose:
+        "Routes voice-intent coding tasks through the Codex CLI so the desktop agent can inspect, edit, test, and operate the target workspace.",
+      appChatRegistration: {
+        enabled: CODEX_APP_CHAT_REGISTRATION,
+        available: codexAppChatAvailable(),
+        command: CODEX_APP_CHAT_COMMAND,
+        timeoutMs: CODEX_APP_CHAT_TIMEOUT_MS,
+        purpose:
+          "Creates a normal Codex Desktop app chat in generated project folders so they appear under Projects.",
       },
     },
     openclaw: openClawStatusPayload(),
@@ -2228,6 +2540,7 @@ const server = http.createServer(async (req, res) => {
         codexPilotAvailable: codexPilotAvailable(),
         codexPilotSandbox: CODEX_PILOT_SANDBOX,
         codexWorkspaceRoot: CODEX_WORKSPACE_ROOT,
+        legacyCodexWorkspaceRoot: LEGACY_CODEX_WORKSPACE_ROOT,
         codexControlProvider: CODEX_CONTROL_PROVIDER,
         openclawAvailable: openClawAvailable(),
         openclawLocalMode: OPENCLAW_LOCAL,
@@ -2249,11 +2562,13 @@ const server = http.createServer(async (req, res) => {
         approval: CODEX_PILOT_APPROVAL,
         model: CODEX_PILOT_MODEL || "default",
         workspaceRoot: CODEX_WORKSPACE_ROOT,
+        legacyWorkspaceRoot: LEGACY_CODEX_WORKSPACE_ROOT,
         defaultControlProvider: CODEX_CONTROL_PROVIDER,
-        activityMirror: {
-          enabled: CODEX_ACTIVITY_MIRROR,
-          sandbox: CODEX_ACTIVITY_MIRROR_SANDBOX,
-          timeoutMs: CODEX_ACTIVITY_MIRROR_TIMEOUT_MS,
+        appChatRegistration: {
+          enabled: CODEX_APP_CHAT_REGISTRATION,
+          available: codexAppChatAvailable(),
+          command: CODEX_APP_CHAT_COMMAND,
+          timeoutMs: CODEX_APP_CHAT_TIMEOUT_MS,
         },
         openclaw: openClawStatusPayload(),
       });
