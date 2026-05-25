@@ -1288,7 +1288,18 @@ function polishWithCodexCli(prompt, targetWorkspace = __dirname) {
 
     const args = [];
     if (CODEX_PILOT_MODEL) args.push("-m", CODEX_PILOT_MODEL);
-    args.push("-a", CODEX_PILOT_APPROVAL, "exec", "--json", "--cd", targetWorkspace, "--sandbox", "read-only", "-");
+    args.push(
+      "-a",
+      CODEX_PILOT_APPROVAL,
+      "exec",
+      ...codexWorkspaceTrustArgs(targetWorkspace),
+      "--json",
+      "--cd",
+      targetWorkspace,
+      "--sandbox",
+      "read-only",
+      "-",
+    );
 
     const child = spawn(CODEX_PILOT_COMMAND, args, {
       cwd: targetWorkspace,
@@ -1450,6 +1461,18 @@ function shouldRegisterCodexAppChat(targetWorkspace, client = {}) {
     isWithinDirectory(path.resolve(targetWorkspace), generatedRoot) ||
     isWithinDirectory(path.resolve(targetWorkspace), legacyGeneratedRoot)
   );
+}
+
+function isGeneratedCodexWorkspace(targetWorkspace) {
+  if (!targetWorkspace) return false;
+  const resolved = path.resolve(targetWorkspace);
+  const generatedRoot = path.resolve(CODEX_WORKSPACE_ROOT);
+  const legacyGeneratedRoot = path.resolve(LEGACY_CODEX_WORKSPACE_ROOT);
+  return isWithinDirectory(resolved, generatedRoot) || isWithinDirectory(resolved, legacyGeneratedRoot);
+}
+
+function codexWorkspaceTrustArgs(targetWorkspace) {
+  return isGeneratedCodexWorkspace(targetWorkspace) ? ["--skip-git-repo-check"] : [];
 }
 
 function buildCodexAppChatRegistrationMessage({ messages, client = {}, targetWorkspace, result }) {
@@ -1877,7 +1900,7 @@ async function handleCodexPilot(req, res) {
   const args = [];
   if (CODEX_PILOT_MODEL) args.push("-m", CODEX_PILOT_MODEL);
   args.push("-a", CODEX_PILOT_APPROVAL);
-  args.push("exec", "--json", "--cd", targetWorkspace, "--sandbox", CODEX_PILOT_SANDBOX, "-");
+  args.push("exec", ...codexWorkspaceTrustArgs(targetWorkspace), "--json", "--cd", targetWorkspace, "--sandbox", CODEX_PILOT_SANDBOX, "-");
 
   const child = spawn(CODEX_PILOT_COMMAND, args, {
     cwd: targetWorkspace,
