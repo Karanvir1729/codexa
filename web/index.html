@@ -67,6 +67,15 @@
             <span>Codex pilot mode</span>
           </label>
 
+          <label class="field">
+            <span>Codex control plane</span>
+            <select id="codexControlProvider">
+              <option value="codex" selected>Direct Codex CLI</option>
+              <option value="openclaw">OpenClaw controls Codex/system</option>
+              <option value="auto">Auto: OpenClaw, then Codex fallback</option>
+            </select>
+          </label>
+
           <div class="flow-config">
             <p class="label">Speech input layer</p>
             <label class="field">
@@ -239,7 +248,7 @@ office hours => My office hours are Monday at 3 PM.</textarea>
 
           <p class="label">Codex pilot</p>
           <p id="codexPilotState" class="live-text muted">
-            Off by default. Turn on Codex pilot mode to route voice commands through Codex exec for repo-level work.
+            Off by default. Turn on Codex pilot mode to route voice commands through Codex or OpenClaw for system work.
           </p>
 
           <p class="label">Call / chat history</p>

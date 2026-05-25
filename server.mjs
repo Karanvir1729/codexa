@@ -47,6 +47,15 @@ const CODEX_PILOT_SANDBOX = process.env.CODEX_PILOT_SANDBOX ?? "workspace-write"
 const CODEX_PILOT_APPROVAL = process.env.CODEX_PILOT_APPROVAL ?? "never";
 const CODEX_PILOT_TIMEOUT_MS = Number(process.env.CODEX_PILOT_TIMEOUT_MS ?? 300000);
 const CODEX_PILOT_MAX_CONTEXT_MESSAGES = Number(process.env.CODEX_PILOT_MAX_CONTEXT_MESSAGES ?? 8);
+const CODEX_CONTROL_PROVIDER = process.env.CODEX_CONTROL_PROVIDER ?? "codex";
+const OPENCLAW_COMMAND =
+  process.env.OPENCLAW_COMMAND ??
+  path.join(__dirname, "node_modules", ".bin", process.platform === "win32" ? "openclaw.cmd" : "openclaw");
+const OPENCLAW_LOCAL = process.env.OPENCLAW_LOCAL !== "0";
+const OPENCLAW_TIMEOUT_SECS = Number(process.env.OPENCLAW_TIMEOUT_SECS ?? 180);
+const OPENCLAW_THINKING = process.env.OPENCLAW_THINKING ?? "off";
+const OPENCLAW_SESSION_PREFIX = process.env.OPENCLAW_SESSION_PREFIX ?? "tutor-tron";
+const PHONE_CODEX_CONTROL_PROVIDER = process.env.PHONE_CODEX_CONTROL_PROVIDER ?? CODEX_CONTROL_PROVIDER;
 const CODEX_PILOT_SYSTEM_PROMPT =
   process.env.CODEX_PILOT_SYSTEM_PROMPT ??
   `You are the Codex pilot underneath Tutor-Tron Voice.
@@ -858,6 +867,48 @@ function codexPilotAvailable() {
   return CODEX_PILOT_ENABLED && fs.existsSync(CODEX_PILOT_COMMAND);
 }
 
+function openClawAvailable() {
+  return fs.existsSync(OPENCLAW_COMMAND);
+}
+
+function openClawStatusPayload() {
+  return {
+    available: openClawAvailable(),
+    command: OPENCLAW_COMMAND,
+    localMode: OPENCLAW_LOCAL,
+    timeoutSecs: OPENCLAW_TIMEOUT_SECS,
+    thinking: OPENCLAW_THINKING,
+    sessionPrefix: OPENCLAW_SESSION_PREFIX,
+    purpose: "Routes voice turns through OpenClaw so the voice agent can control Codex and broader system tools.",
+  };
+}
+
+function normalizeControlProvider(value) {
+  const raw = String(value || CODEX_CONTROL_PROVIDER || "codex").toLowerCase();
+  if (["openclaw", "codex", "auto"].includes(raw)) return raw;
+  return "codex";
+}
+
+function activeControlProvider(input, client) {
+  const requested = normalizeControlProvider(input || client?.control_provider || client?.controlProvider);
+  if (requested === "auto") return openClawAvailable() ? "openclaw" : "codex";
+  return requested;
+}
+
+function openClawSessionKey(client = {}) {
+  const explicit = String(client?.openclaw_session_key || client?.openClawSessionKey || "").trim();
+  if (explicit) return explicit;
+  const project = String(client?.project_name || "default")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "") || "default";
+  const session = String(client?.session_id || "main")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "") || "main";
+  return `${OPENCLAW_SESSION_PREFIX}:${project}:${session}`;
+}
+
 function buildCodexPilotPrompt({ messages, systemPrompt, client }) {
   const safeMessages = Array.isArray(messages) ? messages : [];
   const recent = safeMessages
@@ -878,6 +929,11 @@ function buildCodexPilotPrompt({ messages, systemPrompt, client }) {
       {
         student_id: client?.student_id ?? null,
         student_name: client?.student_name ?? null,
+        session_id: client?.session_id ?? null,
+        session_title: client?.session_title ?? null,
+        project_name: client?.project_name ?? null,
+        project_mode: client?.project_mode ?? null,
+        control_provider: client?.control_provider ?? null,
         voice_command: true,
         raw_speech_text: client?.raw_speech_text ?? null,
         speech_intent: client?.speech_intent?.text ?? null,
@@ -892,6 +948,107 @@ function buildCodexPilotPrompt({ messages, systemPrompt, client }) {
     "Latest user instruction to satisfy now:",
     latestUser,
   ].join("\n");
+}
+
+function buildOpenClawPilotPrompt({ messages, systemPrompt, client }) {
+  return [
+    "You are the OpenClaw control plane underneath Tutor-Tron Voice.",
+    "The user is speaking to a voice agent. Your job is to control Codex and system tools to satisfy system, repo, browser, and app-operation requests.",
+    "Treat this as a voice-command turn: do the useful work, then return a concise spoken summary.",
+    "",
+    "Important operating context:",
+    JSON.stringify(
+      {
+        tutor_tron_repo: __dirname,
+        current_project: client?.project_name ?? null,
+        current_chat_session_id: client?.session_id ?? null,
+        current_chat_title: client?.session_title ?? null,
+        student_id: client?.student_id ?? null,
+        student_name: client?.student_name ?? null,
+        route: "openclaw_control_plane",
+      },
+      null,
+      2,
+    ),
+    "",
+    "If the task needs code changes, testing, desktop/browser operation, or broader system state, use OpenClaw/Codex capabilities rather than only answering conversationally.",
+    "If you need to operate this repo, use the tutor_tron_repo path above.",
+    "Keep the final answer short enough to speak out loud.",
+    "",
+    "Visible Tutor-Tron system prompt:",
+    systemPrompt || DEFAULT_AGENT_PROMPT,
+    "",
+    "Original Codex pilot prompt for this turn:",
+    buildCodexPilotPrompt({ messages, systemPrompt, client }),
+  ].join("\n");
+}
+
+function runOpenClawAgent(prompt, client = {}) {
+  return new Promise((resolve) => {
+    const startedAt = performance.now();
+    const args = [
+      "agent",
+      "--session-key",
+      openClawSessionKey(client),
+      "--message",
+      prompt,
+      "--json",
+      "--timeout",
+      String(Math.max(15, OPENCLAW_TIMEOUT_SECS)),
+    ];
+    if (OPENCLAW_LOCAL) args.splice(1, 0, "--local");
+    if (OPENCLAW_THINKING) args.push("--thinking", OPENCLAW_THINKING);
+
+    const child = spawn(OPENCLAW_COMMAND, args, {
+      cwd: __dirname,
+      env: {
+        ...process.env,
+        NO_COLOR: "1",
+        FORCE_COLOR: "0",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", (error) => {
+      resolve({
+        ok: false,
+        text: "",
+        error: error instanceof Error ? error.message : String(error),
+        durationMs: Math.round(performance.now() - startedAt),
+        stderr,
+      });
+    });
+    child.on("exit", (exitCode) => {
+      let parsed = null;
+      try {
+        const firstJson = stdout.indexOf("{");
+        parsed = firstJson >= 0 ? JSON.parse(stdout.slice(firstJson)) : null;
+      } catch {
+        parsed = null;
+      }
+      const text = (parsed?.payloads || [])
+        .map((payload) => payload?.text)
+        .filter(Boolean)
+        .join("\n")
+        .trim();
+      resolve({
+        ok: exitCode === 0 && Boolean(text),
+        text,
+        exitCode,
+        parsed,
+        stderr,
+        durationMs: Math.round(performance.now() - startedAt),
+      });
+    });
+  });
 }
 
 function streamCodexJsonLine(res, line, state) {
@@ -1005,6 +1162,36 @@ async function handlePhoneCodexCompletion(req, res) {
   writeOpenAIChunk(res, id, { role: "assistant" });
 
   const prompt = buildPhoneCodexPrompt(body.messages);
+  const phoneControlProvider = activeControlProvider(body.controlProvider || PHONE_CODEX_CONTROL_PROVIDER, {
+    project_name: "Phone coding assistant",
+    session_id: "phone",
+  });
+
+  if (phoneControlProvider === "openclaw" && openClawAvailable()) {
+    const result = await runOpenClawAgent(
+      [
+        "You are powering Tutor-Tron over a phone call.",
+        "Use OpenClaw to control Codex/system tools when useful, then return a concise spoken response.",
+        "",
+        prompt,
+      ].join("\n"),
+      {
+        project_name: "Phone coding assistant",
+        session_id: "phone",
+        student_id: "phone_caller",
+      },
+    );
+    const text = result.ok
+      ? result.text
+      : `OpenClaw control failed and I could not complete the request. ${result.error || result.stderr?.trim().split("\n").filter(Boolean).slice(-1)[0] || ""}`.trim();
+    recordPhoneBridgeExchange(body.messages, text);
+    writeOpenAIChunk(res, id, { content: text.slice(0, 1800) });
+    writeOpenAIChunk(res, id, {}, "stop");
+    res.write("data: [DONE]\n\n");
+    res.end();
+    return;
+  }
+
   const args = [];
   if (CODEX_PILOT_MODEL) args.push("-m", CODEX_PILOT_MODEL);
   args.push("-a", CODEX_PILOT_APPROVAL);
@@ -1108,6 +1295,7 @@ async function handleCodexPilot(req, res) {
   const messages = Array.isArray(body.messages) ? body.messages : [];
   const systemPrompt = typeof body.systemPrompt === "string" && body.systemPrompt.trim() ? body.systemPrompt.trim() : DEFAULT_AGENT_PROMPT;
   const client = body.client && typeof body.client === "object" ? body.client : {};
+  const controlProvider = activeControlProvider(body.controlProvider, client);
 
   sendSseHeaders(res);
 
@@ -1116,6 +1304,37 @@ async function handleCodexPilot(req, res) {
     sse(res, "done", {});
     res.end();
     return;
+  }
+
+  if (controlProvider === "openclaw") {
+    if (!openClawAvailable()) {
+      sse(res, "warning", { message: "OpenClaw is not available locally; falling back to direct Codex CLI." });
+    } else {
+      const prompt = buildOpenClawPilotPrompt({ messages, systemPrompt, client });
+      sse(res, "meta", {
+        provider: "openclaw",
+        model: "openclaw-codex",
+        sessionKey: openClawSessionKey(client),
+        mode: OPENCLAW_LOCAL ? "local" : "gateway",
+      });
+      sse(res, "warning", { message: "OpenClaw is controlling Codex/system tools for this voice turn." });
+      const result = await runOpenClawAgent(prompt, client);
+      if (result.ok) {
+        sse(res, "token", { text: result.text.slice(0, 2400) });
+        sse(res, "meta", {
+          provider: "openclaw",
+          model: result.parsed?.meta?.agentMeta?.model || "openclaw-codex",
+          durationMs: result.durationMs,
+          sessionId: result.parsed?.meta?.agentMeta?.sessionId || null,
+          runner: result.parsed?.meta?.executionTrace?.runner || (OPENCLAW_LOCAL ? "local" : "gateway"),
+        });
+        sse(res, "done", {});
+        res.end();
+        return;
+      }
+      const detail = result.error || result.stderr.trim().split("\n").filter(Boolean).slice(-1)[0] || `exit ${result.exitCode}`;
+      sse(res, "warning", { message: `OpenClaw control failed; falling back to direct Codex CLI. ${detail}` });
+    }
   }
 
   if (!fs.existsSync(CODEX_PILOT_COMMAND)) {
@@ -1519,12 +1738,14 @@ async function handleProviderHealth(req, res) {
     codexPilot: {
       enabled: CODEX_PILOT_ENABLED,
       available: codexPilotAvailable(),
+      defaultControlProvider: CODEX_CONTROL_PROVIDER,
       command: CODEX_PILOT_COMMAND,
       sandbox: CODEX_PILOT_SANDBOX,
       approval: CODEX_PILOT_APPROVAL,
       model: CODEX_PILOT_MODEL || "default",
       purpose: "Routes voice-intent tasks into Codex exec so the desktop agent can inspect, edit, test, and operate this repo.",
     },
+    openclaw: openClawStatusPayload(),
     tts: {
       defaultProvider: TTS_PROVIDER,
       browserAvailableOnClient: true,
@@ -1754,6 +1975,9 @@ const server = http.createServer(async (req, res) => {
         codexPilotEnabled: CODEX_PILOT_ENABLED,
         codexPilotAvailable: codexPilotAvailable(),
         codexPilotSandbox: CODEX_PILOT_SANDBOX,
+        codexControlProvider: CODEX_CONTROL_PROVIDER,
+        openclawAvailable: openClawAvailable(),
+        openclawLocalMode: OPENCLAW_LOCAL,
       });
       return;
     }
@@ -1771,7 +1995,14 @@ const server = http.createServer(async (req, res) => {
         sandbox: CODEX_PILOT_SANDBOX,
         approval: CODEX_PILOT_APPROVAL,
         model: CODEX_PILOT_MODEL || "default",
+        defaultControlProvider: CODEX_CONTROL_PROVIDER,
+        openclaw: openClawStatusPayload(),
       });
+      return;
+    }
+
+    if (url.pathname === "/api/openclaw/status") {
+      json(res, 200, openClawStatusPayload());
       return;
     }
 

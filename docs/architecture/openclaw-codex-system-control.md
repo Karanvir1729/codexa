@@ -17,8 +17,9 @@ The repo now installs OpenClaw locally as a dev dependency and installs the offi
 Browser / phone caller
   -> Pipecat realtime voice pipeline
   -> Tutor-Tron phone Codex bridge
-  -> Codex pilot for repo work
-  -> OpenClaw gateway for broader system actions
+  -> Codex control router
+     -> Direct Codex CLI for repo-local work
+     -> OpenClaw agent for broader system actions
   -> Codex / Computer Use / browser / app nodes
 ```
 
@@ -54,6 +55,28 @@ That checks:
 - Twilio number webhook configuration
 
 The Test Dashboard also has a **No-call phone test** button that runs the same bridge smoke test from the browser.
+
+## Codex Control Router
+
+The browser app exposes a **Codex control plane** selector:
+
+| Provider | Behavior |
+| --- | --- |
+| `codex` | Calls local `codex exec` directly. Best for fast repo-local edits and tests. |
+| `openclaw` | Calls `openclaw agent --local --session-key ...` so OpenClaw can route to Codex/system tools. |
+| `auto` | Uses OpenClaw if available and falls back to direct Codex if OpenClaw fails. |
+
+The same provider can be selected for phone calls with:
+
+```bash
+PHONE_CODEX_CONTROL_PROVIDER=openclaw
+```
+
+Direct endpoint smoke test:
+
+```bash
+npm run openclaw:control:test
+```
 
 ## OpenClaw Readiness
 

@@ -17,6 +17,7 @@ const dom = {
   bargeInToggle: document.querySelector("#bargeInToggle"),
   speechIntentToggle: document.querySelector("#speechIntentToggle"),
   codexPilotToggle: document.querySelector("#codexPilotToggle"),
+  codexControlProvider: document.querySelector("#codexControlProvider"),
   flowCleanupLevel: document.querySelector("#flowCleanupLevel"),
   flowWritingStyle: document.querySelector("#flowWritingStyle"),
   flowLanguage: document.querySelector("#flowLanguage"),
@@ -761,6 +762,17 @@ function useCodexPilot() {
   return Boolean(dom.codexPilotToggle?.checked);
 }
 
+function selectedControlProvider() {
+  return dom.codexControlProvider?.value || "codex";
+}
+
+function selectedControlProviderLabel() {
+  const value = selectedControlProvider();
+  if (value === "openclaw") return "OpenClaw control plane";
+  if (value === "auto") return "OpenClaw with Codex fallback";
+  return "direct Codex CLI";
+}
+
 function setCodexPilotState(text) {
   if (dom.codexPilotState) dom.codexPilotState.textContent = text;
 }
@@ -776,10 +788,11 @@ async function updateProviderStatus() {
       `STT: ${data.sttProvider}; ` +
       `Intent: ${data.speechIntentMode || "rewrite"}; ` +
       `TTS: ${data.ttsProvider}${data.fishConfigured ? " / Fish ready" : " / Fish not configured"}; ` +
-      `Codex: ${data.codexPilotAvailable ? "ready" : "unavailable"}`;
+      `Codex: ${data.codexPilotAvailable ? "ready" : "unavailable"}; ` +
+      `OpenClaw: ${data.openclawAvailable ? "ready" : "unavailable"}`;
     setCodexPilotState(
       data.codexPilotAvailable
-        ? `Ready: Codex exec in ${data.codexPilotSandbox || "workspace-write"} mode. Voice commands can inspect, edit, test, and operate this repo.`
+        ? `Ready: ${selectedControlProviderLabel()}. Codex sandbox ${data.codexPilotSandbox || "workspace-write"}; OpenClaw ${data.openclawAvailable ? "available" : "unavailable"}.`
         : "Unavailable: install local Codex CLI with npm install, or set CODEX_PILOT_COMMAND.",
     );
   } catch {
@@ -1597,7 +1610,7 @@ async function sendUserTurn(text, meta = {}) {
   state.thinking = true;
   resetMetrics(text);
   setAgentState("Thinking", "thinking");
-  setTurn(useCodexPilot() ? "Handing this turn to Codex pilot..." : "Streaming tutor response...");
+  setTurn(useCodexPilot() ? `Handing this turn to ${selectedControlProviderLabel()}...` : "Streaming tutor response...");
 
   state.messages.push({ role: "user", content: text });
   saveStudentConversation();
@@ -1635,7 +1648,9 @@ async function sendUserTurn(text, meta = {}) {
           speech_intent: meta.speechIntent || null,
           speech_flow: getSpeechFlowConfig(),
           route: useCodexPilot() ? "codex_pilot" : "tutor_llm",
+          control_provider: selectedControlProvider(),
         },
+        controlProvider: selectedControlProvider(),
       }),
       signal: state.abortController.signal,
     });
@@ -1704,6 +1719,15 @@ async function readSse(response) {
             event.data.durationMs ? `${event.data.durationMs} ms` : null,
           ].filter(Boolean).join("; ");
           setCodexPilotState(details ? `Codex pilot active: ${details}` : "Codex pilot active.");
+        }
+        if (event.data.provider === "openclaw") {
+          const details = [
+            event.data.sessionKey ? `session ${event.data.sessionKey}` : null,
+            event.data.mode ? `${event.data.mode} mode` : null,
+            event.data.runner ? `runner ${event.data.runner}` : null,
+            event.data.durationMs ? `${event.data.durationMs} ms` : null,
+          ].filter(Boolean).join("; ");
+          setCodexPilotState(details ? `OpenClaw control active: ${details}` : "OpenClaw control active.");
         }
       }
     }
@@ -1926,7 +1950,11 @@ dom.startBtn.addEventListener("click", startVoiceSession);
 dom.stopBtn.addEventListener("click", stopVoiceSession);
 dom.interruptBtn.addEventListener("click", () => interruptTutor("manual interrupt"));
 dom.codexPilotToggle?.addEventListener("change", () => {
-  setTurn(useCodexPilot() ? "Codex pilot mode enabled. Your next turn can operate this repo." : "Codex pilot mode disabled. Using tutor LLM path.");
+  setTurn(useCodexPilot() ? `Codex pilot mode enabled through ${selectedControlProviderLabel()}.` : "Codex pilot mode disabled. Using tutor LLM path.");
+});
+dom.codexControlProvider?.addEventListener("change", () => {
+  setCodexPilotState(`Selected: ${selectedControlProviderLabel()}.`);
+  if (useCodexPilot()) setTurn(`Next Codex pilot turn will use ${selectedControlProviderLabel()}.`);
 });
 dom.sttProvider.addEventListener("change", () => {
   if (!state.active) return;

@@ -21,6 +21,7 @@
     "openclaw:readiness": "node scripts/openclaw-readiness.mjs",
     "openclaw:doctor": "npx openclaw doctor --lint --non-interactive --no-workspace-suggestions --severity-min error",
     "openclaw:gateway": "npx openclaw gateway --dev --bind loopback run",
+    "openclaw:control:test": "node scripts/test-openclaw-control.mjs",
     "dev:loop": "node scripts/develop-test-loop.mjs",
     "dev:loop:watch": "node scripts/develop-test-loop.mjs --watch",
     "bench": "node scripts/bench-voice-loop.mjs",

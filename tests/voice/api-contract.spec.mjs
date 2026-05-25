@@ -82,6 +82,7 @@ test("provider health exposes voice, intent, and speaker identity layers", async
   expect(health.speechIntent.mode).toBeTruthy();
   expect(health.speakerGuard.purpose).toContain("speaker identity");
   expect(health.codexPilot.purpose).toContain("Codex exec");
+  expect(health.openclaw.purpose).toContain("OpenClaw");
 });
 
 test("codex pilot status exposes local exec integration", async ({ request }) => {
@@ -92,6 +93,18 @@ test("codex pilot status exposes local exec integration", async ({ request }) =>
   expect(status.enabled).toBe(true);
   expect(status.command).toContain("codex");
   expect(status.sandbox).toBeTruthy();
+  expect(status.openclaw.available).toBe(true);
+  expect(status.defaultControlProvider).toBeTruthy();
+});
+
+test("openclaw status exposes the system-control adapter", async ({ request }) => {
+  const response = await request.get("/api/openclaw/status");
+
+  expect(response.ok()).toBeTruthy();
+  const status = await response.json();
+  expect(status.available).toBe(true);
+  expect(status.command).toContain("openclaw");
+  expect(status.purpose).toContain("control Codex");
 });
 
 test("voice sessions persist project chat history", async ({ request }) => {

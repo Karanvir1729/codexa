@@ -114,6 +114,12 @@ voice/audio turn
 -> spoken summary back through the same TTS queue
 ```
 
+Codex pilot mode now has a **Codex control plane** selector:
+
+- **Direct Codex CLI:** current repo-local `codex exec` path.
+- **OpenClaw controls Codex/system:** sends the voice turn through `openclaw agent --local`, using OpenClaw's Codex provider and system-control tools.
+- **Auto:** tries OpenClaw when available, then falls back to direct Codex.
+
 Default behavior:
 
 - Uses the project-local `@openai/codex` CLI from `node_modules/.bin/codex`.
@@ -129,9 +135,19 @@ CODEX_PILOT_COMMAND=/path/to/codex
 CODEX_PILOT_MODEL=gpt-5-codex
 CODEX_PILOT_SANDBOX=workspace-write
 CODEX_PILOT_TIMEOUT_MS=300000
+CODEX_CONTROL_PROVIDER=codex
+OPENCLAW_LOCAL=1
+OPENCLAW_TIMEOUT_SECS=180
+OPENCLAW_THINKING=off
 ```
 
 For full-machine control, Codex itself must be configured for that level of access. The default desktop route intentionally keeps voice-triggered edits inside this repository.
+
+OpenClaw control-plane smoke test:
+
+```bash
+npm run openclaw:control:test
+```
 
 ## Project and Call History
 
