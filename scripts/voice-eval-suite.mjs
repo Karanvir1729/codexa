@@ -113,19 +113,19 @@ const cases = [
     name: "Flow-style formatter handles dictionary, snippets, Backtrack, and lists",
     async run() {
       const result = await postJson("/api/speech-intent", {
-        rawText: "um explain derivitives first use a simple analogy second quiz me third meet at two actually three period",
+        rawText: "um use coat x first inspect the files second run tests third ship it actually summarize changes period",
         mode: "format",
         flow: {
           cleanupLevel: "high",
           writingStyle: "bullets",
           languageHint: "en-US",
-          dictionary: [{ from: "derivitives", to: "derivatives", term: "derivatives", starred: true }],
-          snippets: [{ trigger: "quiz me", text: "Ask me one short diagnostic question." }],
+          dictionary: [{ from: "coat x", to: "Codex", term: "Codex", starred: true }],
+          snippets: [{ trigger: "run tests", text: "Run the focused test suite after making the change." }],
         },
       });
-      assert(result.text.includes("derivatives"), "dictionary correction did not apply");
-      assert(result.text.includes("Ask me one short diagnostic question"), "snippet did not expand");
-      assert(!result.text.toLowerCase().includes("um"), "filler word remained");
+      assert(result.text.includes("Codex"), "dictionary correction did not apply");
+      assert(result.text.includes("Run the focused test suite"), "snippet did not expand");
+      assert(!/\bum\b/i.test(result.text), "filler word remained");
       assert(!result.text.toLowerCase().includes("two actually three"), "Backtrack correction did not apply");
       assert(result.text.includes("- "), "spoken list was not formatted");
       return {
@@ -137,21 +137,21 @@ const cases = [
   },
   {
     id: "speech-to-intent",
-    name: "Speech-to-intent turns messy speech into a tutor-ready request",
+    name: "Speech-to-intent turns messy speech into a coding-agent-ready request",
     async run() {
       const result = await postJson("/api/speech-intent", {
         rawText:
-          "uh okay so can you explain why this is hyper geometric and not binomial because there are two outcomes but no replacement and then quiz me",
+          "uh okay so can you use coat x to build a calculator app but first inspect the files then run tests and summarize what changed",
         mode: "rewrite",
         flow: {
           cleanupLevel: "high",
-          writingStyle: "tutor",
-          dictionary: [{ from: "hyper geometric", to: "hypergeometric", term: "hypergeometric" }],
-          snippets: [{ trigger: "quiz me", text: "Ask one short follow-up question to check understanding." }],
+          writingStyle: "coding",
+          dictionary: [{ from: "coat x", to: "Codex", term: "Codex" }],
+          snippets: [{ trigger: "run tests", text: "Run the focused test suite after making the change." }],
         },
       });
-      assert(result.text.toLowerCase().includes("hypergeometric"), "concept was not preserved");
-      assert(result.text.toLowerCase().includes("binomial"), "comparison concept was not preserved");
+      assert(result.text.toLowerCase().includes("codex"), "tool name was not preserved");
+      assert(result.text.toLowerCase().includes("calculator"), "requested app was not preserved");
       assert(result.text.length >= 40, "cleaned intent is too short");
       return {
         text: result.text,
@@ -163,11 +163,11 @@ const cases = [
   },
   {
     id: "chat-stream",
-    name: "Tutor LLM streams a concise spoken answer",
+    name: "Assistant LLM streams a concise spoken coding answer",
     async run() {
       const result = await readChatStream(
-        [{ role: "user", content: "Explain in two sentences why no replacement means hypergeometric, not binomial." }],
-        "You are Tutor-Tron. Answer in two concise spoken sentences.",
+        [{ role: "user", content: "Explain in two sentences how you would debug a failing unit test." }],
+        "You are a concise coding assistant. Answer in two concise spoken sentences.",
       );
       assert(result.text.length > 20, "chat response was empty or too short");
       assert(result.firstTokenMs !== null, "no first token was observed");
@@ -230,7 +230,7 @@ async function main() {
   };
   const payload = {
     id: `voice-eval-${Date.now()}`,
-    name: "Tutor-Tron deterministic voice eval suite",
+    name: "Agentic Coding Assistant deterministic voice eval suite",
     status: summary.failed ? "failed" : "passed",
     startedAt: nowIso(),
     durationMs: Math.round(performance.now() - startedAt),

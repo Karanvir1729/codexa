@@ -3,25 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tutor-Tron Voice System</title>
+    <title>Agentic Coding Assistant</title>
     <meta name="theme-color" content="#2563eb" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="Tutor-Tron" />
+    <meta name="apple-mobile-web-app-title" content="Coding Agent" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="icon" href="/icons/tutor-tron-icon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/icons/tutor-tron-icon.svg" />
+    <link rel="icon" href="/icons/agentic-coding-icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icons/agentic-coding-icon.svg" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <main class="shell">
       <section class="topbar">
         <div>
-          <p class="eyebrow">Tutor-Tron Voice System</p>
-          <h1>Interruptible desktop voice tutor</h1>
+          <p class="eyebrow">Agentic Coding Assistant</p>
+          <h1>Interruptible coding voice agent</h1>
           <p class="goal">
             Goal: a full end-to-end voice agent with continuous listening, barge-in interruption,
-            Flow-style speech cleanup, streaming LLM response, and spoken tutor output.
+            Flow-style speech cleanup, Codex/OpenClaw control, streaming responses, and spoken coding status.
           </p>
         </div>
         <div class="status-card">
@@ -35,7 +35,7 @@
         <aside class="controls panel">
           <button id="startBtn" class="primary">Start voice session</button>
           <button id="stopBtn" class="secondary" disabled>Stop</button>
-          <button id="interruptBtn" class="danger" disabled>Interrupt tutor</button>
+          <button id="interruptBtn" class="danger" disabled>Interrupt assistant</button>
 
           <div class="meter-wrap">
             <div class="meter-head">
@@ -89,7 +89,7 @@
             <label class="field">
               <span>Writing style</span>
               <select id="flowWritingStyle">
-                <option value="tutor" selected>Tutor prompt</option>
+                <option value="coding" selected>Coding prompt</option>
                 <option value="bullets">Bullets</option>
                 <option value="numbered">Numbered list</option>
                 <option value="formal">Formal</option>
@@ -109,14 +109,14 @@
             </label>
             <label class="field">
               <span>Dictionary / corrections</span>
-              <textarea id="flowDictionary" rows="4" spellcheck="false">derivitives => derivatives
-hyper geometric => hypergeometric
-coin three point five => Qwen 3.5</textarea>
+              <textarea id="flowDictionary" rows="4" spellcheck="false">coat x => Codex
+open claw => OpenClaw
+cue when three point five => Qwen 3.5</textarea>
             </label>
             <label class="field">
               <span>Voice snippets</span>
-              <textarea id="flowSnippets" rows="3" spellcheck="false">quiz me => Ask me one short diagnostic question after the explanation.
-office hours => My office hours are Monday at 3 PM.</textarea>
+              <textarea id="flowSnippets" rows="3" spellcheck="false">run tests => Run the focused test suite after making the change.
+ship it => Implement the change, verify it, then summarize files and checks.</textarea>
             </label>
           </div>
 
@@ -143,8 +143,8 @@ office hours => My office hours are Monday at 3 PM.</textarea>
           </label>
 
           <label class="field">
-            <span>Student profile</span>
-            <select id="studentProfile">
+            <span>User profile</span>
+            <select id="userProfile">
               <option value="user_a">User A</option>
               <option value="user_b">User B</option>
               <option value="user_c">User C</option>
@@ -153,12 +153,12 @@ office hours => My office hours are Monday at 3 PM.</textarea>
 
           <label class="field">
             <span>Profile display name</span>
-            <input id="studentProfileName" value="User A" />
+            <input id="userProfileName" value="User A" />
           </label>
 
           <label class="field">
             <span>Agent system prompt</span>
-            <textarea id="systemPrompt" rows="7">You are Tutor-Tron, a realtime conversational voice tutor. Respond naturally to any prompt the user gives. Keep spoken responses concise and useful. Ask one clarifying question when the request is ambiguous. If interrupted, adapt immediately to the user's latest words.</textarea>
+            <textarea id="systemPrompt" rows="7">You are an agentic coding voice assistant. Help the user code by inspecting files, explaining code, proposing concise next steps, and using Codex pilot mode when project changes or command execution are needed. Keep spoken responses concise and useful. Ask one clarifying question when the request is ambiguous. If interrupted, adapt immediately to the user's latest words.</textarea>
           </label>
 
           <div class="note">
@@ -189,13 +189,13 @@ office hours => My office hours are Monday at 3 PM.</textarea>
               <label class="field">
                 <span>Existing project</span>
                 <select id="projectSelect">
-                  <option value="Tutor-Tron">Tutor-Tron</option>
+                  <option value="Current repo">Current repo</option>
                 </select>
               </label>
 
               <label class="field">
                 <span>Project name</span>
-                <input id="projectName" value="Tutor-Tron" placeholder="Tutor-Tron, Daybot, New calculus tutor..." />
+                <input id="projectName" value="Current repo" placeholder="Current repo, new app, bugfix branch..." />
               </label>
 
               <label class="field">
@@ -209,7 +209,7 @@ office hours => My office hours are Monday at 3 PM.</textarea>
             <div class="session-actions">
               <label class="field">
                 <span>New chat title</span>
-                <input id="chatTitle" placeholder="Voice coding session, calculus lesson, debugging call..." />
+                <input id="chatTitle" placeholder="Voice coding session, debugging call, feature build..." />
               </label>
               <button id="loadSessionBtn" type="button" class="secondary">Open selected chat</button>
               <button id="newSessionBtn" type="button" class="primary">Start new chat</button>
@@ -219,7 +219,7 @@ office hours => My office hours are Monday at 3 PM.</textarea>
           <div class="live">
             <div>
               <p class="label">Live transcript</p>
-              <p id="liveTranscript" class="live-text">Start a session and ask a tutoring question.</p>
+              <p id="liveTranscript" class="live-text">Start a session and ask for coding help.</p>
             </div>
             <div>
               <p class="label">Turn state</p>
@@ -230,7 +230,7 @@ office hours => My office hours are Monday at 3 PM.</textarea>
           <div id="messages" class="messages"></div>
 
           <form id="textForm" class="text-form">
-            <input id="textInput" autocomplete="off" placeholder="Typed fallback: ask Tutor-Tron something..." />
+            <input id="textInput" autocomplete="off" placeholder="Typed fallback: ask the coding agent something..." />
             <button type="submit">Send</button>
           </form>
         </section>
@@ -264,7 +264,7 @@ office hours => My office hours are Monday at 3 PM.</textarea>
           <p class="label">Turn-taking feedback</p>
           <ul class="path">
             <li>Predicts end-of-turn from stable silence.</li>
-            <li>Delays tutor speech while the mic is active.</li>
+            <li>Delays assistant speech while the mic is active.</li>
             <li>Raises pause thresholds after early interruptions.</li>
           </ul>
 
@@ -278,7 +278,7 @@ office hours => My office hours are Monday at 3 PM.</textarea>
 
           <p class="label">Parallel speaker identity</p>
           <p id="speakerGuardState" class="live-text muted">
-            NVIDIA target: NeMo Streaming Sortformer / TitaNet. Normal turns save the active student voice profile; overlap audio is checked before it can interrupt the LLM.
+            NVIDIA target: NeMo Streaming Sortformer / TitaNet. Normal turns save the active user voice profile; overlap audio is checked before it can interrupt the LLM.
           </p>
 
           <p class="label">Latency metrics</p>

@@ -1,0 +1,67 @@
+direction: right
+
+title: "Agentic Coding Real-Time Voice Path"
+
+developer: "Developer" {
+  mic: "Mic"
+  speaker: "Speaker"
+}
+
+edge: "Voice Edge" {
+  direction: down
+  webrtc: "Daily / WebRTC"
+  gateway: "Voice Gateway\n2 replicas"
+  pipecat: "Pipecat\nframes, VAD, barge-in"
+}
+
+speech: "Speech Providers" {
+  direction: down
+  asr: "Streaming ASR\nNVIDIA Riva"
+  asr_fallback: "ASR Fallback"
+  tts: "Streaming TTS"
+  tts_fallback: "TTS Fallback\ncached phrases"
+}
+
+assistant: "Assistant Decision Path" {
+  direction: down
+  orchestrator: "Coding Agent Orchestrator"
+  context: "Live Context\nrecent turns + developer state"
+  rag: "Fast RAG\ncodebase knowledge + strategy memory"
+  scip: "SCIP\nchoose next coding action"
+  llm: "Reasoning Model"
+}
+
+cache: "Latency Caches" {
+  direction: down
+  l1: "L1 In-Process\nsession hot state"
+  redis: "Redis Cache\nRAG + embeddings + strategy scores"
+  tts_cache: "TTS Cache\ncommon fragments"
+}
+
+observe: "Voice Observability" {
+  qa: "Voice QA Metrics\nlatency, WER, dead air, interruption"
+  traces: "OpenTelemetry\nturn-level traces"
+}
+
+developer.mic -> edge.webrtc: "speech"
+edge.webrtc -> edge.gateway: "media"
+edge.gateway -> edge.pipecat: "audio frames"
+edge.pipecat -> speech.asr: "stream"
+speech.asr -> assistant.orchestrator: "partial + final text"
+speech.asr -> speech.asr_fallback: "low confidence"
+
+assistant.orchestrator -> assistant.context: "state update"
+assistant.context -> cache.l1: "hot read/write"
+cache.l1 -> cache.redis: "miss"
+assistant.context -> assistant.rag: "grounding needed"
+assistant.rag -> cache.redis: "cached lookup"
+assistant.context -> assistant.scip: "alerts + constraints"
+assistant.scip -> assistant.llm: "selected move"
+assistant.llm -> speech.tts: "response text"
+speech.tts -> cache.tts_cache: "phrase hit"
+speech.tts -> speech.tts_fallback: "timeout"
+speech.tts -> edge.pipecat: "speech frames"
+edge.pipecat -> developer.speaker: "spoken answer"
+
+edge.pipecat -> observe.qa: "timing + interruption"
+assistant.orchestrator -> observe.traces: "trace spans"

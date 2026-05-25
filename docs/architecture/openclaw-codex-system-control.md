@@ -1,13 +1,13 @@
 # OpenClaw + Codex System-Control Plan
 
-Tutor-Tron has two control paths:
+Agentic Coding has two control paths:
 
 1. **Realtime voice path:** Pipecat/Twilio/Daily owns audio transport, turn-taking, STT, LLM, and TTS. This path must stay low-latency and should not wait for heavy system-control work.
 2. **System-control path:** Codex and OpenClaw handle repo/system actions when the user asks the voice agent to inspect, edit, test, operate apps, or report status.
 
 ## Why OpenClaw
 
-OpenClaw is useful here because it is a local-first gateway for a personal assistant that can route messages, tools, sessions, nodes, and channels from one control plane. For Tutor-Tron, it gives us a cleaner way to grow from "phone call talks to Codex" into "voice agent can operate my whole laptop and development environment."
+OpenClaw is useful here because it is a local-first gateway for a personal assistant that can route messages, tools, sessions, nodes, and channels from one control plane. For Agentic Coding, it gives us a cleaner way to grow from "phone call talks to Codex" into "voice agent can operate my whole laptop and development environment."
 
 The repo now installs OpenClaw locally as a dev dependency and installs the official OpenClaw Codex plugin in the local OpenClaw plugin registry.
 
@@ -16,7 +16,7 @@ The repo now installs OpenClaw locally as a dev dependency and installs the offi
 ```text
 Browser / phone caller
   -> Pipecat realtime voice pipeline
-  -> Tutor-Tron phone Codex bridge
+  -> Agentic Coding phone Codex bridge
   -> Codex control router
      -> Direct Codex CLI for repo-local work
      -> OpenClaw agent for broader system actions
@@ -103,11 +103,11 @@ The gateway command runs in foreground dev mode on loopback. Do not expose it pu
 
 ## Permission Model
 
-Tutor-Tron should distinguish three action levels:
+Agentic Coding should distinguish three action levels:
 
 | Level | Route | Example |
 | --- | --- | --- |
-| Conversational tutoring | Tutor LLM | "Explain derivatives." |
+| Conversational coding assistance | Coding Agent LLM | "Explain failing tests." |
 | Repo-local coding | Codex pilot | "Run the tests and fix the failing voice suite." |
 | Whole-system operation | OpenClaw gateway + nodes | "Open the app, inspect the browser, and control my dev environment." |
 
@@ -128,6 +128,6 @@ That adapter should keep a transcript of:
 
 - original voice request
 - cleaned speech intent
-- selected route: tutor, Codex, or OpenClaw
+- selected route: assistant, Codex, or OpenClaw
 - tool calls/actions performed
 - spoken summary returned to the caller

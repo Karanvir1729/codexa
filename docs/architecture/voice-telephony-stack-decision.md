@@ -2,14 +2,14 @@
 
 ## Decision
 
-Tutor-Tron should not hand-roll Twilio media streaming, barge-in, packet serialization, or transport orchestration.
+Agentic Coding should not hand-roll Twilio media streaming, barge-in, packet serialization, or transport orchestration.
 
 Use **Pipecat** as the realtime voice-agent framework:
 
 - Browser / desktop voice: Pipecat client + Daily/WebRTC transport.
 - Phone voice: Twilio Programmable Voice + Media Streams + Pipecat `FastAPIWebsocketTransport` + `TwilioFrameSerializer`.
 - Production hosting: Pipecat Cloud/Daily first, self-hosted Pipecat on GCP/AWS later if needed.
-- Tutor-Tron custom layer: Codex pilot tools, student memory, strategy/eval loop, dashboard, and tutoring policies.
+- Agentic Coding custom layer: Codex pilot tools, developer memory, strategy/eval loop, dashboard, and coding assistance policies.
 
 ## Why
 
@@ -38,7 +38,7 @@ Browser / Desktop
   -> Pipecat client SDK
   -> Daily/WebRTC transport
   -> Pipecat bot pipeline
-  -> Tutor-Tron Codex pilot + memory/eval services
+  -> Agentic Coding Codex pilot + memory/eval services
 
 Phone Call
   -> Twilio number
@@ -46,7 +46,7 @@ Phone Call
   -> Pipecat Twilio WebSocket endpoint
   -> TwilioFrameSerializer
   -> Pipecat bot pipeline
-  -> Tutor-Tron Codex pilot + memory/eval services
+  -> Agentic Coding Codex pilot + memory/eval services
 ```
 
 ## Implementation Boundary
@@ -60,12 +60,12 @@ Pipecat owns:
 - turn aggregation and VAD integration
 - phone/web transport switching
 
-Tutor-Tron owns:
+Agentic Coding owns:
 
-- system prompt and tutoring behavior
+- system prompt and coding assistance behavior
 - Codex pilot integration
-- student profile and memory
-- pitfall/strategy/eval loop
+- developer profile and memory
+- failure mode/strategy/eval loop
 - dashboard and test reporting
 - hackathon demo scripts
 

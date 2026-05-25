@@ -28,10 +28,10 @@ async function main() {
   }
 
   try {
-    await checkUrl(appUrl, "Tutor-Tron app");
-    checks.push({ name: "Tutor-Tron app", ok: true, detail: appUrl });
+    await checkUrl(appUrl, "Agentic coding assistant app");
+    checks.push({ name: "Agentic coding assistant app", ok: true, detail: appUrl });
   } catch (error) {
-    checks.push({ name: "Tutor-Tron app", ok: false, detail: error.message });
+    checks.push({ name: "Agentic coding assistant app", ok: false, detail: error.message });
   }
 
   try {

@@ -39,9 +39,9 @@ async function main() {
       client: {
         session_id: "openclaw_smoke",
         session_title: "OpenClaw smoke",
-        project_name: "Tutor-Tron",
-        student_id: "test",
-        student_name: "Test",
+        project_name: "Agentic Coding Assistant",
+        user_id: "test",
+        user_name: "Test",
         control_provider: "openclaw",
       },
     }),

@@ -1,0 +1,85 @@
+Agentic Coding Voice Agent - Core Requirements
+
+1. Product Goal
+
+Build a production-grade voice agent for coding work. The assistant should let the user speak naturally, interrupt continuously, ask for status, request repo changes, and route real work through Codex/OpenClaw instead of answering with canned demos.
+
+Core one-liner:
+
+Agentic Coding turns spoken developer intent into repo/system actions, captures failures from each turn, and improves the next similar coding session through tested strategy updates.
+
+2. Primary Experience
+
+- Browser or desktop voice session with continuous listening.
+- User can interrupt the assistant while it is speaking.
+- Assistant should distinguish user speech from its own TTS echo.
+- Speech input should be rewritten into clear developer intent, similar to Wispr Flow.
+- Assistant can answer conversationally, run Codex for repo work, or route broader system actions through OpenClaw.
+- The UI should show chat history, call/session history, active project, selected control plane, and test status.
+
+3. Coding Control Requirements
+
+- Ask whether to work on an existing project or create a new one.
+- Keep per-user voice/profile memory.
+- Preserve project and chat context across sessions.
+- Route coding tasks to Codex pilot mode.
+- Route whole-system/browser/app-control tasks to OpenClaw when enabled.
+- Never hardcode a calculator or any specific app. Build from the user prompt.
+- After code changes, run focused tests/checks and report exact outcomes.
+
+4. Voice Runtime Requirements
+
+- Low-latency turn capture with configurable silence thresholds.
+- Barge-in controller that pauses TTS as soon as likely user speech starts.
+- Speaker identity / echo rejection so assistant audio is not transcribed as user input.
+- Speech intent cleanup for partial, rambling, or interrupted speech.
+- Browser STT fallback, Python STT service boundary, and phone/Twilio path.
+- TTS provider abstraction: browser Web Speech now, higher-quality provider later.
+
+5. Model and Tooling Requirements
+
+- LLM route should support local Ollama / OpenAI-compatible endpoints.
+- Speech-to-text should be swappable behind the Python adapter.
+- Speaker diarization / speaker verification should run in parallel with turn capture.
+- NVIDIA diarization/Sortformer or Riva/NIM paths should be represented as the target high-quality model layer when available.
+- Codex/OpenClaw routes must be explicit and observable.
+
+6. Testing Framework Requirements
+
+- API contract tests for chat, sessions, STT, speech intent, and Codex routes.
+- Browser smoke tests for the voice UI and dashboard.
+- Acoustic/turn-taking simulations for interruption, echo rejection, and silence timing.
+- No-call phone bridge test so Twilio/Codex flow can be tested without dialing.
+- Eval suite that checks coding-assistant quality, generic prompt handling, and anti-hardcoding behavior.
+- Test dashboard showing pass/fail status, latency, provider status, and generated-app build checks.
+
+7. Continuous Improvement Requirements
+
+- Capture failed turns, poor rewrites, bad timing, interrupted assistant speech, echo mistakes, and failed Codex tasks.
+- Store failure traces with project/session/user context.
+- Generate regression evals from real failures.
+- Propose updated prompts, routing rules, turn-taking thresholds, or tool policies.
+- Promote updates only after evals improve against baseline.
+- Roll back strategies that regress interruption handling, coding accuracy, latency, or user control.
+
+8. Architecture Requirements
+
+- Keep realtime voice path fast and local/colocated.
+- Keep heavy evals, replay, and model experiments off the live voice path.
+- Maintain hot context/cache for active user, active project, active session, and active strategy.
+- Use durable session history and artifacts for calls, commands, transcripts, and test runs.
+- Make browser and desktop app share the same backend/API surface.
+- Keep deployment portable: local laptop now, GCP prototype services next, AWS production mapping later.
+
+9. Demo Requirements
+
+The demo should prove:
+
+1. User starts a coding voice session.
+2. User asks for a new app, such as a calculator, without a hardcoded path.
+3. Assistant rewrites speech into a clear task.
+4. Codex builds or edits files.
+5. Tests run and status is spoken back.
+6. User interrupts mid-response and redirects the task.
+7. The assistant stops speaking, accepts the new instruction, and continues from updated context.
+8. Dashboard shows the session, command route, test result, interruption event, and failure/improvement trace.

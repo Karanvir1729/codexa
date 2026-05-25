@@ -1,17 +1,17 @@
 {
-  "name": "Tutor-Tron Voice",
-  "short_name": "Tutor-Tron",
-  "description": "Interruptible voice tutor with Flow-style speech intent and Python AI/ML runtime.",
+  "name": "Agentic Coding Assistant",
+  "short_name": "Coding Agent",
+  "description": "Interruptible coding voice assistant with Flow-style speech intent, Codex control, and Python AI/ML runtime.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#f6f7fb",
   "theme_color": "#2563eb",
   "orientation": "any",
-  "categories": ["education", "productivity"],
+  "categories": ["developer", "productivity"],
   "icons": [
     {
-      "src": "/icons/tutor-tron-icon.svg",
+      "src": "/icons/agentic-coding-icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"

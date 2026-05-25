@@ -1,17 +1,17 @@
-# Cekura Blog Learnings Applied to Tutor-Tron
+# Cekura Blog Learnings Applied to Agentic Coding
 
 Source inventory:
 
 - Crawled the Cekura blog index at https://www.cekura.ai/blogs.
 - Fetched 110 linked blog posts from the index.
-- Applied the recurring production voice-agent patterns to the D2 architecture in `docs/architecture/tutor-tron-voice-agent.d2`.
+- Applied the recurring production voice-agent patterns to the D2 architecture in `docs/architecture/agentic-coding-voice-agent.d2`.
 
 Applied architecture changes:
 
 1. Added a Cekura-informed evaluation harness.
    - Scenario bank for workflow, knowledge-base, and edge-case tests.
    - Structured test profiles with dynamic variables and mock tool state.
-   - Multi-turn simulated students instead of single-turn checks.
+   - Multi-turn simulated developers instead of single-turn checks.
    - Conditional actions that branch assertions based on the agent response.
    - Multi-turn red-teaming, multilingual/accent testing, load testing, TTS snapshot testing, and production call replay.
 
@@ -49,7 +49,7 @@ High-signal Cekura sources:
 - Multilingual/accent testing: https://www.cekura.ai/blogs/cekura-multilingual-voice-ai-testing
 - Voice AI CI/CD: https://www.cekura.ai/blogs/engineering-reliability-voice-ai-cicd-pipeline
 - Multi-turn red teaming: https://www.cekura.ai/blogs/why-multi-turn-red-teaming-works
-- Field lessons for eval design: https://www.cekura.ai/blogs/lessons-from-the-field-cekura-fde-findings
+- Field workspaces for eval design: https://www.cekura.ai/blogs/workspaces-from-the-field-cekura-fde-findings
 - Conditional actions: https://www.cekura.ai/blogs/conditional-actions-robust-testing-chatbots-voice-agents
 - Autoscalable voice infrastructure: https://www.cekura.ai/blogs/how-we-built-an-autoscalable-infrastructure-for-voice-ai-agents
 - Silence and turn-taking failures: https://www.cekura.ai/blogs/the-silence-between-words-architecting-resilient-voice-ai-systems

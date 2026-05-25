@@ -1,6 +1,6 @@
-# Tutor-Tron Voice System
+# Agentic Coding Assistant
 
-Desktop-first end-to-end voice-agent system for Tutor-Tron, with a Python AI/ML runtime and Electron shell.
+Desktop-first end-to-end voice-agent system for an agentic coding assistant, with a Python AI/ML runtime and Electron shell.
 
 Goal:
 
@@ -11,21 +11,21 @@ Goal:
 - **LLM:** Ollama with `qwen3.5` by default.
 - **Python AI/ML runtime:** `services/whisperx_adapter.py` owns WhisperX STT, speaker identity, and deterministic Flow-style speech transforms.
 - **STT:** local WhisperX adapter behind `POST /api/stt`.
-- **Speech input layer:** Wispr Flow-style `POST /api/speech-intent` rewrite that converts raw speech into the clearest user request before the tutor LLM sees it.
+- **Speech input layer:** Wispr Flow-style `POST /api/speech-intent` rewrite that converts raw speech into the clearest user request before the assistant LLM sees it.
   - Backtrack/self-correction cleanup.
   - Filler removal, smart punctuation, and spoken list formatting.
-  - Per-student dictionary corrections and voice snippets.
+  - Per-user dictionary corrections and voice snippets.
   - Writing style and language hint controls.
   - Recent speech history with raw/cleaned turns.
 - **Turn-taking:** adaptive social-silence predictor that delays end-of-turn and assistant speech based on interruption feedback.
-- **Speaker identity:** persistent per-student voice profiles behind `POST /api/speaker/*`.
+- **Speaker identity:** persistent per-user voice profiles behind `POST /api/speaker/*`.
   - Production target: NVIDIA NeMo Streaming Sortformer for online diarization and TitaNet-style speaker embeddings.
   - Local CPU fallback: SpeechBrain ECAPA embeddings until the NVIDIA runtime is available on GPU.
 - **TTS:** Fish Audio / Fish Speech `s2-pro` through `POST /api/tts` when `FISH_API_KEY` is set.
 - **Fallbacks:** browser STT and browser Web Speech TTS remain available for local debugging.
-- **Prompting:** no hardcoded tutor answer path. The UI sends the current conversation plus the editable system prompt to the LLM.
+- **Prompting:** no hardcoded coding answer path. The UI sends the current conversation plus the editable system prompt to the LLM.
 - **Codex pilot mode:** optional voice-command route that sends the cleaned user intent to `codex exec` so the desktop agent can inspect, edit, test, and operate this repo using Codex underneath.
-- **Desktop shell:** Electron starts/reuses the Node API and Python STT/ML service, opens Tutor-Tron in a native desktop window, and exposes the test dashboard/logs from the app menu.
+- **Desktop shell:** Electron starts/reuses the Node API and Python STT/ML service, opens Agentic Coding Assistant in a native desktop window, and exposes the test dashboard/logs from the app menu.
 - **Install surface:** the same voice core also ships as a web/PWA surface for iPhone/Mac testing.
 
 ## Run End-to-End
@@ -81,7 +81,7 @@ npm run desktop
 
 The desktop app provides:
 
-- native Electron window for Tutor-Tron Voice
+- native Electron window for Agentic Coding Assistant
 - automatic Python STT/ML service startup
 - automatic Node API startup
 - microphone permission handling for the local app
@@ -101,7 +101,7 @@ tmp/desktop-stt.log
 
 ## Codex Pilot Mode
 
-Turn on **Codex pilot mode** in the left control panel when a voice turn should be handled by Codex instead of the fast tutor LLM.
+Turn on **Codex pilot mode** in the left control panel when a voice turn should be handled by Codex instead of the fast assistant LLM.
 
 The route is:
 
@@ -233,7 +233,7 @@ The first call may take longer because local Whisper and Kokoro models can downl
 Production/demo path:
 
 ```text
-Twilio number -> Pipecat Cloud Twilio WebSocket endpoint -> Tutor-Tron Pipecat bot
+Twilio number -> Pipecat Cloud Twilio WebSocket endpoint -> Agentic Coding Assistant Pipecat bot
 ```
 
 ### Test the Phone Brain Without Calling
@@ -258,7 +258,7 @@ http://localhost:3000/test-dashboard.html
 
 ## OpenClaw System-Control Path
 
-OpenClaw is installed as the local system-control layer for growing Tutor-Tron from "voice talks to Codex" into "voice can operate the development environment."
+OpenClaw is installed as the local system-control layer for growing Agentic Coding Assistant from "voice talks to Codex" into "voice can operate the development environment."
 
 Readiness:
 
@@ -325,7 +325,7 @@ Device mic
 -> local VAD turn recorder
 -> /api/stt
 -> WhisperX adapter
--> parallel speaker identity service enrolls/checks student voice
+-> parallel speaker identity service enrolls/checks user voice
 -> /api/speech-intent applies Flow-style cleanup, snippets, dictionary, style, and intent rewrite
 -> /api/chat
 -> Ollama qwen3.5 streaming response
@@ -336,7 +336,7 @@ Device mic
 
 ## Testing Framework
 
-Tutor-Tron has a local Cekura-style QA harness with a dashboard, persisted run history, deterministic evals, browser tests, and acoustic interruption tests.
+Agentic Coding Assistant has a local Cekura-style QA harness with a dashboard, persisted run history, deterministic evals, browser tests, and acoustic interruption tests.
 
 Dashboard:
 
@@ -361,7 +361,7 @@ npm run test:voice:acoustic
 Suites:
 
 - `preflight`: verifies app, WhisperX, speech intent, speaker identity, and macOS speaker command.
-- `eval`: deterministic voice-agent evals for provider health, Flow-style speech cleanup, tutor LLM streaming, and PWA installability.
+- `eval`: deterministic voice-agent evals for provider health, Flow-style speech cleanup, assistant LLM streaming, and PWA installability.
 - `api`: Playwright API contracts.
 - `ui`: Playwright browser smoke tests for the main app and dashboard.
 - `bench`: first-token and total response latency benchmark.
@@ -404,7 +404,7 @@ curl -s -X POST http://localhost:3000/api/test-runs/run \
 
 The local runner is intentionally container-friendly. With GCP credits, the useful hosted setup is:
 
-- **Cloud Run service:** host the Tutor-Tron API/dashboard container.
+- **Cloud Run service:** host the Agentic Coding Assistant API/dashboard container.
 - **Cloud Run Jobs:** run `npm run test:voice:runner` on demand or on a schedule. Cloud Run jobs are designed for code that performs work and exits.
 - **Pub/Sub:** trigger regression runs from failed sessions, prompt changes, strategy changes, or deploy events.
 - **Cloud Storage:** store Playwright traces, audio snippets, failure traces, and replay artifacts.
@@ -420,20 +420,20 @@ References:
 
 ## Interruption Path
 
-Tutor-Tron uses verified barge-in. When local VAD hears speech over the tutor, the browser records a short overlap window while the speaker identity model and WhisperX run in parallel. Tutor audio is interrupted only when the overlap matches a saved student profile or the speaker identity service is unavailable and the transcript clearly looks like a student correction.
+Agentic Coding Assistant uses verified barge-in. When local VAD hears speech over the assistant, the browser records a short overlap window while the speaker identity model and WhisperX run in parallel. Assistant audio is interrupted only when the overlap matches a saved user profile or the speaker identity service is unavailable and the transcript clearly looks like a user correction.
 
-Normal voice turns are intentionally less aggressive than the interruption path: the recorder waits through natural pauses before submitting the turn, then the speech cleanup layer removes filler and false starts. Long, messy spoken input can become a concise question or bullet list before it reaches the tutor.
+Normal voice turns are intentionally less aggressive than the interruption path: the recorder waits through natural pauses before submitting the turn, then the speech cleanup layer removes filler and false starts. Long, messy spoken input can become a concise question or bullet list before it reaches the assistant.
 
 ## Social Turn-Taking Loop
 
-Tutor-Tron keeps a local per-student turn-taking profile:
+Agentic Coding Assistant keeps a local per-user turn-taking profile:
 
 ```text
-student speaks
+user speaks
 -> VAD estimates stable silence instead of cutting on the first pause
--> tutor response is queued
--> tutor waits for socially acceptable silence before speaking
--> if student interrupts early, store the interruption point
+-> assistant response is queued
+-> assistant waits for socially acceptable silence before speaking
+-> if user interrupts early, store the interruption point
 -> increase future end-of-turn and speak-start silence thresholds
 -> next response waits longer before speaking
 ```
@@ -443,7 +443,7 @@ Stored feedback includes:
 ```json
 {
   "type": "interruption",
-  "reason": "verified student barge-in",
+  "reason": "verified user barge-in",
   "msSinceAssistantStart": 1800,
   "assistantTextChars": 240,
   "nextEndSilenceMs": 2060,
@@ -451,18 +451,18 @@ Stored feedback includes:
 }
 ```
 
-This is not model fine-tuning. It is a lightweight conversation policy loop that learns when this student tends to pause, restart, or interrupt.
+This is not model fine-tuning. It is a lightweight conversation policy loop that learns when this user tends to pause, restart, or interrupt.
 
 ```text
 first normal user turn
--> active student profile enrolls and persists a voiceprint
+-> active user profile enrolls and persists a voiceprint
 
-student says "wait" / "stop" / correction during tutor speech
+user says "wait" / "stop" / correction during assistant speech
 -> VAD captures possible barge-in in short windows
--> speaker identity model checks whether audio matches a saved student profile
+-> speaker identity model checks whether audio matches a saved user profile
 -> WhisperX transcribes it in parallel
--> speaker identity rejects tutor self-audio
--> verified student voice stops tutor audio
+-> speaker identity rejects assistant self-audio
+-> verified user voice stops assistant audio
 -> accepted user barge-in aborts LLM + TTS
 -> next user turn is sent to the LLM
 ```
@@ -475,7 +475,7 @@ User B speaks -> update User B voice profile + User B local conversation memory
 Future turns -> classify speaker against saved profiles, then route context to that user
 ```
 
-Remote TTS audio can also enroll an assistant voiceprint. Browser `speechSynthesis` does not expose its raw audio, so browser TTS relies on the enrolled student voiceprint and model-based speaker matching.
+Remote TTS audio can also enroll an assistant voiceprint. Browser `speechSynthesis` does not expose its raw audio, so browser TTS relies on the enrolled user voiceprint and model-based speaker matching.
 
 This is slower than production streaming ASR. The production-grade model path is NVIDIA NeMo Streaming Sortformer, which is built for online diarization with speaker-cache behavior; the local CPU fallback keeps the system working on this machine.
 
@@ -498,7 +498,7 @@ SPEECH_INTENT_MODE=rewrite
 TTS_PROVIDER=fish
 FISH_API_KEY=...
 FISH_TTS_MODEL=s2-pro
-AGENT_SYSTEM_PROMPT="You are Tutor-Tron..."
+AGENT_SYSTEM_PROMPT="You are Agentic Coding Assistant..."
 TELEPHONY_STACK=pipecat
 TWILIO_ACCOUNT_SID=...
 TWILIO_AUTH_TOKEN=...
@@ -518,9 +518,9 @@ Content-Type: application/json
 
 ```json
 {
-  "systemPrompt": "You are Tutor-Tron...",
+  "systemPrompt": "You are Agentic Coding Assistant...",
   "messages": [
-    { "role": "user", "content": "Explain derivatives simply." }
+    { "role": "user", "content": "Explain the failing calculator test and suggest the next fix." }
   ]
 }
 ```
@@ -546,7 +546,7 @@ Expected adapter response:
 
 ```json
 {
-  "text": "What is the derivative of x squared?",
+  "text": "Run the calculator tests and tell me what failed.",
   "segments": [],
   "language": "en"
 }
@@ -561,17 +561,17 @@ Content-Type: application/json
 
 ```json
 {
-  "rawText": "um okay so I think I am confused about like why this is not binomial because there are two outcomes but also no replacement",
+  "rawText": "um okay so run the calculator tests first then fix the parser bug and summarize the files you changed",
   "mode": "rewrite",
   "flow": {
     "cleanupLevel": "high",
-    "writingStyle": "tutor",
+    "writingStyle": "assistant",
     "languageHint": "auto",
     "dictionary": [
-      { "from": "hyper geometric", "to": "hypergeometric", "term": "hypergeometric", "starred": true }
+      { "from": "coat x", "to": "Codex", "term": "Codex", "starred": true }
     ],
     "snippets": [
-      { "trigger": "quiz me", "text": "Ask me one short diagnostic question after the explanation." }
+      { "trigger": "run tests", "text": "Run the focused test suite after making the change." }
     ]
   }
 }
@@ -581,13 +581,13 @@ Example response:
 
 ```json
 {
-  "text": "I am confused why this is not binomial. There are two outcomes, but the problem also says sampling is without replacement.",
+  "text": "Run the calculator tests first, fix the parser bug, and summarize the files changed.",
   "rawText": "...",
   "mode": "rewrite",
   "changed": true,
   "flow": {
     "cleanup_level": "high",
-    "writing_style": "tutor",
+    "writing_style": "assistant",
     "language_hint": "auto",
     "dictionary_applied": [],
     "snippets_applied": []
@@ -676,7 +676,7 @@ Acoustic speaker-to-mic test:
 npm run test:voice:acoustic
 ```
 
-The acoustic test opens the browser UI, starts a voice session, uses macOS `say` to speak through your selected speaker, waits for Tutor-Tron to transcribe/respond, then speaks an interruption through the same speaker.
+The acoustic test opens the browser UI, starts a voice session, uses macOS `say` to speak through your selected speaker, waits for Agentic Coding Assistant to transcribe/respond, then speaks an interruption through the same speaker.
 
 By default this acoustic test disables speaker-identity blocking immediately before the interruption so it can isolate the physical speaker-to-mic barge-in path. Speaker identity itself is covered by API tests and can be required in the acoustic run with:
 
@@ -696,8 +696,8 @@ Useful overrides:
 
 ```bash
 VOICE_TEST_SAY_VOICE=Samantha \
-VOICE_TEST_USER_UTTERANCE="Explain derivatives with an example." \
-VOICE_TEST_INTERRUPT_UTTERANCE="Wait, explain the exponent part again." \
+VOICE_TEST_USER_UTTERANCE="Explain what you are changing before you edit." \
+VOICE_TEST_INTERRUPT_UTTERANCE="Wait, run the tests first." \
 npm run test:voice:acoustic
 ```
 
@@ -714,7 +714,7 @@ With the server running:
 ```bash
 curl -N -s -X POST http://localhost:3000/api/chat \
   -H 'Content-Type: application/json' \
-  --data '{"messages":[{"role":"user","content":"Give me one sentence about calculus."}],"systemPrompt":"You are concise."}'
+  --data '{"messages":[{"role":"user","content":"Give me one sentence about this repo."}],"systemPrompt":"You are concise."}'
 ```
 
 Generate a local STT test file:
@@ -732,7 +732,7 @@ Speaker identity test:
 
 ```bash
 say -v Samantha -o tmp/user-voice.aiff "Wait, I have a different question."
-say -v Daniel -o tmp/assistant-voice.aiff "Derivatives measure change."
+say -v Daniel -o tmp/assistant-voice.aiff "I am running the focused test suite."
 ffmpeg -y -i tmp/user-voice.aiff -ar 16000 -ac 1 tmp/user-voice.wav
 ffmpeg -y -i tmp/assistant-voice.aiff -ar 16000 -ac 1 tmp/assistant-voice.wav
 curl -s -X POST http://localhost:3000/api/speaker/reset
@@ -749,5 +749,5 @@ curl -s -X POST http://localhost:3000/api/speaker/classify \
 - Replace turn-based WhisperX with streaming ASR for lower interruption latency.
 - Add Daily/Pipecat transport.
 - Persist transcripts and latency traces.
-- Add pitfall detection and active teaching strategy cache.
-- Add eval-gated strategy promotion.
+- Add coding-failure detection and an active tool/prompt strategy cache.
+- Add eval-gated strategy promotion for coding workflows.

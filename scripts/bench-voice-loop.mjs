@@ -1,7 +1,7 @@
 const baseUrl = process.env.BENCH_BASE_URL ?? "http://localhost:3000";
 const prompt =
   process.env.BENCH_PROMPT ??
-  "Why is this hypergeometric and not binomial? Give a short tutoring answer.";
+  "Explain how you would debug a failing calculator test. Keep it short.";
 const ttsProvider = process.env.BENCH_TTS_PROVIDER ?? "browser";
 
 function parseSse(raw) {

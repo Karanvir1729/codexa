@@ -29,8 +29,8 @@ const dom = {
   rateSlider: document.querySelector("#rateSlider"),
   sttProvider: document.querySelector("#sttProvider"),
   ttsProvider: document.querySelector("#ttsProvider"),
-  studentProfile: document.querySelector("#studentProfile"),
-  studentProfileName: document.querySelector("#studentProfileName"),
+  userProfile: document.querySelector("#userProfile"),
+  userProfileName: document.querySelector("#userProfileName"),
   systemPrompt: document.querySelector("#systemPrompt"),
   projectMode: document.querySelector("#projectMode"),
   projectSelect: document.querySelector("#projectSelect"),
@@ -101,10 +101,10 @@ const state = {
   assistantSpeechStartedAt: 0,
   assistantTurnInterrupted: false,
   turnTakingProfile: null,
-  currentStudentId: "user_a",
+  currentUserId: "user_a",
   speechHistory: [],
   sessions: [],
-  projects: ["Tutor-Tron"],
+  projects: ["Current repo"],
   currentSessionId: null,
   currentSessionSummary: null,
 };
@@ -123,7 +123,7 @@ const TURN_CAPTURE = {
   feedbackWindowMs: 5000,
 };
 
-window.__tutorTronVoiceTest = {
+const voiceTestHarness = {
   setSpeakerIdentityAvailable(value) {
     state.speakerGuardAvailable = Boolean(value);
     setSpeakerGuard(state.speakerGuardAvailable ? "test: speaker identity enabled" : "test: speaker identity disabled");
@@ -136,12 +136,13 @@ window.__tutorTronVoiceTest = {
       bargeInPaused: state.bargeInPaused,
       micVoiceActive: state.micVoiceActive,
       speakerGuardAvailable: state.speakerGuardAvailable,
-      currentStudentId: state.currentStudentId,
+      currentUserId: state.currentUserId,
       turnTakingProfile: state.turnTakingProfile,
       lastSpeakerDecision: state.lastSpeakerDecision,
     };
   },
 };
+window.__agenticCodingVoiceTest = voiceTestHarness;
 
 function setAgentState(label, kind = "") {
   dom.agentState.textContent = label;
@@ -156,8 +157,8 @@ function setSpeakerGuard(text) {
   if (dom.speakerGuardState) dom.speakerGuardState.textContent = text;
 }
 
-function activeStudentId() {
-  const raw = dom.studentProfile?.value || "user_a";
+function activeUserId() {
+  const raw = dom.userProfile?.value || "user_a";
   return raw
     .trim()
     .toLowerCase()
@@ -165,8 +166,8 @@ function activeStudentId() {
     .replace(/^_+|_+$/g, "") || "user_a";
 }
 
-function activeStudentName() {
-  return (dom.studentProfileName?.value || activeStudentId().replace(/_/g, " ")).trim();
+function activeUserName() {
+  return (dom.userProfileName?.value || activeUserId().replace(/_/g, " ")).trim();
 }
 
 function compactTitle(value, fallback = "Untitled chat") {
@@ -187,7 +188,7 @@ function selectedProjectName() {
   if (dom.projectMode?.value === "new_project") {
     return (dom.projectName?.value || "New project").trim() || "New project";
   }
-  return (dom.projectSelect?.value || dom.projectName?.value || "Tutor-Tron").trim() || "Tutor-Tron";
+  return (dom.projectSelect?.value || dom.projectName?.value || "Current repo").trim() || "Current repo";
 }
 
 function sessionLabel(session) {
@@ -209,24 +210,24 @@ async function apiJson(url, options = {}) {
   return body;
 }
 
-function conversationStorageKey(studentId = activeStudentId()) {
-  return `tutor-tron:conversation:${studentId}`;
+function conversationStorageKey(userId = activeUserId()) {
+  return `agentic-coding:conversation:${userId}`;
 }
 
-function speechFlowStorageKey(studentId = activeStudentId()) {
-  return `tutor-tron:speech-flow:${studentId}`;
+function speechFlowStorageKey(userId = activeUserId()) {
+  return `agentic-coding:speech-flow:${userId}`;
 }
 
-function speechHistoryStorageKey(studentId = activeStudentId()) {
-  return `tutor-tron:speech-history:${studentId}`;
+function speechHistoryStorageKey(userId = activeUserId()) {
+  return `agentic-coding:speech-history:${userId}`;
 }
 
-function turnTakingStorageKey(studentId = activeStudentId()) {
-  return `tutor-tron:turn-taking:${studentId}`;
+function turnTakingStorageKey(userId = activeUserId()) {
+  return `agentic-coding:turn-taking:${userId}`;
 }
 
-function turnTakingEventsKey(studentId = activeStudentId()) {
-  return `tutor-tron:turn-taking-events:${studentId}`;
+function turnTakingEventsKey(userId = activeUserId()) {
+  return `agentic-coding:turn-taking-events:${userId}`;
 }
 
 function defaultTurnTakingProfile() {
@@ -244,9 +245,9 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-function loadTurnTakingProfile(studentId = activeStudentId()) {
+function loadTurnTakingProfile(userId = activeUserId()) {
   try {
-    const stored = localStorage.getItem(turnTakingStorageKey(studentId));
+    const stored = localStorage.getItem(turnTakingStorageKey(userId));
     state.turnTakingProfile = {
       ...defaultTurnTakingProfile(),
       ...(stored ? JSON.parse(stored) : {}),
@@ -259,12 +260,12 @@ function loadTurnTakingProfile(studentId = activeStudentId()) {
 function saveTurnTakingProfile() {
   const profile = state.turnTakingProfile || defaultTurnTakingProfile();
   profile.updatedAt = Date.now();
-  localStorage.setItem(turnTakingStorageKey(state.currentStudentId), JSON.stringify(profile));
+  localStorage.setItem(turnTakingStorageKey(state.currentUserId), JSON.stringify(profile));
 }
 
 function saveTurnTakingEvent(event) {
   try {
-    const key = turnTakingEventsKey(state.currentStudentId);
+    const key = turnTakingEventsKey(state.currentUserId);
     const stored = localStorage.getItem(key);
     const events = stored ? JSON.parse(stored) : [];
     events.push({ ts: Date.now(), ...event });
@@ -290,7 +291,7 @@ function parseArrowLines(value) {
 function defaultSpeechFlowConfig() {
   return {
     cleanupLevel: "high",
-    writingStyle: "tutor",
+    writingStyle: "coding",
     languageHint: "auto",
     dictionaryText: dom.flowDictionary?.value || "",
     snippetsText: dom.flowSnippets?.value || "",
@@ -323,7 +324,7 @@ function parseSnippetConfig(value) {
 function getSpeechFlowConfig() {
   return {
     cleanupLevel: dom.flowCleanupLevel?.value || "high",
-    writingStyle: dom.flowWritingStyle?.value || "tutor",
+    writingStyle: dom.flowWritingStyle?.value || "coding",
     languageHint: dom.flowLanguage?.value || "auto",
     dictionary: parseDictionaryConfig(dom.flowDictionary?.value),
     snippets: parseSnippetConfig(dom.flowSnippets?.value),
@@ -333,34 +334,34 @@ function getSpeechFlowConfig() {
 function saveSpeechFlowConfig() {
   const config = {
     cleanupLevel: dom.flowCleanupLevel?.value || "high",
-    writingStyle: dom.flowWritingStyle?.value || "tutor",
+    writingStyle: dom.flowWritingStyle?.value || "coding",
     languageHint: dom.flowLanguage?.value || "auto",
     dictionaryText: dom.flowDictionary?.value || "",
     snippetsText: dom.flowSnippets?.value || "",
   };
-  localStorage.setItem(speechFlowStorageKey(state.currentStudentId), JSON.stringify(config));
+  localStorage.setItem(speechFlowStorageKey(state.currentUserId), JSON.stringify(config));
   renderFlowState();
 }
 
-function loadSpeechFlowConfig(studentId = activeStudentId()) {
+function loadSpeechFlowConfig(userId = activeUserId()) {
   let config = defaultSpeechFlowConfig();
   try {
-    const stored = localStorage.getItem(speechFlowStorageKey(studentId));
+    const stored = localStorage.getItem(speechFlowStorageKey(userId));
     if (stored) config = { ...config, ...JSON.parse(stored) };
   } catch {
     // Keep defaults if saved config is corrupt.
   }
   if (dom.flowCleanupLevel) dom.flowCleanupLevel.value = config.cleanupLevel || "high";
-  if (dom.flowWritingStyle) dom.flowWritingStyle.value = config.writingStyle || "tutor";
+  if (dom.flowWritingStyle) dom.flowWritingStyle.value = config.writingStyle || "coding";
   if (dom.flowLanguage) dom.flowLanguage.value = config.languageHint || "auto";
   if (dom.flowDictionary) dom.flowDictionary.value = config.dictionaryText || "";
   if (dom.flowSnippets) dom.flowSnippets.value = config.snippetsText || "";
   renderFlowState();
 }
 
-function loadSpeechHistory(studentId = activeStudentId()) {
+function loadSpeechHistory(userId = activeUserId()) {
   try {
-    const stored = localStorage.getItem(speechHistoryStorageKey(studentId));
+    const stored = localStorage.getItem(speechHistoryStorageKey(userId));
     state.speechHistory = stored ? JSON.parse(stored).filter((item) => item?.cleaned || item?.raw) : [];
   } catch {
     state.speechHistory = [];
@@ -371,7 +372,7 @@ function loadSpeechHistory(studentId = activeStudentId()) {
 function saveSpeechHistoryItem(item) {
   state.speechHistory.unshift({ ts: Date.now(), ...item });
   state.speechHistory = state.speechHistory.slice(0, 8);
-  localStorage.setItem(speechHistoryStorageKey(state.currentStudentId), JSON.stringify(state.speechHistory));
+  localStorage.setItem(speechHistoryStorageKey(state.currentUserId), JSON.stringify(state.speechHistory));
   renderSpeechHistory();
 }
 
@@ -407,7 +408,7 @@ function renderSpeechHistory() {
 }
 
 function turnTakingProfile() {
-  if (!state.turnTakingProfile) loadTurnTakingProfile(state.currentStudentId);
+  if (!state.turnTakingProfile) loadTurnTakingProfile(state.currentUserId);
   return state.turnTakingProfile || defaultTurnTakingProfile();
 }
 
@@ -472,8 +473,8 @@ function recordAssistantCompleted() {
   saveTurnTakingProfile();
 }
 
-function saveStudentConversation() {
-  localStorage.setItem(conversationStorageKey(state.currentStudentId), JSON.stringify(state.messages.slice(-24)));
+function saveUserConversation() {
+  localStorage.setItem(conversationStorageKey(state.currentUserId), JSON.stringify(state.messages.slice(-24)));
 }
 
 function renderMessages() {
@@ -492,7 +493,7 @@ function renderMessages() {
 function renderSessionUi() {
   if (!dom.sessionSelect) return;
 
-  const projectNames = [...new Set(["Tutor-Tron", ...state.projects, ...state.sessions.map((session) => session.projectName).filter(Boolean)])]
+  const projectNames = [...new Set(["Current repo", ...state.projects, ...state.sessions.map((session) => session.projectName).filter(Boolean)])]
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b));
   dom.projectSelect.innerHTML = projectNames
@@ -516,11 +517,11 @@ function renderSessionUi() {
   if (dom.projectMode?.value === "new_project") {
     dom.projectSelect.disabled = true;
     dom.projectName.disabled = false;
-    if (!dom.projectName.value || dom.projectName.value === "Tutor-Tron") dom.projectName.value = "New project";
+    if (!dom.projectName.value || dom.projectName.value === "Current repo") dom.projectName.value = "New project";
   } else {
     dom.projectSelect.disabled = false;
     dom.projectName.disabled = true;
-    dom.projectName.value = dom.projectSelect.value || "Tutor-Tron";
+    dom.projectName.value = dom.projectSelect.value || "Current repo";
   }
 
   if (state.currentSessionSummary) {
@@ -565,8 +566,8 @@ function sessionCreatePayload(source = "browser") {
     projectMode: dom.projectMode?.value === "new_project" ? "new_project" : "existing_project",
     projectName,
     title,
-    studentId: state.currentStudentId,
-    studentName: activeStudentName(),
+    userId: state.currentUserId,
+    userName: activeUserName(),
     source,
   };
 }
@@ -579,7 +580,7 @@ async function createSession(source = "browser") {
   state.currentSessionId = data.session.id;
   state.currentSessionSummary = data.session;
   state.messages = [];
-  saveStudentConversation();
+  saveUserConversation();
   dom.chatTitle.value = "";
   await refreshSessions();
   renderMessages();
@@ -596,9 +597,9 @@ async function loadSession(sessionId = dom.sessionSelect?.value) {
     .filter((message) => ["user", "assistant", "system"].includes(message.role) && typeof message.content === "string")
     .map((message) => ({ role: message.role, content: message.content }));
   if (dom.projectMode) dom.projectMode.value = data.session.projectMode || "existing_project";
-  if (dom.projectName) dom.projectName.value = data.session.projectName || "Tutor-Tron";
+  if (dom.projectName) dom.projectName.value = data.session.projectName || "Current repo";
   if (dom.projectSelect) {
-    dom.projectSelect.value = data.session.projectName || "Tutor-Tron";
+    dom.projectSelect.value = data.session.projectName || "Current repo";
     if (dom.projectSelect.value !== data.session.projectName) {
       state.projects = [...new Set([...state.projects, data.session.projectName].filter(Boolean))];
     }
@@ -622,7 +623,7 @@ function appendSessionMessage(role, content, meta = {}) {
       role,
       content,
       source: meta.source || "browser",
-      route: meta.route || (useCodexPilot() ? "codex_pilot" : "tutor_llm"),
+      route: meta.route || (useCodexPilot() ? "codex_pilot" : "assistant_llm"),
     }),
   })
     .then((data) => {
@@ -634,18 +635,18 @@ function appendSessionMessage(role, content, meta = {}) {
     });
 }
 
-function loadStudentConversation(studentId = activeStudentId()) {
+function loadUserConversation(userId = activeUserId()) {
   try {
-    const stored = localStorage.getItem(conversationStorageKey(studentId));
+    const stored = localStorage.getItem(conversationStorageKey(userId));
     state.messages = stored ? JSON.parse(stored).filter((m) => m?.role && typeof m.content === "string") : [];
   } catch {
     state.messages = [];
   }
 }
 
-function ensureStudentProfileOption(profileId, profileName = profileId) {
-  if (!dom.studentProfile) return;
-  const existing = [...dom.studentProfile.options].find((option) => option.value === profileId);
+function ensureUserProfileOption(profileId, profileName = profileId) {
+  if (!dom.userProfile) return;
+  const existing = [...dom.userProfile.options].find((option) => option.value === profileId);
   if (existing) {
     existing.textContent = profileName;
     return;
@@ -653,7 +654,7 @@ function ensureStudentProfileOption(profileId, profileName = profileId) {
   const option = document.createElement("option");
   option.value = profileId;
   option.textContent = profileName;
-  dom.studentProfile.appendChild(option);
+  dom.userProfile.appendChild(option);
 }
 
 function hasAnySpeakerProfile() {
@@ -661,49 +662,49 @@ function hasAnySpeakerProfile() {
 }
 
 function hasActiveSpeakerProfile() {
-  return Boolean(state.speakerProfiles[state.currentStudentId]?.samples) || state.userVoiceEnrolled;
+  return Boolean(state.speakerProfiles[state.currentUserId]?.samples) || state.userVoiceEnrolled;
 }
 
 function updateActiveSpeakerState() {
-  state.userVoiceEnrolled = Boolean(state.speakerProfiles[state.currentStudentId]?.samples);
+  state.userVoiceEnrolled = Boolean(state.speakerProfiles[state.currentUserId]?.samples);
 }
 
-function activateStudentProfile(profileId, profileName = profileId, opts = {}) {
+function activateUserProfile(profileId, profileName = profileId, opts = {}) {
   if (!profileId) return;
-  saveStudentConversation();
-  ensureStudentProfileOption(profileId, profileName);
-  if (dom.studentProfile) dom.studentProfile.value = profileId;
-  if (dom.studentProfileName) dom.studentProfileName.value = profileName;
-  state.currentStudentId = activeStudentId();
-  if (!state.currentSessionId) loadStudentConversation(state.currentStudentId);
-  loadTurnTakingProfile(state.currentStudentId);
-  loadSpeechFlowConfig(state.currentStudentId);
-  loadSpeechHistory(state.currentStudentId);
+  saveUserConversation();
+  ensureUserProfileOption(profileId, profileName);
+  if (dom.userProfile) dom.userProfile.value = profileId;
+  if (dom.userProfileName) dom.userProfileName.value = profileName;
+  state.currentUserId = activeUserId();
+  if (!state.currentSessionId) loadUserConversation(state.currentUserId);
+  loadTurnTakingProfile(state.currentUserId);
+  loadSpeechFlowConfig(state.currentUserId);
+  loadSpeechHistory(state.currentUserId);
   if (!state.currentSessionId) renderMessages();
   updateActiveSpeakerState();
-  const profile = state.speakerProfiles[state.currentStudentId];
+  const profile = state.speakerProfiles[state.currentUserId];
   if (profile?.samples) {
-    setSpeakerGuard(`${profile.name || activeStudentName()}: ${profile.samples} saved voice sample${profile.samples === 1 ? "" : "s"}`);
+    setSpeakerGuard(`${profile.name || activeUserName()}: ${profile.samples} saved voice sample${profile.samples === 1 ? "" : "s"}`);
   } else {
-    setSpeakerGuard(`profile ${state.currentStudentId}: voiceprint will update on next spoken turn`);
+    setSpeakerGuard(`profile ${state.currentUserId}: voiceprint will update on next spoken turn`);
   }
   if (opts.announce) {
-    addMessage("system", `Speaker matched ${activeStudentName()}; routed this turn to that student's memory.`);
+    addMessage("system", `Speaker matched ${activeUserName()}; routed this turn to that user's memory.`);
   }
   renderSessionUi();
 }
 
-function selectedStudentLabel() {
-  return dom.studentProfile?.selectedOptions?.[0]?.textContent?.trim() || activeStudentName();
+function selectedUserLabel() {
+  return dom.userProfile?.selectedOptions?.[0]?.textContent?.trim() || activeUserName();
 }
 
-function switchStudentProfile(event) {
-  const profileId = activeStudentId();
+function switchUserProfile(event) {
+  const profileId = activeUserId();
   const profileName =
-    event?.target === dom.studentProfileName
-      ? activeStudentName()
-      : state.speakerProfiles[profileId]?.name || selectedStudentLabel();
-  activateStudentProfile(profileId, profileName);
+    event?.target === dom.userProfileName
+      ? activeUserName()
+      : state.speakerProfiles[profileId]?.name || selectedUserLabel();
+  activateUserProfile(profileId, profileName);
   loadSpeakerProfiles();
 }
 
@@ -719,10 +720,10 @@ async function loadSpeakerProfiles() {
         .map((profile) => [profile.id, profile]),
     );
     for (const profile of Object.values(state.speakerProfiles)) {
-      ensureStudentProfileOption(profile.id, profile.name || profile.id);
+      ensureUserProfileOption(profile.id, profile.name || profile.id);
     }
     updateActiveSpeakerState();
-    const active = state.speakerProfiles[state.currentStudentId];
+    const active = state.speakerProfiles[state.currentUserId];
     if (active?.samples) {
       setSpeakerGuard(`${active.name || active.id}: ${active.samples} saved voice sample${active.samples === 1 ? "" : "s"}`);
     }
@@ -868,14 +869,14 @@ function containsSpeechPhrase(reference, candidate) {
 
 function hasInterruptIntent(value) {
   const text = normalizeSpeechText(value);
-  return /\b(stop|wait|pause|hold on|hang on|actually|interrupt|let me|one second|i don t|i do not|i m confused|im confused|confused|that s wrong|thats wrong|wrong|can i ask|let me ask|tutor stop|tutor tron stop)\b/.test(text);
+  return /\b(stop|wait|pause|hold on|hang on|actually|interrupt|let me|one second|i don t|i do not|i m confused|im confused|confused|that s wrong|thats wrong|wrong|can i ask|let me ask|assistant stop|coding agent stop)\b/.test(text);
 }
 
 function isPureInterruptCommand(value) {
-  return /^(stop|wait|pause|hold on|hang on|one second|tutor stop|tutor tron stop)$/.test(normalizeSpeechText(value));
+  return /^(stop|wait|pause|hold on|hang on|one second|assistant stop|coding agent stop)$/.test(normalizeSpeechText(value));
 }
 
-function tutorEchoScore(value) {
+function assistantEchoScore(value) {
   const candidate = normalizeSpeechText(value);
   if (!candidate) return 1;
 
@@ -891,21 +892,21 @@ function tutorEchoScore(value) {
   return words.filter((word) => referenceWords.has(word)).length / words.length;
 }
 
-function isLikelyTutorEcho(value) {
-  return tutorEchoScore(value) >= 0.58;
+function isLikelyAssistantEcho(value) {
+  return assistantEchoScore(value) >= 0.58;
 }
 
 function isVerbalBargeIn(value, confidence = 0) {
   const words = speechWords(value);
-  if (hasInterruptIntent(value) && tutorEchoScore(value) < 0.85) return true;
+  if (hasInterruptIntent(value) && assistantEchoScore(value) < 0.85) return true;
 
-  return words.length >= 5 && confidence >= 0.55 && tutorEchoScore(value) < 0.28;
+  return words.length >= 5 && confidence >= 0.55 && assistantEchoScore(value) < 0.28;
 }
 
 function cleanedBargeInText(value) {
   const phrases = [
-    "tutor tron stop",
-    "tutor stop",
+    "coding agent stop",
+    "assistant stop",
     "hold on",
     "hang on",
     "one second",
@@ -1000,8 +1001,8 @@ async function postSpeakerAudio(action, blob) {
       headers: {
         "Content-Type": blob.type || "audio/webm",
         "X-Audio-Format": blob.type || "webm",
-        "X-User-Id": activeStudentId(),
-        "X-User-Name": activeStudentName(),
+        "X-User-Id": activeUserId(),
+        "X-User-Name": activeUserName(),
       },
       body: blob,
     });
@@ -1040,7 +1041,7 @@ function enrollUserVoice(blob) {
       const profile = result.persistent_profile;
       if (profile?.id) {
         state.speakerProfiles[profile.id] = profile;
-        ensureStudentProfileOption(profile.id, profile.name || profile.id);
+        ensureUserProfileOption(profile.id, profile.name || profile.id);
       }
       setSpeakerGuard(
         profile
@@ -1076,8 +1077,8 @@ function classifyBargeInSpeaker(blob) {
     const profile = result.profile_match;
     setSpeakerGuard(
       result.is_user
-        ? `barge-in accepted: ${(profile?.name || activeStudentName())} ${Math.round(((profile?.similarity ?? result.user_similarity) ?? 0) * 100) / 100}`
-        : `blocked likely tutor echo: ${result.reason}`,
+        ? `barge-in accepted: ${(profile?.name || activeUserName())} ${Math.round(((profile?.similarity ?? result.user_similarity) ?? 0) * 100) / 100}`
+        : `blocked likely assistant echo: ${result.reason}`,
     );
     renderMetrics();
     return result;
@@ -1089,7 +1090,7 @@ function speakerGuardRejects(decision) {
   return !decision.is_user;
 }
 
-function pauseTutorForBargeInCandidate() {
+function pauseAssistantForBargeInCandidate() {
   if (state.bargeInPaused || !dom.bargeInToggle.checked || (!state.speaking && !state.speakingUtterance && !state.audioElement)) {
     return;
   }
@@ -1105,10 +1106,10 @@ function pauseTutorForBargeInCandidate() {
   }
 
   setAgentState("Listening", "listening");
-  setTurn("Paused tutor for possible interruption. Keep talking.");
+  setTurn("Paused assistant for possible interruption. Keep talking.");
 }
 
-function resumeTutorAfterRejectedBargeIn(reason = "not user speech") {
+function resumeAssistantAfterRejectedBargeIn(reason = "not user speech") {
   if (!state.bargeInPaused) return;
 
   state.bargeInPaused = false;
@@ -1118,7 +1119,7 @@ function resumeTutorAfterRejectedBargeIn(reason = "not user speech") {
 
   if (provider === "remote" && state.audioElement) {
     state.audioElement.play().catch(() => {
-      setTurn("Tutor audio could not resume after rejected interruption.");
+      setTurn("Assistant audio could not resume after rejected interruption.");
     });
   } else if (speechSynthesis.paused) {
     speechSynthesis.resume();
@@ -1126,7 +1127,7 @@ function resumeTutorAfterRejectedBargeIn(reason = "not user speech") {
 
   if (state.active && state.speaking) {
     setAgentState("Speaking", "speaking");
-    setTurn(`Resuming tutor; interruption rejected (${reason}).`);
+    setTurn(`Resuming assistant; interruption rejected (${reason}).`);
   }
 }
 
@@ -1165,7 +1166,7 @@ function startTurnRecording(meta = {}) {
   state.mediaRecorder.start(120);
   state.listening = true;
   if (meta.bargeIn && dom.bargeInToggle.checked && startedWhileSpeaking) {
-    pauseTutorForBargeInCandidate();
+    pauseAssistantForBargeInCandidate();
   } else {
     setTurn(meta.bargeIn ? "Checking interruption..." : "Recording your turn...");
   }
@@ -1219,8 +1220,8 @@ async function rewriteSpeechIntent(rawText, meta = {}) {
         mode: "rewrite",
         source: meta.source || dom.sttProvider.value,
         barge_in: Boolean(meta.bargeIn),
-        student_id: state.currentStudentId,
-        student_name: activeStudentName(),
+        user_id: state.currentUserId,
+        user_name: activeUserName(),
         flow: getSpeechFlowConfig(),
       }),
     });
@@ -1256,7 +1257,7 @@ async function submitSpeechTurn(rawText, meta = {}) {
   const trimmed = rawText.trim();
   if (!trimmed) return;
 
-  setTurn(useSpeechIntentRewrite() ? "Structuring your speech into a clear request..." : "Sending transcript to tutor...");
+  setTurn(useSpeechIntentRewrite() ? "Structuring your speech into a clear request..." : "Sending transcript to assistant...");
   const intent = await rewriteSpeechIntent(trimmed, meta);
   const finalText = intent.text.trim() || trimmed;
   renderFlowState(intent);
@@ -1274,7 +1275,7 @@ async function submitSpeechTurn(rawText, meta = {}) {
     state.transcriptBuffer = finalText;
     state.interimTranscript = "";
     updateLiveTranscript();
-    setTurn("Interpreted your speech. Sending to tutor...");
+    setTurn("Interpreted your speech. Sending to assistant...");
   }
 
   sendUserTurn(finalText, { rawText: trimmed, speechIntent: intent });
@@ -1296,8 +1297,8 @@ async function transcribeRecordedTurn(blob, meta = {}) {
         headers: {
           "Content-Type": blob.type || "audio/webm",
           "X-Audio-Format": blob.type || "webm",
-          "X-User-Id": activeStudentId(),
-          "X-User-Name": activeStudentName(),
+          "X-User-Id": activeUserId(),
+          "X-User-Name": activeUserName(),
         },
         body: blob,
       }),
@@ -1321,54 +1322,54 @@ async function transcribeRecordedTurn(blob, meta = {}) {
 
     if (!text) {
       setTurn("No speech detected.");
-      if (meta.bargeIn) resumeTutorAfterRejectedBargeIn("no speech detected");
+      if (meta.bargeIn) resumeAssistantAfterRejectedBargeIn("no speech detected");
       return;
     }
 
-    const wasDuringTutorAudio = meta.startedWhileSpeaking || meta.bargeIn || Date.now() - state.lastSpeechEndedAt < 1800;
-    if (wasDuringTutorAudio) {
-      const echo = isLikelyTutorEcho(text);
+    const wasDuringAssistantAudio = meta.startedWhileSpeaking || meta.bargeIn || Date.now() - state.lastSpeechEndedAt < 1800;
+    if (wasDuringAssistantAudio) {
+      const echo = isLikelyAssistantEcho(text);
       const guardRejected = speakerGuardRejects(speakerDecision);
-      const verifiedStudentSpeaker = speakerDecision?.is_user === true;
+      const verifiedUserSpeaker = speakerDecision?.is_user === true;
       if (guardRejected) {
         state.transcriptBuffer = "";
         updateLiveTranscript();
-        setTurn("Ignored overlapping audio: speaker identity did not match a saved student profile.");
-        resumeTutorAfterRejectedBargeIn("speaker mismatch");
+        setTurn("Ignored overlapping audio: speaker identity did not match a saved user profile.");
+        resumeAssistantAfterRejectedBargeIn("speaker mismatch");
         return;
       }
-      if (verifiedStudentSpeaker && (state.speaking || state.thinking)) {
-        interruptTutor("verified student barge-in");
+      if (verifiedUserSpeaker && (state.speaking || state.thinking)) {
+        interruptAssistant("verified user barge-in");
       }
       if (hasInterruptIntent(text)) {
-        interruptTutor("verbal interrupt");
+        interruptAssistant("verbal interrupt");
         if (isPureInterruptCommand(text)) {
           state.transcriptBuffer = "";
           updateLiveTranscript();
           return;
         }
-      } else if (echo && !verifiedStudentSpeaker) {
+      } else if (echo && !verifiedUserSpeaker) {
         state.transcriptBuffer = "";
         updateLiveTranscript();
-        setTurn("Ignored tutor audio picked up by the mic.");
-        resumeTutorAfterRejectedBargeIn("tutor echo");
+        setTurn("Ignored assistant audio picked up by the mic.");
+        resumeAssistantAfterRejectedBargeIn("assistant echo");
         return;
       } else if (state.speaking || meta.bargeIn) {
-        interruptTutor("verbal interrupt");
+        interruptAssistant("verbal interrupt");
       }
     }
 
-    if (speakerDecision?.is_user && speakerDecision.profile_match?.id && speakerDecision.profile_match.id !== state.currentStudentId) {
-      activateStudentProfile(speakerDecision.profile_match.id, speakerDecision.profile_match.name, { announce: true });
+    if (speakerDecision?.is_user && speakerDecision.profile_match?.id && speakerDecision.profile_match.id !== state.currentUserId) {
+      activateUserProfile(speakerDecision.profile_match.id, speakerDecision.profile_match.name, { announce: true });
     }
 
-    if (!wasDuringTutorAudio) enrollUserVoice(blob);
+    if (!wasDuringAssistantAudio) enrollUserVoice(blob);
 
     state.transcriptBuffer = "";
     updateLiveTranscript();
     await submitSpeechTurn(text, { source: "whisperx", bargeIn: Boolean(meta.bargeIn) });
   } catch (error) {
-    if (meta.bargeIn) resumeTutorAfterRejectedBargeIn("transcription failed");
+    if (meta.bargeIn) resumeAssistantAfterRejectedBargeIn("transcription failed");
     const message = error instanceof Error ? error.message : "STT failed";
     setTurn(`${message}. Switching to browser STT fallback.`);
     if (dom.sttProvider) dom.sttProvider.value = "browser";
@@ -1394,7 +1395,7 @@ function createRecognition() {
 
   recognition.onspeechstart = () => {
     if (state.speaking && dom.bargeInToggle.checked && Date.now() > state.ignoreRecognitionUntil) {
-      setTurn("Speech detected during tutor output. Waiting for non-echo words.");
+      setTurn("Speech detected during assistant output. Waiting for non-echo words.");
     }
   };
 
@@ -1417,7 +1418,7 @@ function createRecognition() {
 
     const withinEchoTail = Date.now() - state.lastSpeechEndedAt < 2500;
     if ((state.speaking || withinEchoTail) && heardText) {
-      const echo = isLikelyTutorEcho(heardText);
+      const echo = isLikelyAssistantEcho(heardText);
       if (echo && !hasInterruptIntent(heardText)) {
         state.interimTranscript = "";
         dom.vadState.textContent = "echo ignored";
@@ -1427,7 +1428,7 @@ function createRecognition() {
 
       if (state.speaking) {
         if (dom.bargeInToggle.checked && isVerbalBargeIn(heardText, maxConfidence)) {
-          interruptTutor("verbal interrupt");
+          interruptAssistant("verbal interrupt");
           if (!finalText.trim() || isPureInterruptCommand(finalText)) {
             state.interimTranscript = "";
             state.transcriptBuffer = "";
@@ -1543,7 +1544,7 @@ function stopVoiceSession() {
   clearTimeout(state.turnTimer);
   stopBrowserRecognition();
   stopTurnRecording("session stopped");
-  interruptTutor("session stopped", { silent: true });
+  interruptAssistant("session stopped", { silent: true });
   dom.startBtn.disabled = false;
   dom.stopBtn.disabled = true;
   dom.interruptBtn.disabled = true;
@@ -1556,7 +1557,7 @@ function stopVoiceSession() {
   }
 }
 
-function interruptTutor(reason, opts = {}) {
+function interruptAssistant(reason, opts = {}) {
   if (!state.speaking && !state.thinking && !state.abortController) return;
   const shouldLearnFromInterruption =
     !opts.silent &&
@@ -1588,7 +1589,7 @@ function interruptTutor(reason, opts = {}) {
   if (!state.active) dom.interruptBtn.disabled = true;
   if (!opts.silent) {
     setAgentState("Interrupted", "interrupted");
-    setTurn(`Tutor interrupted: ${reason}. Listening for your correction.`);
+    setTurn(`Assistant interrupted: ${reason}. Listening for your correction.`);
     setTimeout(() => {
       if (state.active && !state.thinking && !state.speaking) setAgentState("Listening", "listening");
     }, 700);
@@ -1604,19 +1605,19 @@ async function sendUserTurn(text, meta = {}) {
   state.lastSubmittedUserText = normalizedTurn;
   state.lastSubmittedAt = performance.now();
 
-  interruptTutor("new user turn", { silent: true });
+  interruptAssistant("new user turn", { silent: true });
   dom.interruptBtn.disabled = false;
   state.interrupted = false;
   state.thinking = true;
   resetMetrics(text);
   setAgentState("Thinking", "thinking");
-  setTurn(useCodexPilot() ? `Handing this turn to ${selectedControlProviderLabel()}...` : "Streaming tutor response...");
+  setTurn(useCodexPilot() ? `Handing this turn to ${selectedControlProviderLabel()}...` : "Streaming assistant response...");
 
   state.messages.push({ role: "user", content: text });
-  saveStudentConversation();
+  saveUserConversation();
   appendSessionMessage("user", text, {
     source: meta.source || "typed",
-    route: useCodexPilot() ? "codex_pilot" : "tutor_llm",
+    route: useCodexPilot() ? "codex_pilot" : "assistant_llm",
   });
   addMessage("user", text);
 
@@ -1634,8 +1635,8 @@ async function sendUserTurn(text, meta = {}) {
         messages: state.messages,
         systemPrompt: dom.systemPrompt.value.trim(),
         client: {
-          student_id: state.currentStudentId,
-          student_name: activeStudentName(),
+          user_id: state.currentUserId,
+          user_name: activeUserName(),
           session_id: state.currentSessionId,
           session_title: state.currentSessionSummary?.title || null,
           project_name: state.currentSessionSummary?.projectName || selectedProjectName(),
@@ -1647,7 +1648,7 @@ async function sendUserTurn(text, meta = {}) {
           raw_speech_text: meta.rawText || null,
           speech_intent: meta.speechIntent || null,
           speech_flow: getSpeechFlowConfig(),
-          route: useCodexPilot() ? "codex_pilot" : "tutor_llm",
+          route: useCodexPilot() ? "codex_pilot" : "assistant_llm",
           control_provider: selectedControlProvider(),
         },
         controlProvider: selectedControlProvider(),
@@ -1664,10 +1665,10 @@ async function sendUserTurn(text, meta = {}) {
   } finally {
     if (state.currentAssistantText.trim()) {
       state.messages.push({ role: "assistant", content: state.currentAssistantText.trim() });
-      saveStudentConversation();
+      saveUserConversation();
       appendSessionMessage("assistant", state.currentAssistantText.trim(), {
         source: meta.source || "typed",
-        route: useCodexPilot() ? "codex_pilot" : "tutor_llm",
+        route: useCodexPilot() ? "codex_pilot" : "assistant_llm",
       });
     }
     state.abortController = null;
@@ -1675,7 +1676,7 @@ async function sendUserTurn(text, meta = {}) {
     flushTtsBuffer();
     if (!state.speaking && state.active) {
       setAgentState("Listening", "listening");
-      setTurn("Listening for your next question.");
+      setTurn("Listening for your next coding request.");
     }
   }
 }
@@ -1825,7 +1826,7 @@ async function speakNext() {
     if (!state.active) dom.interruptBtn.disabled = true;
     if (!state.thinking && state.active) {
       setAgentState("Listening", "listening");
-      setTurn("Listening for your next question.");
+      setTurn("Listening for your next coding request.");
     }
     return;
   }
@@ -1860,7 +1861,7 @@ async function speakNext() {
       renderMetrics();
     }
     setAgentState("Speaking", "speaking");
-    setTurn('Tutor is speaking. Say "wait" or "stop" to interrupt.');
+    setTurn('Assistant is speaking. Say "wait" or "stop" to interrupt.');
   };
   utterance.onend = () => {
     state.speakingUtterance = null;
@@ -1948,9 +1949,9 @@ async function speakRemote(text, provider) {
 
 dom.startBtn.addEventListener("click", startVoiceSession);
 dom.stopBtn.addEventListener("click", stopVoiceSession);
-dom.interruptBtn.addEventListener("click", () => interruptTutor("manual interrupt"));
+dom.interruptBtn.addEventListener("click", () => interruptAssistant("manual interrupt"));
 dom.codexPilotToggle?.addEventListener("change", () => {
-  setTurn(useCodexPilot() ? `Codex pilot mode enabled through ${selectedControlProviderLabel()}.` : "Codex pilot mode disabled. Using tutor LLM path.");
+  setTurn(useCodexPilot() ? `Codex pilot mode enabled through ${selectedControlProviderLabel()}.` : "Codex pilot mode disabled. Using assistant LLM path.");
 });
 dom.codexControlProvider?.addEventListener("change", () => {
   setCodexPilotState(`Selected: ${selectedControlProviderLabel()}.`);
@@ -1962,8 +1963,8 @@ dom.sttProvider.addEventListener("change", () => {
   else startBrowserRecognition();
   updateLiveTranscript();
 });
-dom.studentProfile.addEventListener("change", switchStudentProfile);
-dom.studentProfileName.addEventListener("change", switchStudentProfile);
+dom.userProfile.addEventListener("change", switchUserProfile);
+dom.userProfileName.addEventListener("change", switchUserProfile);
 dom.projectMode?.addEventListener("change", renderSessionUi);
 dom.projectSelect?.addEventListener("change", () => {
   if (dom.projectName) dom.projectName.value = dom.projectSelect.value;
@@ -2000,7 +2001,7 @@ dom.textForm.addEventListener("submit", (event) => {
   sendUserTurn(text);
 });
 
-switchStudentProfile();
+switchUserProfile();
 refreshSessions();
 updateProviderStatus();
 if (!supportsSpeechRecognition()) {

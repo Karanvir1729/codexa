@@ -1,9 +1,9 @@
-# Tutor-Tron Voice Agent Architecture
+# Agentic Coding Voice Agent Architecture
 
 This folder now has two diagrams:
 
-- `tutor-tron-hackathon-architecture.excalidraw`: the judge-facing diagram. It is intentionally clean and focused on realtime tutoring plus eval-gated self-improvement.
-- `tutor-tron-technical-appendix.excalidraw`: the implementation appendix with node-level worker pools, Redis stream shards, retry/DLQ, event contracts, data stores, and deployment options.
+- `agentic-coding-hackathon-architecture.excalidraw`: the judge-facing diagram. It is intentionally clean and focused on realtime coding assistance plus eval-gated self-improvement.
+- `agentic-coding-technical-appendix.excalidraw`: the implementation appendix with node-level worker pools, Redis stream shards, retry/DLQ, event contracts, data stores, and deployment options.
 
 ## Realtime Path
 
@@ -15,12 +15,12 @@ or phone via Twilio
 -> Daily/Twilio ingress
 -> Pipecat-compatible voice service
 -> streaming ASR
--> Tutor LLM
+-> Coding Agent LLM
 -> streaming TTS
--> student
+-> developer
 ```
 
-This path stays colocated. Do not split `WebRTC/Twilio/Daily/Pipecat -> ASR -> Tutor LLM -> TTS` across clouds unless latency tests prove it is acceptable. The live tutor reads only fast state from Redis: session context, student learning state, and the active promoted teaching strategy.
+This path stays colocated. Do not split `WebRTC/Twilio/Daily/Pipecat -> ASR -> Coding Agent LLM -> TTS` across clouds unless latency tests prove it is acceptable. The live assistant reads only fast state from Redis: session context, developer learning state, and the active promoted coding strategy.
 
 ## GCP Prototype, AWS Target
 
@@ -44,16 +44,16 @@ The production target maps cleanly to AWS:
 - Secret Manager -> AWS Secrets Manager / Parameter Store
 - Artifact Registry -> ECR
 
-Async eval and replay workers can move across clouds because they do not block live tutoring.
+Async eval and replay workers can move across clouds because they do not block live coding assistance.
 
 ## Async Learning Path
 
-The blue dashed path is the event/data plane. Pipecat and the tutor orchestrator emit typed events into Redis Streams:
+The blue dashed path is the event/data plane. Pipecat and the assistant orchestrator emit typed events into Redis Streams:
 
 - `transcript.final`
 - `client_signal.detected`
-- `student_state.updated`
-- `pitfall.detected`
+- `developer_state.updated`
+- `failure_mode.detected`
 - `strategy.failed`
 - `eval_case.generated`
 - `strategy.promoted`
@@ -63,27 +63,27 @@ Async learning agents consume these events through Redis consumer groups and pub
 
 ## Eval-Gated Promotion
 
-Tutor-Tron improves through strategy and policy promotion, not live fine-tuning:
+Agentic Coding improves through strategy and policy promotion, not live fine-tuning:
 
 ```text
 Observed Failure
--> Pitfall Classified
--> Candidate Teaching Strategy
+-> Failure Mode Classified
+-> Candidate Coding Strategy
 -> Replay Eval Generated
 -> Tested Against Baseline
 -> Promoted Strategy
 -> Active Strategy Cache
--> Next Similar Student Gets Better Explanation
+-> Next Similar Developer Gets Better Explanation
 ```
 
-If replay evals regress, the strategy is rejected or rolled back. Only promoted strategy versions are copied into the Redis Active Teaching Strategy Cache used by the realtime tutor.
+If replay evals regress, the strategy is rejected or rolled back. Only promoted strategy versions are copied into the Redis Active Coding Strategy Cache used by the realtime assistant.
 
 ## Partner Mapping
 
 | Partner | Architecture role | Visible proof |
 | --- | --- | --- |
 | Daily | Realtime browser voice infrastructure | Daily/WebRTC ingress, Pipecat-compatible orchestration, low-latency turn-taking |
-| Twilio | Phone tutoring ingress | Phone sessions route into the same realtime tutor pipeline |
+| Twilio | phone-based coding assistance ingress | Phone sessions route into the same realtime assistant pipeline |
 | Cekura | Automated eval and monitoring loop | Replay evals, baseline comparison, regression gate, rollback status |
 | NVIDIA | Accelerated model runtime | Hosted NIM APIs first, NeMo Retriever for RAG, optional Riva ASR/TTS later |
 | GCP | Prototype deployment substrate | Cloud Run, Memorystore/Upstash Redis, Cloud SQL, Cloud Storage, Cloud Logging/Monitoring |
@@ -91,21 +91,21 @@ If replay evals regress, the strategy is rejected or rolled back. Only promoted 
 
 ## 90-Second Demo
 
-1. Student asks why a probability problem is not binomial.
-2. Tutor answers quickly over voice using the active teaching strategy.
-3. Student remains confused or interrupts; the system emits `pitfall.detected` and `strategy.failed`.
+1. Developer asks why a coding problem is not calculator bug.
+2. Assistant answers quickly over voice using the active coding strategy.
+3. Developer remains confused or interrupts; the system emits `failure_mode.detected` and `strategy.failed`.
 4. Async agents retrieve similar failures and propose a better strategy, such as checking replacement/independence before formulas.
 5. Eval worker replays the candidate strategy against baseline scenarios.
 6. Promotion gate accepts the candidate only if learning metrics improve.
-7. Dashboard shows transcript, pitfall, selected strategy, eval before/after, promoted version, and rollback state.
-8. A second similar student receives the improved explanation from the Active Teaching Strategy Cache.
+7. Dashboard shows transcript, failure mode, selected strategy, eval before/after, promoted version, and rollback state.
+8. A second similar developer receives the improved explanation from the Active Coding Strategy Cache.
 
 ## Generated Artifacts
 
-- Judge diagram: `tutor-tron-hackathon-architecture.excalidraw`
-- Judge SVG: `screenshots/tutor-tron-hackathon-architecture.svg`
-- Judge PNG: `screenshots/tutor-tron-hackathon-architecture.png`
-- Technical appendix: `tutor-tron-technical-appendix.excalidraw`
-- Technical appendix SVG: `screenshots/tutor-tron-technical-appendix.svg`
-- Technical appendix PNG: `screenshots/tutor-tron-technical-appendix.png`
-- Request/event appendix: `tutor-tron-request-event-contracts.md`
+- Judge diagram: `agentic-coding-hackathon-architecture.excalidraw`
+- Judge SVG: `screenshots/agentic-coding-hackathon-architecture.svg`
+- Judge PNG: `screenshots/agentic-coding-hackathon-architecture.png`
+- Technical appendix: `agentic-coding-technical-appendix.excalidraw`
+- Technical appendix SVG: `screenshots/agentic-coding-technical-appendix.svg`
+- Technical appendix PNG: `screenshots/agentic-coding-technical-appendix.png`
+- Request/event appendix: `agentic-coding-request-event-contracts.md`

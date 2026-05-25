@@ -18,7 +18,7 @@ const contentTypes = {
 
 const server = http.createServer((req, res) => {
   const requestUrl = new URL(req.url ?? "/", `http://${req.headers.host ?? "127.0.0.1"}`);
-  const rawPath = decodeURIComponent(requestUrl.pathname === "/" ? "/tutor-tron-hackathon-architecture.excalidraw" : requestUrl.pathname);
+  const rawPath = decodeURIComponent(requestUrl.pathname === "/" ? "/agentic-coding-hackathon-architecture.excalidraw" : requestUrl.pathname);
   const filePath = path.resolve(root, `.${rawPath}`);
 
   res.setHeader("Access-Control-Allow-Origin", "*");

@@ -42,7 +42,7 @@ SPEAKER_PROFILES_LOADED = False
 
 DEFAULT_SPEECH_FLOW_CONFIG = {
     "cleanupLevel": "high",
-    "writingStyle": "tutor",
+    "writingStyle": "coding",
     "languageHint": "auto",
     "dictionary": [],
     "snippets": [],
@@ -553,7 +553,7 @@ def _speaker_payload(candidate: Any) -> dict[str, Any]:
 
 
 class WhisperXHandler(BaseHTTPRequestHandler):
-    server_version = "TutorTronWhisperX/0.1"
+    server_version = "AgenticCodingWhisperX/0.1"
 
     def log_message(self, fmt: str, *args: Any) -> None:
         print(f"[whisperx] {self.address_string()} - {fmt % args}")
@@ -585,7 +585,7 @@ class WhisperXHandler(BaseHTTPRequestHandler):
                             "nvidia/diar_streaming_sortformer_4spk-v2.1",
                         ),
                         "nvidia_target_role": "online diarization + persistent speaker labels",
-                        "local_fallback_role": "speaker embeddings for persistent student voice profiles",
+                        "local_fallback_role": "speaker embeddings for persistent developer voice profiles",
                     },
                     "speaker_profiles": {
                         "user_samples": USER_SAMPLES,

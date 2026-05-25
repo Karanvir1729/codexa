@@ -1,4 +1,4 @@
-const CACHE_NAME = "tutor-tron-shell-v2";
+const CACHE_NAME = "agentic-coding-shell-v1";
 const SHELL_ASSETS = [
   "/",
   "/index.html",
@@ -8,7 +8,7 @@ const SHELL_ASSETS = [
   "/test-dashboard.css",
   "/test-dashboard.js",
   "/manifest.webmanifest",
-  "/icons/tutor-tron-icon.svg",
+  "/icons/agentic-coding-icon.svg",
 ];
 
 self.addEventListener("install", (event) => {

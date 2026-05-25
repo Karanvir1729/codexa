@@ -9,7 +9,7 @@ const env = loadRepoEnv(repoRoot);
 function parseArgs(argv) {
   const args = {
     prompt:
-      "This is a no-phone smoke test for Tutor-Tron. Reply with exactly: no-call codex bridge ready.",
+      "This is a no-phone smoke test for the agentic coding assistant. Reply with exactly: no-call codex bridge ready.",
     expect: "no-call codex bridge ready",
     timeoutMs: Number(env.PHONE_CODEX_TEST_TIMEOUT_MS || env.PHONE_CODEX_TIMEOUT_SECS || 300) * 1000,
   };

@@ -55,19 +55,19 @@ const OPENCLAW_COMMAND =
 const OPENCLAW_LOCAL = process.env.OPENCLAW_LOCAL !== "0";
 const OPENCLAW_TIMEOUT_SECS = Number(process.env.OPENCLAW_TIMEOUT_SECS ?? 180);
 const OPENCLAW_THINKING = process.env.OPENCLAW_THINKING ?? "off";
-const OPENCLAW_SESSION_PREFIX = process.env.OPENCLAW_SESSION_PREFIX ?? "tutor-tron";
+const OPENCLAW_SESSION_PREFIX = process.env.OPENCLAW_SESSION_PREFIX ?? "agentic-coding-assistant";
 const PHONE_CODEX_CONTROL_PROVIDER = process.env.PHONE_CODEX_CONTROL_PROVIDER ?? CODEX_CONTROL_PROVIDER;
 const CODEX_PILOT_SYSTEM_PROMPT =
   process.env.CODEX_PILOT_SYSTEM_PROMPT ??
-  `You are the Codex pilot underneath Tutor-Tron Voice.
-The user is speaking to a desktop voice agent, but you have the repo-level capabilities of Codex.
+  `You are the Codex pilot underneath an agentic coding voice assistant.
+The user is speaking to a desktop voice agent, but you have the repo-level capabilities of Codex and can inspect, edit, test, and run project code.
 Interpret the latest user turn as an instruction for the current workspace when it asks for building, debugging, editing, testing, running commands, explaining code, or operating the project.
 When work is requested, actually do the work end-to-end: inspect files, edit code, run focused checks, and report the result.
 For coding/building requests, create or modify real files in the target workspace. Do not answer with fake code, hardcoded demos, or a plan unless the user only asked for a plan.
 If the target workspace is empty and the user asks to build something, bootstrap the smallest complete project that satisfies the request, include a runnable test/check, run it, and summarize exact file paths.
 Keep the final answer voice-friendly: concise, direct, and focused on what changed, what passed, and what remains.
 Do not narrate long command logs unless the user explicitly asks.
-If the user asks a tutoring/general question unrelated to the repo, answer normally and concisely.`;
+If the user asks a general question unrelated to coding or the repo, answer normally and concisely.`;
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -81,7 +81,8 @@ const contentTypes = {
 
 const DEFAULT_AGENT_PROMPT =
   process.env.AGENT_SYSTEM_PROMPT ??
-  `You are Tutor-Tron, a real-time conversational voice agent.
+  `You are an agentic coding voice assistant.
+Help the user code by inspecting files, planning concise next steps, explaining code, and using Codex pilot mode when project changes or command execution are needed.
 Respond naturally to whatever the user asks.
 Keep spoken responses concise: usually 1-5 sentences.
 Ask one clarifying question when the user's request is ambiguous.
@@ -91,7 +92,7 @@ If interrupted, adapt to the user's latest words immediately.`;
 
 const SPEECH_INTENT_PROMPT =
   process.env.SPEECH_INTENT_PROMPT ??
-  `You are a Wispr Flow-style speech-to-intent layer for a realtime voice tutor.
+  `You are a Wispr Flow-style speech-to-intent layer for a realtime voice coding assistant.
 Convert raw speech recognition text into the user's intended message.
 Preserve all important details, examples, constraints, names, numbers, code terms, and questions.
 Apply the provided dictionary, snippets, writing style, language hint, and cleanup level.
@@ -105,7 +106,7 @@ Return only the cleaned user message.`;
 
 const DEFAULT_SPEECH_FLOW_CONFIG = {
   cleanupLevel: "high",
-  writingStyle: "tutor",
+  writingStyle: "coding",
   languageHint: "auto",
   dictionary: [],
   snippets: [],
@@ -191,8 +192,8 @@ function sessionSummary(session) {
     title: session.title,
     projectMode: session.projectMode,
     projectName: session.projectName,
-    studentId: session.studentId,
-    studentName: session.studentName,
+    userId: session.userId,
+    userName: session.userName,
     source: session.source,
     status: session.status,
     createdAt: session.createdAt,
@@ -213,15 +214,15 @@ function sessionTitleFromText(text, fallback = "Untitled chat") {
 function createVoiceSession(input = {}) {
   const now = new Date().toISOString();
   const projectMode = input.projectMode === "new_project" ? "new_project" : "existing_project";
-  const projectName = safeText(input.projectName, projectMode === "new_project" ? "New project" : "Tutor-Tron");
+  const projectName = safeText(input.projectName, projectMode === "new_project" ? "New project" : "Current repo");
   const title = safeText(input.title, `${projectName} chat`);
   return {
     id: randomUUID(),
     title,
     projectMode,
     projectName,
-    studentId: safeId(input.studentId, "user_a"),
-    studentName: safeText(input.studentName, "User A"),
+    userId: safeId(input.userId, "user_a"),
+    userName: safeText(input.userName, "User A"),
     source: safeText(input.source, "browser"),
     status: "active",
     createdAt: now,
@@ -281,8 +282,8 @@ function recordPhoneBridgeExchange(messages = [], assistantText = "") {
     projectMode: "existing_project",
     projectName: "Phone coding assistant",
     title: sessionTitleFromText(latestUser || "Phone call"),
-    studentId: "phone_caller",
-    studentName: "Phone caller",
+    userId: "phone_caller",
+    userName: "Phone caller",
   });
   const sessions = readVoiceSessions();
   sessions.unshift(session);
@@ -640,7 +641,7 @@ function applyFillerCleanup(text, cleanupLevel = "high") {
   return next.replace(/\s{2,}/g, " ").trim();
 }
 
-function formatSpokenLists(text, writingStyle = "tutor") {
+function formatSpokenLists(text, writingStyle = "coding") {
   const markerPattern = /\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|1|2|3|4|5|6|7|8|9|10)[.)]?\s+/giu;
   const matches = [...text.matchAll(markerPattern)];
   if (matches.length < 2) return text;
@@ -660,7 +661,7 @@ function formatSpokenLists(text, writingStyle = "tutor") {
   return [prefix, formattedItems.join("\n")].filter(Boolean).join("\n");
 }
 
-function applyWritingStyle(text, writingStyle = "tutor") {
+function applyWritingStyle(text, writingStyle = "coding") {
   let next = text.trim();
   if (writingStyle === "casual") {
     next = next.replace(/\.$/, "");
@@ -792,7 +793,7 @@ async function handleSpeechIntent(req, res) {
                 text: entry.text,
               })),
             })}`,
-            "Clean this into the user message that should be sent to the tutor.",
+            "Clean this into the user message that should be sent to the coding assistant.",
           ].join("\n\n"),
         },
       ],
@@ -985,11 +986,11 @@ function buildCodexPilotPrompt({ messages, systemPrompt, client, targetWorkspace
     "Client/session context:",
     JSON.stringify(
       {
-        tutor_tron_repo: __dirname,
+        voice_assistant_repo: __dirname,
         target_workspace: targetWorkspace,
         generated_workspace_root: CODEX_WORKSPACE_ROOT,
-        student_id: client?.student_id ?? null,
-        student_name: client?.student_name ?? null,
+        user_id: client?.user_id ?? null,
+        user_name: client?.user_name ?? null,
         session_id: client?.session_id ?? null,
         session_title: client?.session_title ?? null,
         project_name: client?.project_name ?? null,
@@ -1020,21 +1021,21 @@ function buildCodexPilotPrompt({ messages, systemPrompt, client, targetWorkspace
 
 function buildOpenClawPilotPrompt({ messages, systemPrompt, client, targetWorkspace = __dirname }) {
   return [
-    "You are the OpenClaw control plane underneath Tutor-Tron Voice.",
+    "You are the OpenClaw control plane underneath an agentic coding voice assistant.",
     "The user is speaking to a voice agent. Your job is to control Codex and system tools to satisfy system, repo, browser, and app-operation requests.",
     "Treat this as a voice-command turn: do the useful work, then return a concise spoken summary.",
     "",
     "Important operating context:",
     JSON.stringify(
       {
-        tutor_tron_repo: __dirname,
+        voice_assistant_repo: __dirname,
         target_workspace: targetWorkspace,
         generated_workspace_root: CODEX_WORKSPACE_ROOT,
         current_project: client?.project_name ?? null,
         current_chat_session_id: client?.session_id ?? null,
         current_chat_title: client?.session_title ?? null,
-        student_id: client?.student_id ?? null,
-        student_name: client?.student_name ?? null,
+        user_id: client?.user_id ?? null,
+        user_name: client?.user_name ?? null,
         route: "openclaw_control_plane",
       },
       null,
@@ -1042,11 +1043,11 @@ function buildOpenClawPilotPrompt({ messages, systemPrompt, client, targetWorksp
     ),
     "",
     "If the task needs code changes, testing, desktop/browser operation, or broader system state, use OpenClaw/Codex capabilities rather than only answering conversationally.",
-    "If the task needs code changes, operate in target_workspace above unless the user explicitly asks to modify the Tutor-Tron repo.",
+    "If the task needs code changes, operate in target_workspace above unless the user explicitly asks to modify the voice assistant repo.",
     "Do not hardcode one-off demos; implement the user's requested task as real editable files with checks.",
     "Keep the final answer short enough to speak out loud.",
     "",
-    "Visible Tutor-Tron system prompt:",
+    "Visible voice-assistant system prompt:",
     systemPrompt || DEFAULT_AGENT_PROMPT,
     "",
     "Original Codex pilot prompt for this turn:",
@@ -1185,7 +1186,7 @@ function buildPhoneCodexPrompt(messages = []) {
   return [
     CODEX_PILOT_SYSTEM_PROMPT,
     "",
-    "You are currently powering Tutor-Tron over a phone call through Twilio and Pipecat.",
+    "You are currently powering an agentic coding assistant over a phone call through Twilio and Pipecat.",
     "Act like a concise coding receptionist for this repo: answer what you are doing, inspect/edit/test when asked, and summarize results in spoken language.",
     "Keep the final response short enough to be read over a phone call. Avoid markdown tables and long logs.",
     "",
@@ -1241,7 +1242,7 @@ async function handlePhoneCodexCompletion(req, res) {
   if (phoneControlProvider === "openclaw" && openClawAvailable()) {
     const result = await runOpenClawAgent(
       [
-        "You are powering Tutor-Tron over a phone call.",
+        "You are powering an agentic coding assistant over a phone call.",
         "Use OpenClaw to control Codex/system tools when useful, then return a concise spoken response.",
         "",
         prompt,
@@ -1249,7 +1250,7 @@ async function handlePhoneCodexCompletion(req, res) {
       {
         project_name: "Phone coding assistant",
         session_id: "phone",
-        student_id: "phone_caller",
+        user_id: "phone_caller",
       },
       __dirname,
     );
@@ -1460,7 +1461,7 @@ async function handleCodexPilot(req, res) {
     workspace: targetWorkspace,
     timeoutMs: codexTimeoutMs,
   });
-  sse(res, "warning", { message: `Codex pilot is working in ${targetWorkspace}. This can take longer than the tutor LLM path.` });
+  sse(res, "warning", { message: `Codex pilot is working in ${targetWorkspace}. This can take longer than the fast assistant LLM path.` });
 
   let stdoutBuffer = "";
   child.stdout.on("data", (chunk) => {
@@ -1821,7 +1822,7 @@ async function handleProviderHealth(req, res) {
       url: SPEAKER_GUARD_URL || null,
       targetModel: "NVIDIA NeMo Streaming Sortformer / TitaNet speaker embeddings",
       localFallbackModel: "speechbrain/spkrec-ecapa-voxceleb",
-      purpose: "Parallel speaker identity for barge-in and persistent per-student profiles.",
+      purpose: "Parallel speaker identity for barge-in and persistent per-user voice profiles.",
     },
     codexPilot: {
       enabled: CODEX_PILOT_ENABLED,
@@ -2211,6 +2212,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(port, () => {
-  console.log(`Tutor-Tron voice system running at http://localhost:${port}`);
+  console.log(`Agentic coding voice assistant running at http://localhost:${port}`);
   console.log(`Provider mode: ${PROVIDER}`);
 });

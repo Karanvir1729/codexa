@@ -9,7 +9,7 @@ const repoRoot = path.resolve(__dirname, "..");
 const tmpDir = path.join(repoRoot, "tmp");
 const appPort = Number(process.env.PORT || 3000);
 const sttPort = Number(process.env.WHISPERX_PORT || 9001);
-const appUrl = process.env.TUTOR_TRON_APP_URL || `http://localhost:${appPort}`;
+const appUrl = process.env.AGENTIC_CODING_APP_URL || `http://localhost:${appPort}`;
 const dashboardUrl = `${appUrl.replace(/\/$/, "")}/test-dashboard.html`;
 const managedProcesses = [];
 
@@ -116,7 +116,7 @@ async function ensurePythonSttService() {
 
 async function ensureNodeApiService() {
   if (await isPortOpen(appPort)) {
-    appendLog("api", `[desktop] Reusing existing Tutor-Tron API on ${appPort}\n`);
+    appendLog("api", `[desktop] Reusing existing coding assistant API on ${appPort}\n`);
     return;
   }
 
@@ -143,7 +143,7 @@ function buildMenu() {
         ]
       : []),
     {
-      label: "Tutor-Tron",
+      label: "Coding Agent",
       submenu: [
         {
           label: "Voice App",
@@ -195,7 +195,7 @@ function createWindow() {
     height: 960,
     minWidth: 980,
     minHeight: 720,
-    title: "Tutor-Tron Voice",
+    title: "Agentic Coding Assistant",
     backgroundColor: "#f6f7fb",
     show: false,
     webPreferences: {
@@ -239,7 +239,7 @@ function stopManagedProcesses() {
   }
 }
 
-app.setName("Tutor-Tron Voice");
+app.setName("Agentic Coding Assistant");
 
 app.whenReady().then(async () => {
   buildMenu();
@@ -249,7 +249,7 @@ app.whenReady().then(async () => {
     createWindow();
   } catch (error) {
     dialog.showErrorBox(
-      "Tutor-Tron failed to start",
+      "Agentic Coding Assistant failed to start",
       `${error instanceof Error ? error.message : String(error)}\n\nCheck tmp/desktop-api.log and tmp/desktop-stt.log.`,
     );
     app.quit();

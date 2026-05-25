@@ -107,7 +107,7 @@ async function main() {
     gatewayRunning: checks.find((check) => check.name === "OpenClaw gateway")?.ok || false,
     checks,
     nextStep: requiredOk
-      ? "Start the OpenClaw gateway when you want Tutor-Tron to hand off full-system actions."
+      ? "Start the OpenClaw gateway when you want the coding assistant to hand off full-system actions."
       : "Fix failed OpenClaw readiness checks before routing voice actions through OpenClaw.",
   };
   console.log(JSON.stringify(summary, null, 2));

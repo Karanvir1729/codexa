@@ -1,0 +1,47 @@
+direction: down
+
+title: "Agentic Coding Voice Agent - Hackathon Architecture"
+
+critical: "1. Critical Path - Keep Voice Latency Low" {
+  direction: right
+
+  developer: "Developer A\ngets confused"
+  voice: "Pipecat Voice Runtime\nDaily/WebRTC\nASR Router\nTTS Router\ninterruptions"
+  assistant: "Coding Agent Orchestrator\nlive context\nL1 cache\ncompact RAG\nresponse planner"
+  response: "Spoken Response\nshort\ngrounded\ninterruptible"
+
+  developer -> voice: "audio"
+  voice -> assistant: "transcript.final"
+  assistant -> response: "response text"
+  response -> developer: "speech"
+}
+
+decision: "2. Near-Real-Time Decision Loop - Shared Events, Not Agent Chains" {
+  direction: right
+
+  bus: "Shared Context Bus\nRedis Streams\ntyped events\ncanonical context\nidempotency"
+  agents: "Agent Mesh\ndeveloper_state.updated\nfailure_mode.detected\ncohort recommendation\ncandidate actions"
+  rag: "RAG / Memory\none retrieval agent\nQdrant collections:\ncodebase knowledge, failure modes,\ndeveloper, cohort,\nevals, strategies"
+  scip: "SCIP Optimizer\nchoose strategy\ngenerate eval?\nupdate cohort?\n<150ms or heuristic fallback"
+
+  bus -> agents: "transcripts + alerts"
+  agents -> rag: "evidence request"
+  rag -> agents: "context bundle"
+  agents -> scip: "candidate_actions.generated"
+  scip -> bus: "scip.action_selected"
+}
+
+improve: "3. Async Improvement Loop - Prove the System Learns" {
+  direction: right
+
+  failure: "Coding Failure\nstrategy.failed\nfailure mode detected"
+  evals: "Eval Harness\nScenario Bank\nSimulated Developer Runner\nFailure-to-Eval Generator\nRegression Scorecard"
+  auto: "Auto-Improvement\npropose rule\npending -> tested -> promoted\nA/B old vs new\nrollback on regression"
+  next_developer: "Developer B\nsimilar failure mode\ngets better strategy"
+
+  failure -> evals: "generate eval"
+  evals -> auto: "scores + traces"
+  auto -> next_developer: "promoted rule"
+}
+
+proof: "Dashboard Proof for Judges\nlive transcript -> detected failure mode -> SCIP action -> generated eval -> before/after score -> strategy promoted"

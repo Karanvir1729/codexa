@@ -5,13 +5,13 @@ import { access } from "node:fs/promises";
 const sayVoice = process.env.VOICE_TEST_SAY_VOICE ?? "Samantha";
 const userUtterance =
   process.env.VOICE_TEST_USER_UTTERANCE ??
-  "Explain why the derivative of x squared is two x. Use a short example, and then ask me one question.";
+  "Explain how you would debug a failing unit test. Use a short example, then tell me the next command.";
 const interruptUtterance =
   process.env.VOICE_TEST_INTERRUPT_UTTERANCE ??
-  "Wait, I am still confused about where the exponent went. Explain that part again.";
+  "Wait, run the tests first and then explain the failure.";
 const longSystemPrompt =
   process.env.VOICE_TEST_SYSTEM_PROMPT ??
-  "You are Tutor-Tron in an acoustic end-to-end test. Answer the student's question in eight short spoken sentences unless interrupted. If interrupted, immediately adapt to the student's latest correction.";
+  "You are an agentic coding assistant in an acoustic end-to-end test. Answer the user's coding request in eight short spoken sentences unless interrupted. If interrupted, immediately adapt to the user's latest correction.";
 
 async function ensureSayAvailable() {
   await access("/usr/bin/say");
@@ -66,7 +66,7 @@ test.describe("acoustic browser voice loop", () => {
       body: firstUserTurn ?? "",
       contentType: "text/plain",
     });
-    expect(firstUserTurn?.toLowerCase()).toMatch(/derivative|squared|example|question/);
+    expect(firstUserTurn?.toLowerCase()).toMatch(/debug|failing|unit|test|command/);
 
     await expect(page.locator("#messages .message.assistant").last()).not.toHaveText("", { timeout: 140_000 });
 
@@ -80,20 +80,20 @@ test.describe("acoustic browser voice loop", () => {
 
     const userCountBeforeInterrupt = await page.locator("#messages .message.user").count();
     if (process.env.VOICE_TEST_REQUIRE_SPEAKER_IDENTITY !== "1") {
-      await page.evaluate(() => window.__tutorTronVoiceTest?.setSpeakerIdentityAvailable(false));
+      await page.evaluate(() => window.__agenticCodingVoiceTest?.setSpeakerIdentityAvailable(false));
     }
     const interruptSpeech = speakThroughMacSpeaker(interruptUtterance);
     await expect
       .poll(async () => {
-        const snapshot = await page.evaluate(() => window.__tutorTronVoiceTest?.getSnapshot?.());
+        const snapshot = await page.evaluate(() => window.__agenticCodingVoiceTest?.getSnapshot?.());
         const turnState = await page.locator("#turnState").textContent();
         return `${snapshot?.bargeInPaused ? "paused" : "not-paused"} ${turnState || ""}`;
       }, {
-        message: "waiting for tutor speech to pause immediately on spoken barge-in",
+        message: "waiting for assistant speech to pause immediately on spoken barge-in",
         timeout: 20_000,
         intervals: [250, 500, 1000],
       })
-      .toMatch(/paused|Tutor interrupted/i);
+      .toMatch(/paused|Assistant interrupted/i);
     await interruptSpeech;
     const interruptUserTurn = await waitForNewUserTurn(page, userCountBeforeInterrupt, "spoken interruption");
     await testInfo.attach("speaker-interrupt-user-turn.txt", {
@@ -101,7 +101,7 @@ test.describe("acoustic browser voice loop", () => {
       contentType: "text/plain",
     });
 
-    expect(interruptUserTurn?.toLowerCase()).toMatch(/confused|exponent|again|explain/);
+    expect(interruptUserTurn?.toLowerCase()).toMatch(/run|tests|failure|explain/);
 
     await expect
       .poll(async () => page.locator("#turnState").textContent(), {
@@ -111,7 +111,7 @@ test.describe("acoustic browser voice loop", () => {
       .toMatch(/interrupt|Streaming|Listening|Speaking|Interpreted/i);
 
     const turnTakingProfile = await page.evaluate(() => {
-      const key = Object.keys(localStorage).find((candidate) => candidate.startsWith("tutor-tron:turn-taking:"));
+      const key = Object.keys(localStorage).find((candidate) => candidate.startsWith("agentic-coding:turn-taking:"));
       return key ? JSON.parse(localStorage.getItem(key) || "{}") : null;
     });
     await testInfo.attach("turn-taking-profile.json", {
