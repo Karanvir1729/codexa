@@ -29,6 +29,7 @@ test("test dashboard can read latest run state", async ({ page }) => {
 
   await expect(page.getByRole("heading", { name: "Tutor-Tron Test Dashboard" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Run quick suite" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Codex build smoke" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Run full suite" })).toBeVisible();
   await expect(page.locator("#suiteList")).toBeVisible();
 });

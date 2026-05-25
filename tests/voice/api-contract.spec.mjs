@@ -82,6 +82,7 @@ test("provider health exposes voice, intent, and speaker identity layers", async
   expect(health.speechIntent.mode).toBeTruthy();
   expect(health.speakerGuard.purpose).toContain("speaker identity");
   expect(health.codexPilot.purpose).toContain("Codex exec");
+  expect(health.codexPilot.workspaceRoot).toBeTruthy();
   expect(health.openclaw.purpose).toContain("OpenClaw");
 });
 
@@ -93,6 +94,7 @@ test("codex pilot status exposes local exec integration", async ({ request }) =>
   expect(status.enabled).toBe(true);
   expect(status.command).toContain("codex");
   expect(status.sandbox).toBeTruthy();
+  expect(status.workspaceRoot).toBeTruthy();
   expect(status.openclaw.available).toBe(true);
   expect(status.defaultControlProvider).toBeTruthy();
 });

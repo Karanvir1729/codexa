@@ -67,6 +67,13 @@ const suiteRegistry = {
     command: ["node", ["scripts/openclaw-readiness.mjs"]],
     required: false,
   },
+  codex_build: {
+    id: "codex_build",
+    name: "Codex generated-app build smoke",
+    category: "system-control",
+    command: ["node", ["scripts/test-codex-calculator-build.mjs"]],
+    required: false,
+  },
   acoustic: {
     id: "acoustic",
     name: "Speaker-to-mic acoustic interruption test",

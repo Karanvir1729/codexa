@@ -125,6 +125,8 @@ Default behavior:
 - Uses the project-local `@openai/codex` CLI from `node_modules/.bin/codex`.
 - Runs in `workspace-write` sandbox mode.
 - Uses non-interactive approval mode `never`.
+- Runs code/build requests in a target workspace. Existing-project chats default to this repo; new-project chats are placed under `tmp/codex-workspaces/`, or an explicit `workspaceDir` can be passed to `/api/codex/exec`.
+- The Codex pilot prompt requires real file edits plus focused checks for build requests; it should not answer with canned demo code.
 - Keeps the final answer concise so it can be spoken.
 
 Useful env overrides:
@@ -135,6 +137,7 @@ CODEX_PILOT_COMMAND=/path/to/codex
 CODEX_PILOT_MODEL=gpt-5-codex
 CODEX_PILOT_SANDBOX=workspace-write
 CODEX_PILOT_TIMEOUT_MS=300000
+CODEX_WORKSPACE_ROOT=tmp/codex-workspaces
 CODEX_CONTROL_PROVIDER=codex
 OPENCLAW_LOCAL=1
 OPENCLAW_TIMEOUT_SECS=180
@@ -148,6 +151,14 @@ OpenClaw control-plane smoke test:
 ```bash
 npm run openclaw:control:test
 ```
+
+Generic coding-control smoke test:
+
+```bash
+npm run codex:calculator:test
+```
+
+That test asks the voice Codex route to build a calculator app in a throwaway workspace, then verifies the generated files and runs the generated test script. The runtime path is not calculator-specific; the calculator is only the test task.
 
 ## Project and Call History
 

@@ -48,6 +48,7 @@ const CODEX_PILOT_APPROVAL = process.env.CODEX_PILOT_APPROVAL ?? "never";
 const CODEX_PILOT_TIMEOUT_MS = Number(process.env.CODEX_PILOT_TIMEOUT_MS ?? 300000);
 const CODEX_PILOT_MAX_CONTEXT_MESSAGES = Number(process.env.CODEX_PILOT_MAX_CONTEXT_MESSAGES ?? 8);
 const CODEX_CONTROL_PROVIDER = process.env.CODEX_CONTROL_PROVIDER ?? "codex";
+const CODEX_WORKSPACE_ROOT = path.resolve(process.env.CODEX_WORKSPACE_ROOT ?? path.join(__dirname, "tmp", "codex-workspaces"));
 const OPENCLAW_COMMAND =
   process.env.OPENCLAW_COMMAND ??
   path.join(__dirname, "node_modules", ".bin", process.platform === "win32" ? "openclaw.cmd" : "openclaw");
@@ -62,6 +63,8 @@ const CODEX_PILOT_SYSTEM_PROMPT =
 The user is speaking to a desktop voice agent, but you have the repo-level capabilities of Codex.
 Interpret the latest user turn as an instruction for the current workspace when it asks for building, debugging, editing, testing, running commands, explaining code, or operating the project.
 When work is requested, actually do the work end-to-end: inspect files, edit code, run focused checks, and report the result.
+For coding/building requests, create or modify real files in the target workspace. Do not answer with fake code, hardcoded demos, or a plan unless the user only asked for a plan.
+If the target workspace is empty and the user asks to build something, bootstrap the smallest complete project that satisfies the request, include a runnable test/check, run it, and summarize exact file paths.
 Keep the final answer voice-friendly: concise, direct, and focused on what changed, what passed, and what remains.
 Do not narrate long command logs unless the user explicitly asks.
 If the user asks a tutoring/general question unrelated to the repo, answer normally and concisely.`;
@@ -895,6 +898,61 @@ function activeControlProvider(input, client) {
   return requested;
 }
 
+function isWithinDirectory(candidate, parent) {
+  const relative = path.relative(parent, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function requestedWorkspaceFrom(body = {}, client = {}) {
+  return safeText(
+    body.workspaceDir ||
+      body.workspace_dir ||
+      client.workspace_dir ||
+      client.workspaceDir ||
+      client.target_workspace ||
+      client.targetWorkspace,
+  );
+}
+
+function generatedWorkspaceName(client = {}) {
+  const base = safeText(client.project_name || client.session_title || client.session_id, "voice-project");
+  const safeBase = safeId(base, "voice-project");
+  const suffix = safeId(client.session_id, "main");
+  return suffix && suffix !== "main" ? `${safeBase}-${suffix}` : safeBase;
+}
+
+function resolveCodexWorkspace(body = {}, client = {}) {
+  const explicit = requestedWorkspaceFrom(body, client);
+  const projectMode = String(client.project_mode || client.projectMode || body.projectMode || "").toLowerCase();
+  const target = explicit
+    ? path.resolve(explicit)
+    : projectMode === "new_project"
+      ? path.resolve(CODEX_WORKSPACE_ROOT, generatedWorkspaceName(client))
+      : __dirname;
+
+  const repoRoot = path.resolve(__dirname);
+  const generatedRoot = path.resolve(CODEX_WORKSPACE_ROOT);
+  if (!isWithinDirectory(target, repoRoot) && !isWithinDirectory(target, generatedRoot)) {
+    throw new Error(`Workspace is outside the allowed roots: ${target}`);
+  }
+
+  fs.mkdirSync(target, { recursive: true });
+  return target;
+}
+
+function resolveCodexTimeoutMs(body = {}, client = {}) {
+  const requested = Number(
+    body.timeoutMs ||
+      body.timeout_ms ||
+      client.codex_timeout_ms ||
+      client.codexTimeoutMs ||
+      client.timeout_ms ||
+      client.timeoutMs,
+  );
+  if (!Number.isFinite(requested) || requested <= 0) return CODEX_PILOT_TIMEOUT_MS;
+  return Math.min(900000, Math.max(15000, Math.round(requested)));
+}
+
 function openClawSessionKey(client = {}) {
   const explicit = String(client?.openclaw_session_key || client?.openClawSessionKey || "").trim();
   if (explicit) return explicit;
@@ -909,7 +967,7 @@ function openClawSessionKey(client = {}) {
   return `${OPENCLAW_SESSION_PREFIX}:${project}:${session}`;
 }
 
-function buildCodexPilotPrompt({ messages, systemPrompt, client }) {
+function buildCodexPilotPrompt({ messages, systemPrompt, client, targetWorkspace = __dirname }) {
   const safeMessages = Array.isArray(messages) ? messages : [];
   const recent = safeMessages
     .filter((message) => message && typeof message.content === "string" && ["user", "assistant", "system"].includes(message.role))
@@ -927,6 +985,9 @@ function buildCodexPilotPrompt({ messages, systemPrompt, client }) {
     "Client/session context:",
     JSON.stringify(
       {
+        tutor_tron_repo: __dirname,
+        target_workspace: targetWorkspace,
+        generated_workspace_root: CODEX_WORKSPACE_ROOT,
         student_id: client?.student_id ?? null,
         student_name: client?.student_name ?? null,
         session_id: client?.session_id ?? null,
@@ -942,6 +1003,13 @@ function buildCodexPilotPrompt({ messages, systemPrompt, client }) {
       2,
     ),
     "",
+    "Workspace execution contract:",
+    `- Run commands from target_workspace: ${targetWorkspace}`,
+    "- For code/build requests, create or edit actual files in target_workspace.",
+    "- If this is a new project workspace, bootstrap a minimal complete app with tests/checks.",
+    "- Do not hardcode a calculator, greeting, canned response, or one-off demo path; implement the user's requested app/task generically.",
+    "- After editing, run focused checks from target_workspace and report exact files changed plus pass/fail.",
+    "",
     "Recent conversation:",
     recent || "(none)",
     "",
@@ -950,7 +1018,7 @@ function buildCodexPilotPrompt({ messages, systemPrompt, client }) {
   ].join("\n");
 }
 
-function buildOpenClawPilotPrompt({ messages, systemPrompt, client }) {
+function buildOpenClawPilotPrompt({ messages, systemPrompt, client, targetWorkspace = __dirname }) {
   return [
     "You are the OpenClaw control plane underneath Tutor-Tron Voice.",
     "The user is speaking to a voice agent. Your job is to control Codex and system tools to satisfy system, repo, browser, and app-operation requests.",
@@ -960,6 +1028,8 @@ function buildOpenClawPilotPrompt({ messages, systemPrompt, client }) {
     JSON.stringify(
       {
         tutor_tron_repo: __dirname,
+        target_workspace: targetWorkspace,
+        generated_workspace_root: CODEX_WORKSPACE_ROOT,
         current_project: client?.project_name ?? null,
         current_chat_session_id: client?.session_id ?? null,
         current_chat_title: client?.session_title ?? null,
@@ -972,18 +1042,19 @@ function buildOpenClawPilotPrompt({ messages, systemPrompt, client }) {
     ),
     "",
     "If the task needs code changes, testing, desktop/browser operation, or broader system state, use OpenClaw/Codex capabilities rather than only answering conversationally.",
-    "If you need to operate this repo, use the tutor_tron_repo path above.",
+    "If the task needs code changes, operate in target_workspace above unless the user explicitly asks to modify the Tutor-Tron repo.",
+    "Do not hardcode one-off demos; implement the user's requested task as real editable files with checks.",
     "Keep the final answer short enough to speak out loud.",
     "",
     "Visible Tutor-Tron system prompt:",
     systemPrompt || DEFAULT_AGENT_PROMPT,
     "",
     "Original Codex pilot prompt for this turn:",
-    buildCodexPilotPrompt({ messages, systemPrompt, client }),
+    buildCodexPilotPrompt({ messages, systemPrompt, client, targetWorkspace }),
   ].join("\n");
 }
 
-function runOpenClawAgent(prompt, client = {}) {
+function runOpenClawAgent(prompt, client = {}, targetWorkspace = __dirname) {
   return new Promise((resolve) => {
     const startedAt = performance.now();
     const args = [
@@ -1000,7 +1071,7 @@ function runOpenClawAgent(prompt, client = {}) {
     if (OPENCLAW_THINKING) args.push("--thinking", OPENCLAW_THINKING);
 
     const child = spawn(OPENCLAW_COMMAND, args, {
-      cwd: __dirname,
+      cwd: targetWorkspace,
       env: {
         ...process.env,
         NO_COLOR: "1",
@@ -1180,6 +1251,7 @@ async function handlePhoneCodexCompletion(req, res) {
         session_id: "phone",
         student_id: "phone_caller",
       },
+      __dirname,
     );
     const text = result.ok
       ? result.text
@@ -1299,6 +1371,17 @@ async function handleCodexPilot(req, res) {
 
   sendSseHeaders(res);
 
+  let targetWorkspace;
+  try {
+    targetWorkspace = resolveCodexWorkspace(body, client);
+  } catch (error) {
+    sse(res, "error", { message: error instanceof Error ? error.message : "Invalid Codex workspace." });
+    sse(res, "done", {});
+    res.end();
+    return;
+  }
+  const codexTimeoutMs = resolveCodexTimeoutMs(body, client);
+
   if (!CODEX_PILOT_ENABLED) {
     sse(res, "error", { message: "Codex pilot is disabled. Set CODEX_PILOT_ENABLED=1." });
     sse(res, "done", {});
@@ -1310,15 +1393,16 @@ async function handleCodexPilot(req, res) {
     if (!openClawAvailable()) {
       sse(res, "warning", { message: "OpenClaw is not available locally; falling back to direct Codex CLI." });
     } else {
-      const prompt = buildOpenClawPilotPrompt({ messages, systemPrompt, client });
+      const prompt = buildOpenClawPilotPrompt({ messages, systemPrompt, client, targetWorkspace });
       sse(res, "meta", {
         provider: "openclaw",
         model: "openclaw-codex",
         sessionKey: openClawSessionKey(client),
         mode: OPENCLAW_LOCAL ? "local" : "gateway",
+        workspace: targetWorkspace,
       });
       sse(res, "warning", { message: "OpenClaw is controlling Codex/system tools for this voice turn." });
-      const result = await runOpenClawAgent(prompt, client);
+      const result = await runOpenClawAgent(prompt, client, targetWorkspace);
       if (result.ok) {
         sse(res, "token", { text: result.text.slice(0, 2400) });
         sse(res, "meta", {
@@ -1346,14 +1430,14 @@ async function handleCodexPilot(req, res) {
     return;
   }
 
-  const prompt = buildCodexPilotPrompt({ messages, systemPrompt, client });
+  const prompt = buildCodexPilotPrompt({ messages, systemPrompt, client, targetWorkspace });
   const args = [];
   if (CODEX_PILOT_MODEL) args.push("-m", CODEX_PILOT_MODEL);
   args.push("-a", CODEX_PILOT_APPROVAL);
-  args.push("exec", "--json", "--cd", __dirname, "--sandbox", CODEX_PILOT_SANDBOX, "-");
+  args.push("exec", "--json", "--cd", targetWorkspace, "--sandbox", CODEX_PILOT_SANDBOX, "-");
 
   const child = spawn(CODEX_PILOT_COMMAND, args, {
-    cwd: __dirname,
+    cwd: targetWorkspace,
     env: {
       ...process.env,
       NO_COLOR: "1",
@@ -1366,15 +1450,17 @@ async function handleCodexPilot(req, res) {
   const timeout = setTimeout(() => {
     child.kill("SIGTERM");
     sse(res, "error", { message: "Codex pilot timed out." });
-  }, CODEX_PILOT_TIMEOUT_MS);
+  }, codexTimeoutMs);
 
   sse(res, "meta", {
     provider: "codex",
     model: CODEX_PILOT_MODEL || "default",
     sandbox: CODEX_PILOT_SANDBOX,
     approval: CODEX_PILOT_APPROVAL,
+    workspace: targetWorkspace,
+    timeoutMs: codexTimeoutMs,
   });
-  sse(res, "warning", { message: "Codex pilot is working in the repo. This can take longer than the tutor LLM path." });
+  sse(res, "warning", { message: `Codex pilot is working in ${targetWorkspace}. This can take longer than the tutor LLM path.` });
 
   let stdoutBuffer = "";
   child.stdout.on("data", (chunk) => {
@@ -1429,6 +1515,8 @@ async function handleCodexPilot(req, res) {
       model: CODEX_PILOT_MODEL || "default",
       durationMs: Math.round(performance.now() - startedAt),
       threadId: state.threadId,
+      workspace: targetWorkspace,
+      timeoutMs: codexTimeoutMs,
     });
     sse(res, "done", {});
     res.end();
@@ -1743,6 +1831,7 @@ async function handleProviderHealth(req, res) {
       sandbox: CODEX_PILOT_SANDBOX,
       approval: CODEX_PILOT_APPROVAL,
       model: CODEX_PILOT_MODEL || "default",
+      workspaceRoot: CODEX_WORKSPACE_ROOT,
       purpose: "Routes voice-intent tasks into Codex exec so the desktop agent can inspect, edit, test, and operate this repo.",
     },
     openclaw: openClawStatusPayload(),
@@ -1888,7 +1977,7 @@ async function handleStartTestRun(req, res) {
   }
 
   const body = await readJson(req).catch(() => ({}));
-  const allowedSuites = new Set(["preflight", "eval", "api", "ui", "bench", "phone", "phone_stack", "openclaw", "acoustic"]);
+  const allowedSuites = new Set(["preflight", "eval", "api", "ui", "bench", "phone", "phone_stack", "openclaw", "codex_build", "acoustic"]);
   const requestedSuites = Array.isArray(body.suites) && body.suites.length
     ? body.suites.map(String)
     : ["preflight", "eval", "api", "ui", "bench"];
@@ -1975,6 +2064,7 @@ const server = http.createServer(async (req, res) => {
         codexPilotEnabled: CODEX_PILOT_ENABLED,
         codexPilotAvailable: codexPilotAvailable(),
         codexPilotSandbox: CODEX_PILOT_SANDBOX,
+        codexWorkspaceRoot: CODEX_WORKSPACE_ROOT,
         codexControlProvider: CODEX_CONTROL_PROVIDER,
         openclawAvailable: openClawAvailable(),
         openclawLocalMode: OPENCLAW_LOCAL,
@@ -1995,6 +2085,7 @@ const server = http.createServer(async (req, res) => {
         sandbox: CODEX_PILOT_SANDBOX,
         approval: CODEX_PILOT_APPROVAL,
         model: CODEX_PILOT_MODEL || "default",
+        workspaceRoot: CODEX_WORKSPACE_ROOT,
         defaultControlProvider: CODEX_CONTROL_PROVIDER,
         openclaw: openClawStatusPayload(),
       });
