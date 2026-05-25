@@ -1,7 +1,7 @@
 {
-  "name": "Agentic Coding Assistant",
-  "short_name": "Coding Agent",
-  "description": "Interruptible coding voice assistant with Flow-style speech intent, Codex control, and Python AI/ML runtime.",
+  "name": "Codexa",
+  "short_name": "Codexa",
+  "description": "Alexa for Codex: a Mac-first coding assistant wrapper with Codex control and Python AI/ML runtime.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

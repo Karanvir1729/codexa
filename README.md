@@ -1,16 +1,17 @@
-# Agentic Coding Assistant
+# Codexa
 
-Desktop-first end-to-end voice-agent system for an agentic coding assistant, with a Python AI/ML runtime and Electron shell.
+Alexa for Codex: a desktop-first agentic coding wrapper for Codex/OpenClaw, with an Electron Mac shell and optional voice runtime.
 
 Goal:
 
-> Build the first ChatGPT Voice style interaction kernel: microphone input, turn-level STT, Flow-style speech-to-intent, streaming local LLM response, spoken playback, and a configurable system prompt.
+> Make Codexa a tiny Mac wrapper that routes user requests through OpenClaw using the Codex onboarding/runtime path, while keeping generated projects and chats visible in Codex Desktop.
 
 ## Current Stack
 
-- **LLM:** Ollama with `qwen3.5` by default.
-- **Python AI/ML runtime:** `services/whisperx_adapter.py` owns WhisperX STT, speaker identity, and deterministic Flow-style speech transforms.
-- **STT:** local WhisperX adapter behind `POST /api/stt`.
+- **Coding engine:** official OpenClaw install at `/opt/homebrew/bin/openclaw`, configured for `openai/gpt-5.5` through the Codex app-server harness.
+- **No local model fallback:** Codexa does not route coding turns through Ollama or local LLM providers.
+- **Optional Python AI/ML runtime:** `services/whisperx_adapter.py` can own WhisperX STT, speaker identity, and deterministic Flow-style speech transforms when `CODEXA_ENABLE_VOICE_RUNTIME=1`.
+- **STT:** optional WhisperX adapter behind `POST /api/stt`.
 - **Speech input layer:** Wispr Flow-style `POST /api/speech-intent` rewrite that converts raw speech into the clearest user request before the assistant LLM sees it.
   - Backtrack/self-correction cleanup.
   - Filler removal, smart punctuation, and spoken list formatting.
@@ -22,40 +23,39 @@ Goal:
   - Production target: NVIDIA NeMo Streaming Sortformer for online diarization and TitaNet-style speaker embeddings.
   - Local CPU fallback: SpeechBrain ECAPA embeddings until the NVIDIA runtime is available on GPU.
 - **TTS:** Fish Audio / Fish Speech `s2-pro` through `POST /api/tts` when `FISH_API_KEY` is set.
-- **Fallbacks:** browser STT and browser Web Speech TTS remain available for local debugging.
-- **Prompting:** no hardcoded coding answer path. The UI sends the current conversation plus the editable system prompt to the LLM.
-- **Codex pilot mode:** optional voice-command route that sends cleaned user intent to the Codex CLI so the desktop agent can inspect, edit, test, and operate the target workspace.
-- **Desktop shell:** Electron starts/reuses the Node API and Python STT/ML service, opens Agentic Coding Assistant in a native desktop window, and exposes the test dashboard/logs from the app menu.
-- **Install surface:** the same voice core also ships as a web/PWA surface for iPhone/Mac testing.
+- **Prompting:** no hardcoded coding answer path. The desktop app sends the current conversation to OpenClaw, and OpenClaw must delegate coding work through Codex.
+- **Codex wrapper mode:** typed or spoken turns are mirrored into normal Codex Desktop app chats in the current workspace, so work remains visible in the Codex activity log.
+- **OpenClaw control plane:** OpenClaw is the local system-control layer and Codex is the authenticated coding engine for the active repo.
+- **Desktop shell:** Electron starts/reuses the Node API, opens a minimal Codex-style Mac window, and exposes Codex linking, macOS permission setup, status, and logs.
+- **Install surface:** the website is intentionally small: open it, click **Install for Mac**, and the native wrapper launches.
 
 ## Run End-to-End
 
 Requires Node.js `>=22.12` for the Electron desktop runtime.
 
-1. Pull the local LLM:
+1. Install OpenClaw with the README-recommended global package:
 
 ```bash
-ollama pull qwen3.5
+npm install -g openclaw@latest
 ```
 
-2. Install WhisperX:
+2. Run OpenClaw onboarding and install the Gateway daemon:
 
 ```bash
-npm run stt:install
+openclaw onboard --install-daemon
 ```
 
-3. Start the desktop app:
+3. Start the desktop app directly:
 
 ```bash
 npm run desktop
 ```
 
-The Electron shell starts the Python STT/ML service and Node API if they are not already running. It reuses existing services on ports `9001` and `3000` when present.
+The Electron shell starts/reuses the Node API. The optional Python voice runtime is off by default; enable it with `CODEXA_ENABLE_VOICE_RUNTIME=1 npm run desktop`.
 
 Manual service mode is still available:
 
 ```bash
-npm run stt
 npm run dev
 ```
 
@@ -64,6 +64,8 @@ Open:
 ```text
 http://localhost:3000
 ```
+
+The web page is the install launcher. It should show only **Codexa**, **Install for Mac**, and an info button.
 
 Open the local QA dashboard:
 
@@ -81,12 +83,15 @@ npm run desktop
 
 The desktop app provides:
 
-- native Electron window for Agentic Coding Assistant
-- automatic Python STT/ML service startup
+- native Electron window for the Codex wrapper
+- **Enable**: starts or reuses the local bridge
+- **Link Codex**: creates/checks a normal Codex Desktop chat in this repo so app-driven work appears in Codex
+- **Permissions**: opens macOS Privacy panes for Accessibility, Automation, Full Disk Access, and Microphone
+- **Status**: reports machine, git, API, and Codex bridge state
+- current-workspace behavior by default; generated projects must be created through Codex in the target workspace so they appear in the Codex app project list
 - automatic Node API startup
-- microphone permission handling for the local app
 - menu shortcuts:
-  - `Cmd/Ctrl+1`: Voice App
+  - `Cmd/Ctrl+1`: Mac App
   - `Cmd/Ctrl+2`: Test Dashboard
   - Provider Health JSON
   - Open Logs Folder
@@ -111,23 +116,18 @@ typed text turn  -----------------------------------------------+
                                                                |
                                                                v
 -> /api/codex/exec
--> OpenClaw local control plane
--> Codex provider edits/checks the target workspace
+-> OpenClaw Gateway control plane
+-> Codex app-server provider edits/checks the target workspace
 -> spoken summary back through the same TTS queue
 ```
 
-Codex pilot mode now has a **Codex control plane** selector:
-
-- **Direct Codex CLI:** current repo-local `codex exec` path.
-- **OpenClaw controls Codex/system:** sends the voice turn through `openclaw agent --local`; OpenClaw is the controller, and coding work should be delegated to the Codex CLI in the target workspace.
-- **Auto:** tries OpenClaw when available, then falls back to direct Codex.
-
 Default behavior:
 
-- Routes voice coding turns through OpenClaw by default, with direct Codex CLI still available from the selector.
+- Routes voice and typed coding turns through OpenClaw Gateway by default.
+- Requires OpenClaw's Codex runtime. If the Codex-backed route fails, Codexa returns a clear failure instead of falling back to another model or direct edit path.
 - Routes typed coding turns through the same project/session/workspace/control-plane path as voice. The text box is not a separate lightweight chatbot.
 - Infers project mode from the request: explicit "new project", "new app", or "from scratch" starts a fresh generated workspace; "current repo", "existing project", or fix/update/debug language stays on the existing project path.
-- Uses the project-local `@openai/codex` CLI from `node_modules/.bin/codex`.
+- Uses the Codex Desktop app-server command at `/Applications/Codex.app/Contents/Resources/codex`.
 - Runs in `workspace-write` sandbox mode.
 - Uses non-interactive approval mode `never`.
 - Runs code/build requests in a target workspace. Existing-project chats default to this repo; new-project chats are placed under `~/agentic-coding-projects/` so generated apps show up as standalone Codex projects. Legacy `tmp/codex-workspaces/` paths are still accepted, and an explicit `workspaceDir` can be passed to `/api/codex/exec`.
@@ -203,12 +203,6 @@ Twilio SMS
 -> Twilio outbound SMS response
 ```
 
-Architecture decision:
-
-```text
-docs/architecture/voice-telephony-stack-decision.md
-```
-
 Local free-tier development flow:
 
 1. Create a Twilio trial account and trial voice number.
@@ -253,18 +247,18 @@ Media stream:  wss://YOUR_NGROK_DOMAIN/ws -> local Pipecat :7860/ws
 
 The Node app returns Voice TwiML with `<Connect><Stream />` and handles inbound SMS immediately with a short acknowledgement. The coding work runs asynchronously through OpenClaw/Codex and sends the result back by outbound Twilio SMS.
 
-The first call may take longer because local Whisper and Kokoro models can download/warm up. The current phone runtime uses:
+The current phone runtime uses:
 
 - Twilio Media Streams transport through Pipecat's runner.
 - Local Whisper STT through `WhisperSTTService`.
-- Local Ollama `qwen3.5` through `OLLamaLLMService`.
+- Codexa's OpenAI-compatible phone bridge, which routes requests through OpenClaw/Codex.
 - Local Kokoro TTS through `KokoroTTSService`.
 - Twilio SMS webhooks through `/api/twilio/sms`, using the same session/history store as browser and phone turns.
 
 Production/demo path:
 
 ```text
-Twilio number -> Pipecat Cloud Twilio WebSocket endpoint -> Agentic Coding Assistant Pipecat bot
+Twilio number -> Pipecat Cloud Twilio WebSocket endpoint -> Codexa Pipecat bot
 ```
 
 ### Test the Phone Brain Without Calling
@@ -289,7 +283,7 @@ http://localhost:3000/test-dashboard.html
 
 ## OpenClaw System-Control Path
 
-OpenClaw is installed as the local system-control layer for growing Agentic Coding Assistant from "voice talks to Codex" into "voice can operate the development environment."
+OpenClaw is installed as the local system-control layer for growing Codexa from "voice talks to Codex" into "voice can operate the development environment."
 
 Readiness:
 
@@ -301,12 +295,6 @@ Foreground gateway for local dev:
 
 ```bash
 npm run openclaw:gateway
-```
-
-Design note:
-
-```text
-docs/architecture/openclaw-codex-system-control.md
 ```
 
 Pipecat remains the realtime voice runtime. OpenClaw is the broader control plane for full-system actions and Codex/plugin routing.
@@ -358,8 +346,8 @@ Device mic
 -> WhisperX adapter
 -> parallel speaker identity service enrolls/checks user voice
 -> /api/speech-intent applies Flow-style cleanup, snippets, dictionary, style, and intent rewrite
--> /api/chat
--> Ollama qwen3.5 streaming response
+-> /api/codex/exec
+-> OpenClaw agent using Codex app-server runtime
 -> sentence TTS queue
 -> Fish Audio TTS or built-in device TTS
 -> device speaker
@@ -367,7 +355,7 @@ Device mic
 
 ## Testing Framework
 
-Agentic Coding Assistant has a local Cekura-style QA harness with a dashboard, persisted run history, deterministic evals, browser tests, and acoustic voice-capture tests.
+Codexa has a local Cekura-style QA harness with a dashboard, persisted run history, deterministic evals, browser tests, and acoustic voice-capture tests.
 
 Dashboard:
 
@@ -435,7 +423,7 @@ curl -s -X POST http://localhost:3000/api/test-runs/run \
 
 The local runner is intentionally container-friendly. With GCP credits, the useful hosted setup is:
 
-- **Cloud Run service:** host the Agentic Coding Assistant API/dashboard container.
+- **Cloud Run service:** host the Codexa API/dashboard container.
 - **Cloud Run Jobs:** run `npm run test:voice:runner` on demand or on a schedule. Cloud Run jobs are designed for code that performs work and exits.
 - **Pub/Sub:** trigger regression runs from failed sessions, prompt changes, strategy changes, or deploy events.
 - **Cloud Storage:** store Playwright traces, audio snippets, failure traces, and replay artifacts.
@@ -451,13 +439,13 @@ References:
 
 ## Interruption Path
 
-Agentic Coding Assistant currently uses turn-based conversation. While the assistant is thinking or speaking, mic audio is ignored so the app does not transcribe its own TTS as user input. The next voice turn starts after the assistant finishes speaking.
+Codexa currently uses turn-based conversation. While the assistant is thinking or speaking, mic audio is ignored so the app does not transcribe its own TTS as user input. The next voice turn starts after the assistant finishes speaking.
 
 Normal voice turns wait through natural pauses before submitting the turn, then the speech cleanup layer removes filler and false starts. Long, messy spoken input can become a concise question or bullet list before it reaches the assistant.
 
 ## Social Turn-Taking Loop
 
-Agentic Coding Assistant keeps a local per-user turn-taking profile:
+Codexa keeps a local per-user turn-taking profile:
 
 ```text
 user speaks
@@ -515,8 +503,8 @@ Copy `.env.example` values into your shell or deployment environment.
 Key variables:
 
 ```bash
-VOICE_AGENT_PROVIDER=ollama
-OLLAMA_MODEL=qwen3.5
+VOICE_AGENT_PROVIDER=codex
+RESPONSE_POLISH_PROVIDER=codex
 STT_PROVIDER=whisperx
 WHISPERX_URL=http://127.0.0.1:9001
 SPEAKER_GUARD_URL=http://127.0.0.1:9001
@@ -527,7 +515,7 @@ SPEECH_INTENT_MODE=rewrite
 TTS_PROVIDER=fish
 FISH_API_KEY=...
 FISH_TTS_MODEL=s2-pro
-AGENT_SYSTEM_PROMPT="You are Agentic Coding Assistant..."
+AGENT_SYSTEM_PROMPT="You are Codexa..."
 TELEPHONY_STACK=pipecat
 TWILIO_ACCOUNT_SID=...
 TWILIO_AUTH_TOKEN=...
@@ -547,7 +535,7 @@ Content-Type: application/json
 
 ```json
 {
-  "systemPrompt": "You are Agentic Coding Assistant...",
+  "systemPrompt": "You are Codexa...",
   "messages": [
     { "role": "user", "content": "Explain the failing calculator test and suggest the next fix." }
   ]
@@ -705,7 +693,7 @@ Acoustic speaker-to-mic test:
 npm run test:voice:acoustic
 ```
 
-The acoustic test opens the browser UI, starts a voice session, uses macOS `say` to speak through your selected speaker, waits for Agentic Coding Assistant to transcribe/respond, and verifies the turn-based voice loop.
+The acoustic test opens the browser UI, starts a voice session, uses macOS `say` to speak through your selected speaker, waits for Codexa to transcribe/respond, and verifies the turn-based voice loop.
 
 Requirements:
 

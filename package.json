@@ -1,5 +1,5 @@
 {
-  "name": "agentic-coding-assistant",
+  "name": "codexa",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,6 +7,7 @@
   "scripts": {
     "desktop": "electron desktop/main.cjs",
     "desktop:dev": "electron desktop/main.cjs",
+    "build:web": "esbuild web-react/src/main.jsx --bundle --format=esm --jsx=automatic --target=es2022 --minify --outfile=web/assets/app-react.js",
     "dev": "node server.mjs",
     "start": "node server.mjs",
     "stt": ".venv-whisperx/bin/python services/whisperx_adapter.py --port 9001",
@@ -19,8 +20,8 @@
     "phone:test": "npm run phone:test:codex && npm run phone:test:stack",
     "twilio:configure": "node scripts/setup-twilio-voice-webhook.mjs",
     "openclaw:readiness": "node scripts/openclaw-readiness.mjs",
-    "openclaw:doctor": "npx openclaw doctor --lint --non-interactive --no-workspace-suggestions --severity-min error",
-    "openclaw:gateway": "npx openclaw gateway --dev --bind loopback run",
+    "openclaw:doctor": "openclaw doctor --lint --non-interactive --no-workspace-suggestions --severity-min error",
+    "openclaw:gateway": "openclaw gateway --dev --bind loopback run",
     "openclaw:control:test": "node scripts/test-openclaw-control.mjs",
     "codex:calculator:test": "node scripts/test-codex-calculator-build.mjs",
     "dev:loop": "node scripts/develop-test-loop.mjs",
@@ -41,6 +42,12 @@
     "@openai/codex": "^0.133.0",
     "@playwright/test": "^1.60.0",
     "electron": "^42.2.0",
+    "esbuild": "^0.28.0",
     "openclaw": "^2026.5.22"
+  },
+  "dependencies": {
+    "lucide-react": "^1.16.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
   }
 }

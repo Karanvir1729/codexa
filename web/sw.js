@@ -1,8 +1,9 @@
-const CACHE_NAME = "agentic-coding-shell-v1";
+const CACHE_NAME = "codexa-react-shell-v2";
 const SHELL_ASSETS = [
   "/",
   "/index.html",
   "/styles.css",
+  "/assets/app-react.js",
   "/app.js",
   "/test-dashboard.html",
   "/test-dashboard.css",

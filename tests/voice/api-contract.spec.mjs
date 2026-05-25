@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+const appOrigin = process.env.VOICE_TEST_APP_URL ?? "http://localhost:3000";
+
 test("speech-intent rewrites raw speech into a clear user message", async ({ request }) => {
   const rawText =
     "um okay so i have three requests first inspect the files second run tests and third summarize changes after but keep it short";
@@ -83,8 +85,10 @@ test("provider health exposes voice, intent, and speaker identity layers", async
   expect(health.speakerGuard.purpose).toContain("speaker identity");
   expect(health.codexPilot.purpose).toContain("Codex CLI");
   expect(health.codexPilot.workspaceRoot).toBeTruthy();
+  expect(health.codexPilot.codexHome).toContain(".codex");
   expect(health.openclaw.purpose).toContain("OpenClaw");
-  expect(health.openclaw.purpose).toContain("Codex CLI");
+  expect(health.openclaw.purpose).toContain("Codex onboarding");
+  expect(health.openclaw.purpose).toContain("No fallback");
 });
 
 test("codex pilot status exposes local CLI and app-chat integration", async ({ request }) => {
@@ -94,15 +98,57 @@ test("codex pilot status exposes local CLI and app-chat integration", async ({ r
   const status = await response.json();
   expect(status.enabled).toBe(true);
   expect(status.command).toContain("codex");
+  expect(status.codexHome).toContain(".codex");
   expect(status.sandbox).toBeTruthy();
   expect(status.workspaceRoot).toBeTruthy();
   expect(status.openclaw.available).toBe(true);
   expect(status.defaultControlProvider).toBe("openclaw");
   expect(status.openclaw.codexCliCommand).toContain("codex");
+  expect(status.openclaw.codexCliCommand).toBe(status.command);
+  expect(status.openclaw.codexHome).toBe(status.codexHome);
   expect(status.appChatRegistration.enabled).toBe(true);
   expect(status.appChatRegistration.command).toContain("codex");
-  expect(status.appChatRegistration.defaultForGeneratedProjects).toBe(true);
-  expect(status.appChatRegistration.purpose).toContain("every generated project");
+  expect(status.appChatRegistration.codexHome).toBe(status.codexHome);
+  expect(status.appChatRegistration.defaultForCodexWrapperInteractions).toBe(true);
+  expect(status.appChatRegistration.purpose).toContain("wrapper interactions");
+});
+
+test("static server rejects traversal and malformed paths", async ({ request }) => {
+  const traversal = await request.get("/..%2Fserver.mjs");
+  expect(traversal.status()).toBe(404);
+
+  const nestedTraversal = await request.get("/assets/..%2F..%2Fserver.mjs");
+  expect(nestedTraversal.status()).toBe(404);
+
+  const malformed = await request.get("/%E0%A4%A");
+  expect(malformed.status()).toBe(404);
+});
+
+test("desktop launch requires same-origin one-time token", async ({ request }) => {
+  const crossOriginLaunch = await request.post("/api/desktop/launch", {
+    headers: { Origin: "https://attacker.example" },
+  });
+  expect(crossOriginLaunch.status()).toBe(403);
+
+  const missingTokenLaunch = await request.post("/api/desktop/launch", {
+    headers: { Origin: appOrigin },
+  });
+  expect(missingTokenLaunch.status()).toBe(403);
+
+  const tokenResponse = await request.get("/api/desktop/launch-token", {
+    headers: { Referer: `${appOrigin}/` },
+  });
+  expect(tokenResponse.ok()).toBeTruthy();
+  const token = await tokenResponse.json();
+  expect(token.token).toBeTruthy();
+
+  const invalidTokenLaunch = await request.post("/api/desktop/launch", {
+    headers: {
+      Origin: appOrigin,
+      "X-Desktop-Launch-Token": "not-a-real-token",
+    },
+  });
+  expect(invalidTokenLaunch.status()).toBe(403);
 });
 
 test("openclaw status exposes the system-control adapter", async ({ request }) => {
@@ -112,7 +158,12 @@ test("openclaw status exposes the system-control adapter", async ({ request }) =
   const status = await response.json();
   expect(status.available).toBe(true);
   expect(status.command).toContain("openclaw");
+  expect(status.controllerModel).toBeTruthy();
+  expect(status.controllerModel).toContain("openai/");
+  expect(status.codexHome).toContain(".codex");
+  expect(status.codexCliCommand).toContain("Codex.app");
   expect(status.purpose).toContain("control Codex");
+  expect(status.purpose).toContain("No fallback");
 });
 
 test("twilio webhooks expose voice stream TwiML and SMS bridge TwiML", async ({ request }) => {

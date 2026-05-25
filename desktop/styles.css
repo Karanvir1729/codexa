@@ -1,0 +1,389 @@
+:root {
+  --bg: #0c0c0d;
+  --rail: #2d2c27;
+  --rail-2: #3a3933;
+  --main: #111112;
+  --ink: #f3f2ef;
+  --muted: #aaa8a1;
+  --line: #46443d;
+  --line-dark: #292824;
+  --selected: #4a4941;
+  --button: #ecebea;
+  --button-ink: #111;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+}
+
+* {
+  scrollbar-color: #5a5850 transparent;
+  scrollbar-width: thin;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: #5a5850;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 310px minmax(0, 1fr);
+  width: 100vw;
+  height: 100vh;
+}
+
+.rail {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto auto auto auto minmax(0, 1fr);
+  gap: 10px;
+  overflow: hidden;
+  border-right: 1px solid var(--line-dark);
+  background: var(--rail);
+  padding: 16px 14px;
+}
+
+.brand {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-height: 44px;
+}
+
+.mark {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 21px;
+  line-height: 1;
+}
+
+.brand p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.enable,
+.ghost {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-weight: 750;
+}
+
+.enable {
+  background: var(--button);
+  color: var(--button-ink);
+}
+
+.enable.on {
+  background: var(--selected);
+  color: var(--ink);
+}
+
+.ghost {
+  background: transparent;
+  color: var(--ink);
+}
+
+.ghost:hover,
+.chat-button:hover {
+  background: var(--rail-2);
+}
+
+.projects {
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 0 24px;
+}
+
+.project-group {
+  margin: 8px 0 20px;
+}
+
+.project-title {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 720;
+}
+
+.project-title::before {
+  content: "▱";
+  color: var(--muted);
+}
+
+.chat-button {
+  width: 100%;
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--ink);
+  padding: 8px 10px 8px 32px;
+  text-align: left;
+}
+
+.chat-button.active {
+  background: var(--selected);
+}
+
+.chat-name {
+  overflow: hidden;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-count {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--muted);
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.main {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  background: var(--main);
+}
+
+.topbar {
+  min-width: 0;
+  min-height: 66px;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #242426;
+  padding: 14px 20px;
+}
+
+h2 {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  font-size: 18px;
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 8px;
+}
+
+.icon,
+.info,
+.send,
+.close {
+  border: 1px solid #343438;
+  border-radius: 8px;
+  background: #151516;
+  color: var(--ink);
+}
+
+.icon {
+  min-height: 34px;
+  padding: 0 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.info {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.messages {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: auto;
+  padding: 28px min(8vw, 96px);
+}
+
+.empty {
+  align-self: center;
+  margin-top: 28px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.message {
+  max-width: min(800px, 82%);
+  border: 1px solid #2b2b2f;
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: #151516;
+  color: #dbdade;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.message.user {
+  align-self: flex-end;
+  background: #202024;
+  color: var(--ink);
+}
+
+.message.assistant {
+  align-self: flex-start;
+}
+
+.message.status {
+  align-self: center;
+  max-width: min(760px, 90%);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  gap: 8px;
+  border-top: 1px solid #242426;
+  padding: 14px min(8vw, 96px) 18px;
+}
+
+.composer input {
+  min-height: 44px;
+  border: 1px solid #39393f;
+  border-radius: 11px;
+  background: #0d0d0e;
+  color: var(--ink);
+  outline: none;
+  padding: 0 14px;
+}
+
+.composer input:focus {
+  border-color: #62626a;
+}
+
+.send {
+  min-height: 44px;
+  font-size: 18px;
+}
+
+dialog {
+  width: min(360px, calc(100vw - 40px));
+  border: 1px solid #3a3a3f;
+  border-radius: 12px;
+  background: #151516;
+  color: var(--ink);
+  padding: 22px;
+}
+
+.permission-grid {
+  display: grid;
+  gap: 10px;
+  padding-top: 10px;
+}
+
+.permission-grid button {
+  min-height: 42px;
+  border: 1px solid #3a3a3f;
+  border-radius: 8px;
+  background: #1b1b1d;
+  color: var(--ink);
+  font-weight: 750;
+}
+
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.58);
+}
+
+.close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+}
+
+@media (max-width: 760px) {
+  .app {
+    grid-template-columns: 1fr;
+  }
+
+  .rail {
+    max-height: 42vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--line-dark);
+  }
+
+  .messages,
+  .composer {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}

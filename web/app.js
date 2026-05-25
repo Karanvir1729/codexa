@@ -566,10 +566,10 @@ function renderMessages() {
   if (state.currentSessionSummary) {
     addMessage(
       "system",
-      `Active chat: ${state.currentSessionSummary.title || "Untitled chat"} | ${state.currentSessionSummary.projectName || "No project"}`,
+      `${state.currentSessionSummary.title || "Chat"} | ${state.currentSessionSummary.projectName || "Project"}`,
     );
   } else {
-    addMessage("system", "Choose an existing chat or start a new project chat before using the voice agent.");
+    addMessage("system", "Pick chat.");
   }
   for (const message of state.messages) addMessage(message.role, message.content);
 }
@@ -609,15 +609,14 @@ function renderSessionUi() {
   }
 
   if (state.currentSessionSummary) {
-    dom.sessionState.textContent = `Working in ${state.currentSessionSummary.projectName}: ${state.currentSessionSummary.title}`;
+    dom.sessionState.textContent = `${state.currentSessionSummary.projectName} / ${state.currentSessionSummary.title}`;
   } else {
-    dom.sessionState.textContent = "Pick an existing chat or start a new one.";
+    dom.sessionState.textContent = "Pick chat.";
   }
 
   if (dom.sessionHistoryList) {
     dom.sessionHistoryList.innerHTML = state.sessions.length
       ? state.sessions
-          .slice(0, 8)
           .map((session) => {
             const source =
               session.source === "phone_bridge"
@@ -625,11 +624,10 @@ function renderSessionUi() {
                 : session.source === "sms_bridge"
                   ? "sms"
                   : session.source || "browser";
-            const detail = session.lastUserText ? session.lastUserText : "No user turn saved yet.";
-            return `<button type="button" class="history-item history-button" data-session-id="${escapeHtml(session.id)}">
+            const activeClass = session.id === state.currentSessionId ? " active" : "";
+            return `<button type="button" class="history-item history-button${activeClass}" data-session-id="${escapeHtml(session.id)}">
               <strong>${escapeHtml(session.title || "Untitled chat")}</strong>
               <span>${escapeHtml(session.projectName || "No project")} · ${escapeHtml(source)} · ${session.turnCount || 0} turns</span>
-              <span class="muted">${escapeHtml(compactTitle(detail, "No user turn saved yet."))}</span>
             </button>`;
           })
           .join("")
@@ -867,9 +865,9 @@ function selectedControlProvider() {
 
 function selectedControlProviderLabel() {
   const value = selectedControlProvider();
-  if (value === "openclaw") return "OpenClaw control plane";
-  if (value === "auto") return "OpenClaw with Codex fallback";
-  return "direct Codex CLI";
+  if (value === "openclaw") return "OpenClaw";
+  if (value === "auto") return "Auto";
+  return "Codex CLI";
 }
 
 function compactWorkspacePath(value) {
@@ -881,9 +879,11 @@ function compactWorkspacePath(value) {
   const workspaceMarker = "/tmp/codex-workspaces/";
   const workspaceIndex = text.indexOf(workspaceMarker);
   if (workspaceIndex >= 0) return `tmp/codex-workspaces/${text.slice(workspaceIndex + workspaceMarker.length)}`;
-  const repoMarker = "/tutor-tron-voice/";
-  const repoIndex = text.indexOf(repoMarker);
-  if (repoIndex >= 0) return text.slice(repoIndex + repoMarker.length);
+  const repoMarkers = ["/codexa/"];
+  for (const repoMarker of repoMarkers) {
+    const repoIndex = text.indexOf(repoMarker);
+    if (repoIndex >= 0) return text.slice(repoIndex + repoMarker.length);
+  }
   return text;
 }
 
@@ -894,9 +894,7 @@ function setCodexPilotState(text) {
 function telephonyStatusText(data) {
   if (!data.twilioConfigured) return "Twilio: not configured";
   const phone = data.twilioPhoneNumber || "configured number";
-  const voice = data.twilioVoiceWebhookPath || "/api/twilio/voice";
-  const sms = data.twilioSmsWebhookPath || "/api/twilio/sms";
-  return `Twilio: ${phone} | call ${voice} | SMS ${sms}`;
+  return `Twilio: ${phone}`;
 }
 
 async function updateProviderStatus() {
@@ -906,22 +904,17 @@ async function updateProviderStatus() {
     if (data.ttsProvider && dom.ttsProvider) dom.ttsProvider.value = data.ttsProvider;
     if (data.sttProvider && dom.sttProvider) dom.sttProvider.value = data.sttProvider;
     dom.providerState.textContent =
-      `LLM: ${data.provider} / ${data.ollamaModel}; ` +
-      `STT: ${data.sttProvider}; ` +
-      `Intent: ${data.speechIntentMode || "rewrite"}; ` +
-      `TTS: ${data.ttsProvider}${data.fishConfigured ? " / Fish ready" : " / Fish not configured"}; ` +
-      `Codex: ${data.codexPilotAvailable ? "ready" : "unavailable"}; ` +
-      `OpenClaw: ${data.openclawAvailable ? "ready" : "unavailable"}`;
+      `LLM ${data.provider || "codex"} · STT ${data.sttProvider} · Codex ${data.codexPilotAvailable ? "ready" : "off"}`;
     if (dom.telephonyState) dom.telephonyState.textContent = telephonyStatusText(data);
     setCodexPilotState(
       data.codexPilotAvailable
-        ? `Ready: ${selectedControlProviderLabel()}. Codex sandbox ${data.codexPilotSandbox || "workspace-write"}; OpenClaw ${data.openclawAvailable ? "available" : "unavailable"}.`
-        : "Unavailable: install local Codex CLI with npm install, or set CODEX_PILOT_COMMAND.",
+        ? `${selectedControlProviderLabel()} · ready`
+        : "Codex unavailable.",
     );
   } catch {
-    dom.providerState.textContent = "provider: server unavailable";
-    if (dom.telephonyState) dom.telephonyState.textContent = "Twilio: server unavailable";
-    setCodexPilotState("Unavailable: server status check failed.");
+    dom.providerState.textContent = "Server unavailable";
+    if (dom.telephonyState) dom.telephonyState.textContent = "Twilio unavailable";
+    setCodexPilotState("Server unavailable.");
   }
 }
 
@@ -1741,7 +1734,7 @@ async function sendUserTurn(text, meta = {}) {
   state.thinking = true;
   resetMetrics(text);
   setAgentState("Thinking", "thinking");
-  setTurn(useCodexPilot() ? `Handing this turn to ${selectedControlProviderLabel()}...` : "Streaming assistant response...");
+  setTurn(useCodexPilot() ? `${selectedControlProviderLabel()}...` : "Thinking...");
 
   state.messages.push({ role: "user", content: text });
   saveUserConversation();
@@ -1868,7 +1861,7 @@ async function readSse(response) {
             event.data.command ? "Codex app-server chat" : null,
             event.data.sandbox ? `mirror sandbox ${event.data.sandbox}` : null,
           ].filter(Boolean).join("; ");
-          setCodexPilotState(details ? `Registered project in Codex app chat: ${details}` : "Registered project in Codex app chat.");
+          setCodexPilotState(details ? `Mirrored to Codex app: ${details}` : "Mirrored to Codex app.");
         }
       }
     }
@@ -2115,11 +2108,11 @@ dom.startBtn.addEventListener("click", startVoiceSession);
 dom.stopBtn.addEventListener("click", stopVoiceSession);
 dom.interruptBtn?.addEventListener("click", () => interruptAssistant("manual interrupt"));
 dom.codexPilotToggle?.addEventListener("change", () => {
-  setTurn(useCodexPilot() ? `Codex pilot mode enabled through ${selectedControlProviderLabel()}.` : "Codex pilot mode disabled. Using assistant LLM path.");
+  setTurn(useCodexPilot() ? `${selectedControlProviderLabel()} on.` : "Pilot off.");
 });
 dom.codexControlProvider?.addEventListener("change", () => {
-  setCodexPilotState(`Selected: ${selectedControlProviderLabel()}.`);
-  if (useCodexPilot()) setTurn(`Next Codex pilot turn will use ${selectedControlProviderLabel()}.`);
+  setCodexPilotState(`${selectedControlProviderLabel()}.`);
+  if (useCodexPilot()) setTurn(`${selectedControlProviderLabel()} next.`);
 });
 dom.sttProvider.addEventListener("change", () => {
   if (!state.active) return;

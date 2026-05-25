@@ -6,9 +6,13 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const openClawCommand =
+  process.env.OPENCLAW_COMMAND?.trim() ||
+  (process.platform === "win32" ? "openclaw.cmd" : "/opt/homebrew/bin/openclaw");
 const codexCommand =
   process.env.CODEX_PILOT_COMMAND?.trim() ||
-  path.join(repoRoot, "node_modules", ".bin", process.platform === "win32" ? "codex.cmd" : "codex");
+  process.env.CODEX_CLI_PATH?.trim() ||
+  "/Applications/Codex.app/Contents/Resources/codex";
 
 function run(command, args, options = {}) {
   return new Promise((resolve) => {
@@ -61,21 +65,21 @@ function summarizePlugins(raw) {
 async function main() {
   const checks = [];
 
-  const version = await run("npx", ["openclaw", "--version"]);
+  const version = await run(openClawCommand, ["--version"]);
   checks.push({
     name: "OpenClaw CLI",
     ok: version.exitCode === 0,
     detail: (version.stdout || version.stderr).trim().split("\n")[0] || "not available",
   });
 
-  const plugins = await run("npx", ["openclaw", "plugins", "list", "--json"]);
+  const plugins = await run(openClawCommand, ["plugins", "list", "--json"]);
   const pluginSummary = summarizePlugins(plugins.stdout);
   checks.push({
     name: "OpenClaw Codex plugin",
     ok: plugins.exitCode === 0 && Boolean(pluginSummary.codex?.enabled) && pluginSummary.codex?.status === "loaded",
     detail: pluginSummary.codex
       ? `${pluginSummary.codex.name} loaded as provider ${pluginSummary.codex.providerIds.join(",") || "none"}`
-      : "Codex plugin missing; run: npx openclaw plugins install @openclaw/codex",
+      : "Codex plugin missing; run OpenClaw onboarding again: openclaw onboard --install-daemon",
   });
 
   const codexVersion = fs.existsSync(codexCommand) ? await run(codexCommand, ["--version"]) : { exitCode: 1, stdout: "", stderr: "missing" };
@@ -88,8 +92,7 @@ async function main() {
         : `Codex CLI missing or unavailable at ${codexCommand}`,
   });
 
-  const doctor = await run("npx", [
-    "openclaw",
+  const doctor = await run(openClawCommand, [
     "doctor",
     "--lint",
     "--non-interactive",
@@ -105,14 +108,14 @@ async function main() {
       : (doctor.stderr || doctor.stdout).trim().split("\n").slice(-1)[0],
   });
 
-  const gateway = await run("npx", ["openclaw", "gateway", "status"]);
+  const gateway = await run(openClawCommand, ["gateway", "status"]);
   checks.push({
     name: "OpenClaw gateway",
     ok: gateway.exitCode === 0 && /running|reachable|healthy/i.test(`${gateway.stdout}\n${gateway.stderr}`),
     detail:
       gateway.exitCode === 0
         ? (gateway.stdout.trim().split("\n").find((line) => /running|reachable|healthy|port/i.test(line)) || "status command completed")
-        : "gateway is not running yet; start with: npx openclaw gateway --dev --bind loopback run",
+        : "gateway is not running yet; start with: openclaw onboard --install-daemon",
   });
 
   for (const check of checks) {
@@ -124,9 +127,11 @@ async function main() {
     ok: requiredOk,
     gatewayRunning: checks.find((check) => check.name === "OpenClaw gateway")?.ok || false,
     checks,
-    nextStep: requiredOk
-      ? "Start the OpenClaw gateway when you want the coding assistant to hand off full-system actions."
-      : "Fix failed OpenClaw readiness checks before routing voice actions through OpenClaw.",
+    nextStep: !requiredOk
+      ? "Fix failed OpenClaw readiness checks before routing voice actions through OpenClaw."
+      : checks.find((check) => check.name === "OpenClaw gateway")?.ok
+        ? "OpenClaw is ready for Codexa system-control turns."
+        : "Start the OpenClaw Gateway with: openclaw onboard --install-daemon",
   };
   console.log(JSON.stringify(summary, null, 2));
   if (!requiredOk) process.exit(1);
