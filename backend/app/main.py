@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from pathlib import Path
 from urllib.parse import parse_qsl
@@ -18,6 +19,7 @@ from .eval_scheduler import EvalScheduler
 from .evaluator import EvalRunner
 from .feedback import FeedbackLearner, PromptRepository
 from .llm import make_llm_client
+from .local_voice_runtime import require_openai_compatible_llm, run_browser_pipecat_voice_agent
 from .pipecat_runtime import run_pipecat_twilio_bot
 from .training_data import export_sft_jsonl
 from .twilio_routes import inbound_twiml
@@ -84,6 +86,8 @@ eval_scheduler = EvalScheduler(
     settings.eval_schedule_seconds,
     settings.eval_schedule_apply_feedback,
 )
+small_webrtc_handler = None
+browser_voice_tasks: set[asyncio.Task] = set()
 
 app = FastAPI(title="Voice Agent Feedback Engine", version="0.1.0")
 app.add_middleware(
@@ -104,6 +108,10 @@ async def start_background_services() -> None:
 @app.on_event("shutdown")
 async def stop_background_services() -> None:
     await eval_scheduler.stop()
+    if small_webrtc_handler is not None:
+        await small_webrtc_handler.close()
+    for task in tuple(browser_voice_tasks):
+        task.cancel()
 
 
 @app.exception_handler(CostLimitExceeded)
@@ -147,6 +155,95 @@ async def config() -> dict[str, Any]:
         "pipecat_cloud_ready": bool(settings.pipecat_cloud_ws_url and settings.pipecat_cloud_service_host),
         "cost_guard": cost_guard.snapshot().to_dict(),
     }
+
+
+def get_small_webrtc_handler():
+    global small_webrtc_handler
+    if small_webrtc_handler is None:
+        try:
+            from pipecat.transports.smallwebrtc.request_handler import SmallWebRTCRequestHandler
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Pipecat WebRTC dependencies are not installed. "
+                    'Run: .venv/bin/python -m pip install -e "backend[voice]".'
+                ),
+            ) from exc
+        small_webrtc_handler = SmallWebRTCRequestHandler()
+    return small_webrtc_handler
+
+
+@app.post("/api/offer")
+async def browser_webrtc_offer(
+    payload: dict[str, Any],
+) -> dict[str, str] | None:
+    try:
+        require_openai_compatible_llm(settings)
+        from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
+        from pipecat.transports.smallwebrtc.request_handler import SmallWebRTCRequest
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Pipecat WebRTC dependencies are not installed. "
+                'Run: .venv/bin/python -m pip install -e "backend[voice]".'
+            ),
+        ) from exc
+
+    request = SmallWebRTCRequest.from_dict(payload)
+    session_id = str(uuid.uuid4())
+
+    async def webrtc_connection_callback(connection: SmallWebRTCConnection):
+        task = asyncio.create_task(
+            run_browser_pipecat_voice_agent(
+                connection,
+                settings,
+                db,
+                prompt_repo,
+                session_id,
+            )
+        )
+        browser_voice_tasks.add(task)
+        task.add_done_callback(browser_voice_tasks.discard)
+
+    return await get_small_webrtc_handler().handle_web_request(
+        request=request,
+        webrtc_connection_callback=webrtc_connection_callback,
+    )
+
+
+@app.patch("/api/offer")
+async def browser_webrtc_ice_candidate(payload: dict[str, Any]) -> dict[str, str]:
+    try:
+        from pipecat.transports.smallwebrtc.request_handler import (
+            IceCandidate,
+            SmallWebRTCPatchRequest,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Pipecat WebRTC dependencies are not installed. "
+                'Run: .venv/bin/python -m pip install -e "backend[voice]".'
+            ),
+        ) from exc
+
+    request = SmallWebRTCPatchRequest(
+        pc_id=payload["pc_id"],
+        candidates=[
+            IceCandidate(
+                candidate=candidate["candidate"],
+                sdp_mid=candidate["sdp_mid"],
+                sdp_mline_index=candidate["sdp_mline_index"],
+            )
+            for candidate in payload.get("candidates", [])
+        ],
+    )
+    await get_small_webrtc_handler().handle_patch_request(request)
+    return {"status": "success"}
 
 
 @app.get("/api/cost")

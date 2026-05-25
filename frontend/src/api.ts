@@ -53,10 +53,14 @@ export type EvalSchedulerState = {
   next_run_at: string | null;
 };
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+export const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+
+export function apiUrl(path: string) {
+  return API_BASE ? `${API_BASE}${path}` : path;
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(apiUrl(path), {
     ...init,
     headers: {
       "Content-Type": "application/json",

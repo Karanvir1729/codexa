@@ -11,6 +11,11 @@
     "forceConsistentCasingInFileNames": true,
     "module": "ESNext",
     "moduleResolution": "Node",
+    "baseUrl": ".",
+    "paths": {
+      "@pipecat-ai/client-js": ["src/types/pipecat-client-js.d.ts"],
+      "@pipecat-ai/small-webrtc-transport": ["src/types/pipecat-small-webrtc.d.ts"]
+    },
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
@@ -19,4 +24,3 @@
   "include": ["src"],
   "references": []
 }
-

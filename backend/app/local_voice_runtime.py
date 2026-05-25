@@ -15,16 +15,19 @@ class LocalVoiceConversationRecorder:
     db: Database
     settings: Settings
     prompt_version: int
+    channel: str = "local_pipecat"
+    transport_name: str = "pipecat.local_audio"
     conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     def start(self) -> None:
         self.db.execute(
             """
             INSERT OR IGNORE INTO conversations(id, channel, metadata_json)
-            VALUES (?, 'local_pipecat', ?)
+            VALUES (?, ?, ?)
             """,
             (
                 self.conversation_id,
+                self.channel,
                 dumps(
                     {
                         "llm_provider": self.settings.llm_provider,
@@ -34,7 +37,7 @@ class LocalVoiceConversationRecorder:
                         "tts_provider": self.settings.local_tts_provider,
                         "tts_voice": self.settings.local_tts_voice,
                         "fish_speech_reference_id": self.settings.fish_speech_reference_id,
-                        "transport": "pipecat.local_audio",
+                        "transport": self.transport_name,
                     }
                 ),
             ),
@@ -136,21 +139,15 @@ async def create_local_tts_service(settings: Settings):
     )
 
 
-async def run_local_pipecat_voice_agent(
-    settings: Settings | None = None,
-    db: Database | None = None,
-    prompt_repo: PromptRepository | None = None,
+async def _run_voice_pipeline(
+    *,
+    settings: Settings,
+    db: Database,
+    prompt_repo: PromptRepository,
+    recorder: LocalVoiceConversationRecorder,
+    transport,
+    handle_sigint: bool,
 ) -> None:
-    """Run local microphone/speaker Pipecat voice with open-source STT/TTS."""
-
-    settings = settings or get_settings()
-    require_openai_compatible_llm(settings)
-    db = db or Database(settings.database_path)
-    prompt_repo = prompt_repo or PromptRepository(db)
-    prompt = prompt_repo.active()
-    recorder = LocalVoiceConversationRecorder(db, settings, prompt.version)
-    recorder.start()
-
     from loguru import logger
     from openai import NOT_GIVEN
     from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -176,7 +173,6 @@ async def run_local_pipecat_voice_agent(
     from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
     from pipecat.services.openai.llm import OpenAILLMService
     from pipecat.services.whisper.stt import WhisperSTTServiceMLX
-    from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
     from pipecat.turns.user_stop import SpeechTimeoutUserTurnStopStrategy
     from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
@@ -226,17 +222,6 @@ async def run_local_pipecat_voice_agent(
             await self.push_frame(frame, direction)
 
     stt_language = resolve_stt_language(settings)
-    transport = LocalAudioTransport(
-        LocalAudioTransportParams(
-            audio_in_enabled=True,
-            audio_out_enabled=True,
-            audio_in_sample_rate=settings.local_audio_input_sample_rate,
-            audio_out_sample_rate=settings.local_audio_output_sample_rate,
-            audio_in_passthrough=True,
-            input_device_index=settings.local_audio_input_device_index,
-            output_device_index=settings.local_audio_output_device_index,
-        )
-    )
     stt = WhisperSTTServiceMLX(
         settings=WhisperSTTServiceMLX.Settings(
             model=settings.local_stt_model,
@@ -312,6 +297,12 @@ async def run_local_pipecat_voice_agent(
         conversation_id=recorder.conversation_id,
     )
 
+    if hasattr(transport, "event_handler"):
+        @transport.event_handler("on_client_disconnected")
+        async def on_client_disconnected(_transport, _client):
+            logger.info("Pipecat client disconnected; cancelling voice pipeline")
+            await task.cancel(reason="client disconnected")
+
     logger.info("Local Pipecat voice agent is live.")
     logger.info(f"Conversation ID: {recorder.conversation_id}")
     logger.info(
@@ -319,7 +310,92 @@ async def run_local_pipecat_voice_agent(
         f"TTS={tts_provider} LLM={settings.active_model}"
     )
     logger.info("Speak into the Mac microphone. Start talking over the assistant to test interruption.")
-    await PipelineRunner(handle_sigint=True).run(task)
+    await PipelineRunner(handle_sigint=handle_sigint).run(task)
+
+
+async def run_local_pipecat_voice_agent(
+    settings: Settings | None = None,
+    db: Database | None = None,
+    prompt_repo: PromptRepository | None = None,
+) -> None:
+    """Run local microphone/speaker Pipecat voice with open-source STT/TTS."""
+
+    settings = settings or get_settings()
+    require_openai_compatible_llm(settings)
+    db = db or Database(settings.database_path)
+    prompt_repo = prompt_repo or PromptRepository(db)
+    prompt = prompt_repo.active()
+    recorder = LocalVoiceConversationRecorder(db, settings, prompt.version)
+    recorder.start()
+
+    from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
+
+    transport = LocalAudioTransport(
+        LocalAudioTransportParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            audio_in_sample_rate=settings.local_audio_input_sample_rate,
+            audio_out_sample_rate=settings.local_audio_output_sample_rate,
+            audio_in_passthrough=True,
+            input_device_index=settings.local_audio_input_device_index,
+            output_device_index=settings.local_audio_output_device_index,
+        )
+    )
+    await _run_voice_pipeline(
+        settings=settings,
+        db=db,
+        prompt_repo=prompt_repo,
+        recorder=recorder,
+        transport=transport,
+        handle_sigint=True,
+    )
+
+
+async def run_browser_pipecat_voice_agent(
+    webrtc_connection,
+    settings: Settings | None = None,
+    db: Database | None = None,
+    prompt_repo: PromptRepository | None = None,
+    session_id: str | None = None,
+) -> None:
+    """Run a browser SmallWebRTC Pipecat voice session."""
+
+    settings = settings or get_settings()
+    require_openai_compatible_llm(settings)
+    db = db or Database(settings.database_path)
+    prompt_repo = prompt_repo or PromptRepository(db)
+    prompt = prompt_repo.active()
+    recorder = LocalVoiceConversationRecorder(
+        db,
+        settings,
+        prompt.version,
+        channel="browser_pipecat",
+        transport_name="pipecat.smallwebrtc",
+        conversation_id=session_id or str(uuid.uuid4()),
+    )
+    recorder.start()
+
+    from pipecat.transports.base_transport import TransportParams
+    from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
+
+    transport = SmallWebRTCTransport(
+        webrtc_connection=webrtc_connection,
+        params=TransportParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            audio_in_sample_rate=settings.local_audio_input_sample_rate,
+            audio_out_sample_rate=settings.local_audio_output_sample_rate,
+            audio_in_passthrough=True,
+        ),
+    )
+    await _run_voice_pipeline(
+        settings=settings,
+        db=db,
+        prompt_repo=prompt_repo,
+        recorder=recorder,
+        transport=transport,
+        handle_sigint=False,
+    )
 
 
 async def main() -> None:

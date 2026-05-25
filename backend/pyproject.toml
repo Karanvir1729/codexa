@@ -16,7 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 voice = [
-  "pipecat-ai[websocket,openai,deepgram,cartesia,local,mlx-whisper,kokoro]>=1.2.1",
+  "pipecat-ai[websocket,webrtc,openai,deepgram,cartesia,local,mlx-whisper,kokoro]>=1.2.1",
   "ormsgpack>=1.7.0",
 ]
 dev = [

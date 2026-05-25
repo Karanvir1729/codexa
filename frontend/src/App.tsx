@@ -19,11 +19,12 @@ import {
 } from "lucide-react";
 import {
   Badge,
-  CircularWaveform,
-  ControlBar,
-  UserAudioComponent
+  CircularWaveform
 } from "@pipecat-ai/voice-ui-kit";
+import { PipecatClient, type TransportState } from "@pipecat-ai/client-js";
+import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
 import {
+  apiUrl,
   ChatResponse,
   CostGuard,
   EvalSchedulerState,
@@ -40,6 +41,26 @@ import {
   startEvalScheduler,
   stopEvalScheduler
 } from "./api";
+
+type PipecatErrorMessage = {
+  data?: {
+    message?: string;
+  };
+};
+
+type PipecatDeviceError = {
+  message?: string;
+};
+
+type TranscriptData = {
+  final?: boolean;
+  text?: string;
+};
+
+type BotOutputData = {
+  spoken?: boolean;
+  text?: string;
+};
 
 type Turn = {
   id: string;
@@ -64,6 +85,23 @@ const prompts = [
   "Can I talk to a human agent?"
 ];
 
+async function ensureMicrophonePermission() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error("This browser does not expose microphone capture.");
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    stream.getTracks().forEach((track) => track.stop());
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "NotAllowedError") {
+      throw new Error(
+        `Microphone permission is blocked. Allow microphone access for ${window.location.origin} and try Unmute again.`
+      );
+    }
+    throw error;
+  }
+}
+
 export function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [prompt, setPrompt] = useState<PromptState | null>(null);
@@ -76,13 +114,16 @@ export function App() {
   const [scheduler, setScheduler] = useState<EvalSchedulerState | null>(null);
   const [cost, setCost] = useState<CostGuard | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [kitStream, setKitStream] = useState<MediaStream | null>(null);
-  const [availableMics, setAvailableMics] = useState<MediaDeviceInfo[]>([]);
-  const [availableSpeakers, setAvailableSpeakers] = useState<MediaDeviceInfo[]>([]);
-  const [selectedMicId, setSelectedMicId] = useState<string | undefined>();
-  const [selectedSpeakerId, setSelectedSpeakerId] = useState<string | undefined>();
-  const [kitNotice, setKitNotice] = useState<string | null>(null);
-  const kitStreamRef = useRef<MediaStream | null>(null);
+  const [voiceClient, setVoiceClient] = useState<PipecatClient | null>(null);
+  const [voiceState, setVoiceState] = useState<TransportState>("disconnected");
+  const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
+  const [localAudioTrack, setLocalAudioTrack] = useState<MediaStreamTrack | null>(null);
+  const [botAudioTrack, setBotAudioTrack] = useState<MediaStreamTrack | null>(null);
+  const [micEnabled, setMicEnabled] = useState(false);
+  const [botSpeaking, setBotSpeaking] = useState(false);
+  const [userSpeaking, setUserSpeaking] = useState(false);
+  const botAudioRef = useRef<HTMLAudioElement | null>(null);
+  const voiceStateRef = useRef<TransportState>("disconnected");
 
   async function refresh() {
     const [healthState, promptState, runs, costState, schedulerState] = await Promise.all([
@@ -104,76 +145,122 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    kitStreamRef.current = kitStream;
-  }, [kitStream]);
-
-  useEffect(() => {
-    refreshKitDevices().catch((error) => setKitNotice(error.message));
-    navigator.mediaDevices?.addEventListener?.("devicechange", refreshKitDevices);
+    const client = new PipecatClient({
+      transport: new SmallWebRTCTransport({ waitForICEGathering: true }),
+      enableMic: true,
+      enableCam: false,
+      callbacks: {
+        onConnected: () => setVoiceNotice(null),
+        onDisconnected: () => {
+          setMicEnabled(false);
+          setBotSpeaking(false);
+          setUserSpeaking(false);
+          setLocalAudioTrack(null);
+          setBotAudioTrack(null);
+        },
+        onTransportStateChanged: (state: TransportState) => {
+          voiceStateRef.current = state;
+          setVoiceState(state);
+        },
+        onError: (message: PipecatErrorMessage) => setVoiceNotice(message.data?.message ?? "Pipecat client error"),
+        onDeviceError: (error: PipecatDeviceError) => {
+          setVoiceNotice(error.message ?? "Device access failed");
+        },
+        onTrackStarted: (track: MediaStreamTrack, participant?: unknown) => {
+          if (track.kind !== "audio") return;
+          if (participant) {
+            setLocalAudioTrack(track);
+            setMicEnabled(true);
+            setVoiceNotice(null);
+          } else {
+            setBotAudioTrack(track);
+          }
+        },
+        onTrackStopped: (track: MediaStreamTrack, participant?: unknown) => {
+          if (track.kind !== "audio") return;
+          if (participant) {
+            setLocalAudioTrack(null);
+            setMicEnabled(false);
+          } else {
+            setBotAudioTrack(null);
+          }
+        },
+        onUserStartedSpeaking: () => setUserSpeaking(true),
+        onUserStoppedSpeaking: () => setUserSpeaking(false),
+        onBotStartedSpeaking: () => setBotSpeaking(true),
+        onBotStoppedSpeaking: () => setBotSpeaking(false),
+        onUserTranscript: (data: TranscriptData) => {
+          const text = data.text?.trim();
+          if (!data.final || !text) return;
+          setTurns((current) => [
+            ...current,
+            { id: crypto.randomUUID(), role: "user", content: text }
+          ]);
+        },
+        onBotOutput: (data: BotOutputData) => {
+          const text = data.text?.trim();
+          if (!text || !data.spoken) return;
+          setTurns((current) => [
+            ...current,
+            { id: crypto.randomUUID(), role: "assistant", content: text }
+          ]);
+        }
+      }
+    });
+    setVoiceClient(client);
     return () => {
-      navigator.mediaDevices?.removeEventListener?.("devicechange", refreshKitDevices);
-      stopMediaStream(kitStreamRef.current);
+      client.disconnect().catch(() => undefined);
     };
   }, []);
 
   const lastAssistant = useMemo(() => [...turns].reverse().find((turn) => turn.role === "assistant"), [turns]);
   const latency = lastAssistant?.latency_ms ?? 0;
-  const kitAudioTrack = kitStream?.getAudioTracks()[0] ?? null;
-  const selectedMic = availableMics.find((device) => device.deviceId === selectedMicId);
-  const selectedSpeaker = availableSpeakers.find((device) => device.deviceId === selectedSpeakerId);
+  const voiceConnected = voiceState === "connected" || voiceState === "ready";
+  const voiceBusy = voiceState === "connecting" || voiceState === "initializing";
+  const voiceStatus = botSpeaking ? "assistant speaking" : userSpeaking ? "listening" : voiceState;
 
-  function stopMediaStream(stream: MediaStream | null) {
-    stream?.getTracks().forEach((track) => track.stop());
-  }
+  useEffect(() => {
+    const audio = botAudioRef.current;
+    if (!audio || !botAudioTrack) return;
+    audio.srcObject = new MediaStream([botAudioTrack]);
+    audio.play().catch((error) => setVoiceNotice(error.message));
+  }, [botAudioTrack]);
 
-  async function refreshKitDevices() {
-    if (!navigator.mediaDevices?.enumerateDevices) {
-      setKitNotice("Media devices unavailable in this browser.");
-      return;
-    }
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const mics = devices.filter((device) => device.kind === "audioinput");
-    const speakers = devices.filter((device) => device.kind === "audiooutput");
-    setAvailableMics(mics);
-    setAvailableSpeakers(speakers);
-    setSelectedMicId((current) => current ?? mics[0]?.deviceId);
-    setSelectedSpeakerId((current) => current ?? speakers[0]?.deviceId);
-  }
-
-  async function startKitMic(deviceId?: string) {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setKitNotice("Microphone access unavailable in this browser.");
-      return;
-    }
-    setKitNotice(null);
-    const audio: MediaTrackConstraints | boolean = deviceId ? { deviceId: { exact: deviceId } } : true;
-    const stream = await navigator.mediaDevices.getUserMedia({ audio });
-    stopMediaStream(kitStreamRef.current);
-    setKitStream(stream);
-    setSelectedMicId(stream.getAudioTracks()[0]?.getSettings().deviceId ?? deviceId);
-    await refreshKitDevices();
-  }
-
-  async function toggleKitMic() {
-    if (kitStream) {
-      stopMediaStream(kitStream);
-      setKitStream(null);
-      return;
-    }
+  async function toggleVoiceConnection() {
+    if (!voiceClient) return;
+    setVoiceNotice(null);
     try {
-      await startKitMic(selectedMicId);
+      if (voiceConnected) {
+        await voiceClient.disconnect();
+        return;
+      }
+      await voiceClient.connect({
+        webrtcRequestParams: {
+          endpoint: apiUrl("/api/offer"),
+          requestData: { source: "browser_console" }
+        }
+      });
+      setMicEnabled(voiceClient.isMicEnabled);
+      setVoiceNotice(null);
     } catch (error) {
-      setKitNotice(error instanceof Error ? error.message : "Microphone access failed.");
+      setVoiceNotice(error instanceof Error ? error.message : "Pipecat connection failed.");
     }
   }
 
-  async function updateKitMic(deviceId: string) {
-    setSelectedMicId(deviceId);
-    if (!kitStream) return;
+  async function toggleVoiceMic() {
+    if (!voiceClient || !voiceConnected) return;
     try {
-      await startKitMic(deviceId);
+      const next = !micEnabled;
+      if (next) {
+        await ensureMicrophonePermission();
+      }
+      voiceClient.enableMic(next);
+      if (!next) {
+        setMicEnabled(false);
+        setVoiceNotice(null);
+      }
     } catch (error) {
-      setKitNotice(error instanceof Error ? error.message : "Microphone switch failed.");
+      setVoiceNotice(error instanceof Error ? error.message : "Microphone toggle failed.");
     }
   }
 
@@ -352,52 +439,44 @@ export function App() {
             <section className="panel pipecatKitPanel">
               <div className="sectionHead">
                 <div>
-                  <h2>Pipecat Kit</h2>
-                  <p>{kitStream ? "local media active" : "device standby"}</p>
+                  <h2>Browser Voice</h2>
+                  <p>{voiceStatus}</p>
                 </div>
-                <Badge color={kitStream ? "active" : "inactive"} variant="outline" rounded="sm">
-                  {kitStream ? "mic open" : "mic off"}
+                <Badge color={voiceConnected ? "active" : "inactive"} variant="outline" rounded="sm">
+                  {voiceConnected ? "connected" : "offline"}
                 </Badge>
               </div>
 
               <div className="kitStage">
+                <audio ref={botAudioRef} autoPlay />
                 <CircularWaveform
-                  audioTrack={kitAudioTrack}
+                  audioTrack={localAudioTrack}
                   backgroundColor="#0a0e12"
                   barWidth={4}
                   color1="#d8fb6f"
                   color2="#67e8f9"
-                  isThinking={!kitStream}
+                  isThinking={voiceBusy || botSpeaking}
                   numBars={42}
-                  rotationEnabled={Boolean(kitStream)}
+                  rotationEnabled={voiceConnected}
                   sensitivity={1.2}
                   size={148}
                 />
                 <div className="kitBadges">
                   <Badge color="client" variant="outline" rounded="sm">Whisper auto</Badge>
                   <Badge color="agent" variant="outline" rounded="sm">Fish TTS route</Badge>
-                  <Badge color="secondary" variant="outline" rounded="sm">Pipecat local</Badge>
+                  <Badge color="secondary" variant="outline" rounded="sm">SmallWebRTC</Badge>
                 </div>
               </div>
 
-              <ControlBar className="kitControlBar" noAnimateIn>
-                <UserAudioComponent
-                  activeText="Mic on"
-                  availableMics={availableMics}
-                  availableSpeakers={availableSpeakers}
-                  inactiveText="Mic off"
-                  isMicEnabled={Boolean(kitStream)}
-                  noVisualizer
-                  onClick={toggleKitMic}
-                  selectedMic={selectedMic}
-                  selectedSpeaker={selectedSpeaker}
-                  size="lg"
-                  updateMic={updateKitMic}
-                  updateSpeaker={setSelectedSpeakerId}
-                  variant="outline"
-                />
-              </ControlBar>
-              {kitNotice && <p className="errorText">{kitNotice}</p>}
+              <div className="kitControlBar">
+                <button onClick={toggleVoiceConnection} disabled={!voiceClient || voiceBusy}>
+                  {voiceConnected ? "Disconnect" : voiceBusy ? "Connecting" : "Connect"}
+                </button>
+                <button onClick={toggleVoiceMic} disabled={!voiceConnected}>
+                  {micEnabled ? "Mute" : "Unmute"}
+                </button>
+              </div>
+              {voiceNotice && <p className="errorText">{voiceNotice}</p>}
             </section>
 
             <section className="panel">

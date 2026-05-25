@@ -261,6 +261,9 @@ def check_pipecat(file_env: dict[str, str]) -> Check:
     if voice_runtime == "local_pipecat":
         required_modules = {
             "pipecat": "pipecat-ai",
+            "aiortc": "pipecat-ai[webrtc]",
+            "av": "pipecat-ai[webrtc]",
+            "cv2": "opencv-python from pipecat-ai[webrtc]",
             "pyaudio": "pipecat-ai[local] plus Homebrew portaudio on macOS",
             "mlx_whisper": "pipecat-ai[mlx-whisper]",
             "kokoro_onnx": "pipecat-ai[kokoro]",
