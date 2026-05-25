@@ -24,6 +24,7 @@
     "node": ">=22.12"
   },
   "devDependencies": {
+    "@openai/codex": "^0.133.0",
     "@playwright/test": "^1.60.0",
     "electron": "^42.2.0"
   }

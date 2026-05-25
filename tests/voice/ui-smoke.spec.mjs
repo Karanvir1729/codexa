@@ -4,6 +4,7 @@ test("main voice UI exposes installable speech-layer controls", async ({ page })
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "Interruptible desktop voice tutor" })).toBeVisible();
+  await expect(page.locator("#codexPilotToggle")).toBeVisible();
   await expect(page.locator("#flowCleanupLevel")).toBeVisible();
   await expect(page.locator("#flowWritingStyle")).toBeVisible();
   await expect(page.locator("#flowDictionary")).toContainText("derivitives");

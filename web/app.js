@@ -16,6 +16,7 @@ const dom = {
   autoSpeakToggle: document.querySelector("#autoSpeakToggle"),
   bargeInToggle: document.querySelector("#bargeInToggle"),
   speechIntentToggle: document.querySelector("#speechIntentToggle"),
+  codexPilotToggle: document.querySelector("#codexPilotToggle"),
   flowCleanupLevel: document.querySelector("#flowCleanupLevel"),
   flowWritingStyle: document.querySelector("#flowWritingStyle"),
   flowLanguage: document.querySelector("#flowLanguage"),
@@ -23,6 +24,7 @@ const dom = {
   flowSnippets: document.querySelector("#flowSnippets"),
   flowState: document.querySelector("#flowState"),
   flowHistory: document.querySelector("#flowHistory"),
+  codexPilotState: document.querySelector("#codexPilotState"),
   rateSlider: document.querySelector("#rateSlider"),
   sttProvider: document.querySelector("#sttProvider"),
   ttsProvider: document.querySelector("#ttsProvider"),
@@ -553,6 +555,14 @@ function useSpeechIntentRewrite() {
   return dom.speechIntentToggle?.checked !== false;
 }
 
+function useCodexPilot() {
+  return Boolean(dom.codexPilotToggle?.checked);
+}
+
+function setCodexPilotState(text) {
+  if (dom.codexPilotState) dom.codexPilotState.textContent = text;
+}
+
 async function updateProviderStatus() {
   try {
     const res = await fetch("/api/status");
@@ -563,9 +573,16 @@ async function updateProviderStatus() {
       `LLM: ${data.provider} / ${data.ollamaModel}; ` +
       `STT: ${data.sttProvider}; ` +
       `Intent: ${data.speechIntentMode || "rewrite"}; ` +
-      `TTS: ${data.ttsProvider}${data.fishConfigured ? " / Fish ready" : " / Fish not configured"}`;
+      `TTS: ${data.ttsProvider}${data.fishConfigured ? " / Fish ready" : " / Fish not configured"}; ` +
+      `Codex: ${data.codexPilotAvailable ? "ready" : "unavailable"}`;
+    setCodexPilotState(
+      data.codexPilotAvailable
+        ? `Ready: Codex exec in ${data.codexPilotSandbox || "workspace-write"} mode. Voice commands can inspect, edit, test, and operate this repo.`
+        : "Unavailable: install local Codex CLI with npm install, or set CODEX_PILOT_COMMAND.",
+    );
   } catch {
     dom.providerState.textContent = "provider: server unavailable";
+    setCodexPilotState("Unavailable: server status check failed.");
   }
 }
 
@@ -1371,7 +1388,7 @@ async function sendUserTurn(text, meta = {}) {
   state.thinking = true;
   resetMetrics(text);
   setAgentState("Thinking", "thinking");
-  setTurn("Streaming tutor response...");
+  setTurn(useCodexPilot() ? "Handing this turn to Codex pilot..." : "Streaming tutor response...");
 
   state.messages.push({ role: "user", content: text });
   saveStudentConversation();
@@ -1383,7 +1400,8 @@ async function sendUserTurn(text, meta = {}) {
   state.abortController = new AbortController();
 
   try {
-    const response = await fetch("/api/chat", {
+    const endpoint = useCodexPilot() ? "/api/codex/exec" : "/api/chat";
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1399,6 +1417,7 @@ async function sendUserTurn(text, meta = {}) {
           raw_speech_text: meta.rawText || null,
           speech_intent: meta.speechIntent || null,
           speech_flow: getSpeechFlowConfig(),
+          route: useCodexPilot() ? "codex_pilot" : "tutor_llm",
         },
       }),
       signal: state.abortController.signal,
@@ -1452,8 +1471,19 @@ async function readSse(response) {
       if (event.type === "warning" || event.type === "error") {
         setTurn(event.data.message);
       }
+      if (event.type === "codex_event") {
+        setTurn(`Codex ${event.data.status || "event"}: ${event.data.label || "tool"}`);
+      }
       if (event.type === "meta") {
         dom.providerState.textContent = `provider: ${event.data.provider} / ${event.data.model}`;
+        if (event.data.provider === "codex") {
+          const details = [
+            event.data.threadId ? `thread ${event.data.threadId}` : null,
+            event.data.sandbox ? `sandbox ${event.data.sandbox}` : null,
+            event.data.durationMs ? `${event.data.durationMs} ms` : null,
+          ].filter(Boolean).join("; ");
+          setCodexPilotState(details ? `Codex pilot active: ${details}` : "Codex pilot active.");
+        }
       }
     }
   }
@@ -1674,6 +1704,9 @@ async function speakRemote(text, provider) {
 dom.startBtn.addEventListener("click", startVoiceSession);
 dom.stopBtn.addEventListener("click", stopVoiceSession);
 dom.interruptBtn.addEventListener("click", () => interruptTutor("manual interrupt"));
+dom.codexPilotToggle?.addEventListener("change", () => {
+  setTurn(useCodexPilot() ? "Codex pilot mode enabled. Your next turn can operate this repo." : "Codex pilot mode disabled. Using tutor LLM path.");
+});
 dom.sttProvider.addEventListener("change", () => {
   if (!state.active) return;
   if (useServerStt()) stopBrowserRecognition();

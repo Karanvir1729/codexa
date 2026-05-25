@@ -207,6 +207,10 @@ function createWindow() {
   });
 
   const session = mainWindow.webContents.session;
+  session.clearCache().catch(() => {});
+  session
+    .clearStorageData({ storages: ["serviceworkers", "cachestorage"] })
+    .catch(() => {});
   session.setPermissionRequestHandler((_webContents, permission, callback) => {
     callback(permission === "media");
   });

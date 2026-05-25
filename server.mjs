@@ -37,6 +37,24 @@ const SPEECH_FLOW_TIMEOUT_MS = Number(process.env.SPEECH_FLOW_TIMEOUT_MS ?? 2500
 const SPEECH_INTENT_MODE = process.env.SPEECH_INTENT_MODE ?? "rewrite";
 const SPEECH_INTENT_TIMEOUT_MS = Number(process.env.SPEECH_INTENT_TIMEOUT_MS ?? 60000);
 const SPEECH_INTENT_NUM_PREDICT = Number(process.env.SPEECH_INTENT_NUM_PREDICT ?? 220);
+const CODEX_PILOT_ENABLED = process.env.CODEX_PILOT_ENABLED !== "0";
+const CODEX_PILOT_COMMAND =
+  process.env.CODEX_PILOT_COMMAND ??
+  path.join(__dirname, "node_modules", ".bin", process.platform === "win32" ? "codex.cmd" : "codex");
+const CODEX_PILOT_MODEL = process.env.CODEX_PILOT_MODEL ?? "";
+const CODEX_PILOT_SANDBOX = process.env.CODEX_PILOT_SANDBOX ?? "workspace-write";
+const CODEX_PILOT_APPROVAL = process.env.CODEX_PILOT_APPROVAL ?? "never";
+const CODEX_PILOT_TIMEOUT_MS = Number(process.env.CODEX_PILOT_TIMEOUT_MS ?? 300000);
+const CODEX_PILOT_MAX_CONTEXT_MESSAGES = Number(process.env.CODEX_PILOT_MAX_CONTEXT_MESSAGES ?? 8);
+const CODEX_PILOT_SYSTEM_PROMPT =
+  process.env.CODEX_PILOT_SYSTEM_PROMPT ??
+  `You are the Codex pilot underneath Tutor-Tron Voice.
+The user is speaking to a desktop voice agent, but you have the repo-level capabilities of Codex.
+Interpret the latest user turn as an instruction for the current workspace when it asks for building, debugging, editing, testing, running commands, explaining code, or operating the project.
+When work is requested, actually do the work end-to-end: inspect files, edit code, run focused checks, and report the result.
+Keep the final answer voice-friendly: concise, direct, and focused on what changed, what passed, and what remains.
+Do not narrate long command logs unless the user explicitly asks.
+If the user asks a tutoring/general question unrelated to the repo, answer normally and concisely.`;
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -700,6 +718,188 @@ async function handleChat(req, res) {
   }
 }
 
+function codexPilotAvailable() {
+  return CODEX_PILOT_ENABLED && fs.existsSync(CODEX_PILOT_COMMAND);
+}
+
+function buildCodexPilotPrompt({ messages, systemPrompt, client }) {
+  const safeMessages = Array.isArray(messages) ? messages : [];
+  const recent = safeMessages
+    .filter((message) => message && typeof message.content === "string" && ["user", "assistant", "system"].includes(message.role))
+    .slice(-CODEX_PILOT_MAX_CONTEXT_MESSAGES)
+    .map((message) => `${message.role.toUpperCase()}: ${message.content.trim()}`)
+    .join("\n\n");
+  const latestUser = [...safeMessages].reverse().find((message) => message?.role === "user" && message.content)?.content ?? "";
+
+  return [
+    CODEX_PILOT_SYSTEM_PROMPT,
+    "",
+    "Voice-agent system prompt currently visible in the desktop UI:",
+    systemPrompt || DEFAULT_AGENT_PROMPT,
+    "",
+    "Client/session context:",
+    JSON.stringify(
+      {
+        student_id: client?.student_id ?? null,
+        student_name: client?.student_name ?? null,
+        voice_command: true,
+        raw_speech_text: client?.raw_speech_text ?? null,
+        speech_intent: client?.speech_intent?.text ?? null,
+      },
+      null,
+      2,
+    ),
+    "",
+    "Recent conversation:",
+    recent || "(none)",
+    "",
+    "Latest user instruction to satisfy now:",
+    latestUser,
+  ].join("\n");
+}
+
+function streamCodexJsonLine(res, line, state) {
+  let parsed;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return;
+  }
+
+  if (parsed.type === "thread.started") {
+    state.threadId = parsed.thread_id;
+    sse(res, "meta", { provider: "codex", model: CODEX_PILOT_MODEL || "default", threadId: parsed.thread_id });
+    return;
+  }
+
+  if (parsed.type === "item.completed") {
+    const item = parsed.item || {};
+    if (item.type === "agent_message" && item.text) {
+      state.finalText = String(item.text);
+      sse(res, "token", { text: state.finalText });
+      return;
+    }
+
+    if (item.type === "command_execution" || item.type === "tool_call") {
+      const label = item.name || item.command || "tool";
+      sse(res, "codex_event", { label, status: "completed" });
+    }
+  }
+}
+
+async function handleCodexPilot(req, res) {
+  const body = await readJson(req);
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  const systemPrompt = typeof body.systemPrompt === "string" && body.systemPrompt.trim() ? body.systemPrompt.trim() : DEFAULT_AGENT_PROMPT;
+  const client = body.client && typeof body.client === "object" ? body.client : {};
+
+  sendSseHeaders(res);
+
+  if (!CODEX_PILOT_ENABLED) {
+    sse(res, "error", { message: "Codex pilot is disabled. Set CODEX_PILOT_ENABLED=1." });
+    sse(res, "done", {});
+    res.end();
+    return;
+  }
+
+  if (!fs.existsSync(CODEX_PILOT_COMMAND)) {
+    sse(res, "error", {
+      message: `Codex CLI is not available at ${CODEX_PILOT_COMMAND}. Run npm install or set CODEX_PILOT_COMMAND.`,
+    });
+    sse(res, "done", {});
+    res.end();
+    return;
+  }
+
+  const prompt = buildCodexPilotPrompt({ messages, systemPrompt, client });
+  const args = [];
+  if (CODEX_PILOT_MODEL) args.push("-m", CODEX_PILOT_MODEL);
+  args.push("-a", CODEX_PILOT_APPROVAL);
+  args.push("exec", "--json", "--cd", __dirname, "--sandbox", CODEX_PILOT_SANDBOX, "-");
+
+  const child = spawn(CODEX_PILOT_COMMAND, args, {
+    cwd: __dirname,
+    env: {
+      ...process.env,
+      NO_COLOR: "1",
+      FORCE_COLOR: "0",
+    },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const state = { finalText: "", threadId: null };
+  const startedAt = performance.now();
+  const timeout = setTimeout(() => {
+    child.kill("SIGTERM");
+    sse(res, "error", { message: "Codex pilot timed out." });
+  }, CODEX_PILOT_TIMEOUT_MS);
+
+  sse(res, "meta", {
+    provider: "codex",
+    model: CODEX_PILOT_MODEL || "default",
+    sandbox: CODEX_PILOT_SANDBOX,
+    approval: CODEX_PILOT_APPROVAL,
+  });
+  sse(res, "warning", { message: "Codex pilot is working in the repo. This can take longer than the tutor LLM path." });
+
+  let stdoutBuffer = "";
+  child.stdout.on("data", (chunk) => {
+    stdoutBuffer += chunk.toString();
+    const lines = stdoutBuffer.split("\n");
+    stdoutBuffer = lines.pop() ?? "";
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      streamCodexJsonLine(res, line, state);
+    }
+  });
+
+  let stderrBuffer = "";
+  child.stderr.on("data", (chunk) => {
+    stderrBuffer += chunk.toString();
+    const lines = stderrBuffer.split("\n");
+    stderrBuffer = lines.pop() ?? "";
+    const warnings = lines
+      .map((line) => line.trim())
+      .filter((line) => line && !line.includes("codex_core_skills::loader"))
+      .slice(-3);
+    for (const warning of warnings) {
+      sse(res, "warning", { message: warning.slice(0, 500) });
+    }
+  });
+
+  child.stdin.end(prompt);
+
+  req.on("close", () => {
+    if (!res.writableEnded && child.exitCode === null) child.kill("SIGTERM");
+  });
+
+  child.on("error", (error) => {
+    clearTimeout(timeout);
+    sse(res, "error", { message: error instanceof Error ? error.message : "Codex pilot failed to start." });
+    sse(res, "done", {});
+    res.end();
+  });
+
+  child.on("close", (code) => {
+    clearTimeout(timeout);
+    if (stdoutBuffer.trim()) streamCodexJsonLine(res, stdoutBuffer.trim(), state);
+    if (code !== 0 && !state.finalText) {
+      const detail = stderrBuffer.trim().split("\n").filter(Boolean).slice(-4).join("\n");
+      sse(res, "error", {
+        message: `Codex pilot exited with code ${code}.${detail ? ` ${detail}` : ""}`,
+      });
+    }
+    sse(res, "meta", {
+      provider: "codex",
+      model: CODEX_PILOT_MODEL || "default",
+      durationMs: Math.round(performance.now() - startedAt),
+      threadId: state.threadId,
+    });
+    sse(res, "done", {});
+    res.end();
+  });
+}
+
 async function handleTts(req, res) {
   const body = await readJson(req);
   const text = String(body.text ?? "").trim();
@@ -1000,6 +1200,15 @@ async function handleProviderHealth(req, res) {
       localFallbackModel: "speechbrain/spkrec-ecapa-voxceleb",
       purpose: "Parallel speaker identity for barge-in and persistent per-student profiles.",
     },
+    codexPilot: {
+      enabled: CODEX_PILOT_ENABLED,
+      available: codexPilotAvailable(),
+      command: CODEX_PILOT_COMMAND,
+      sandbox: CODEX_PILOT_SANDBOX,
+      approval: CODEX_PILOT_APPROVAL,
+      model: CODEX_PILOT_MODEL || "default",
+      purpose: "Routes voice-intent tasks into Codex exec so the desktop agent can inspect, edit, test, and operate this repo.",
+    },
     tts: {
       defaultProvider: TTS_PROVIDER,
       browserAvailableOnClient: true,
@@ -1145,12 +1354,27 @@ const server = http.createServer(async (req, res) => {
         fishModel: FISH_TTS_MODEL,
         whisperxConfigured: Boolean(WHISPERX_URL),
         speakerGuardConfigured: Boolean(SPEAKER_GUARD_URL),
+        codexPilotEnabled: CODEX_PILOT_ENABLED,
+        codexPilotAvailable: codexPilotAvailable(),
+        codexPilotSandbox: CODEX_PILOT_SANDBOX,
       });
       return;
     }
 
     if (url.pathname === "/api/providers/health") {
       await handleProviderHealth(req, res);
+      return;
+    }
+
+    if (url.pathname === "/api/codex/status") {
+      json(res, 200, {
+        enabled: CODEX_PILOT_ENABLED,
+        available: codexPilotAvailable(),
+        command: CODEX_PILOT_COMMAND,
+        sandbox: CODEX_PILOT_SANDBOX,
+        approval: CODEX_PILOT_APPROVAL,
+        model: CODEX_PILOT_MODEL || "default",
+      });
       return;
     }
 
@@ -1177,6 +1401,11 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === "/api/chat" && req.method === "POST") {
       await handleChat(req, res);
+      return;
+    }
+
+    if (url.pathname === "/api/codex/exec" && req.method === "POST") {
+      await handleCodexPilot(req, res);
       return;
     }
 

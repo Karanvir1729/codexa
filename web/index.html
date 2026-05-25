@@ -62,6 +62,11 @@
             <span>Flow-style speech intent</span>
           </label>
 
+          <label class="toggle">
+            <input id="codexPilotToggle" type="checkbox" />
+            <span>Codex pilot mode</span>
+          </label>
+
           <div class="flow-config">
             <p class="label">Speech input layer</p>
             <label class="field">
@@ -183,6 +188,11 @@ office hours => My office hours are Monday at 3 PM.</textarea>
             <li>Fish/browser sentence TTS queue</li>
             <li>Interrupt cancels stream + speech</li>
           </ol>
+
+          <p class="label">Codex pilot</p>
+          <p id="codexPilotState" class="live-text muted">
+            Off by default. Turn on Codex pilot mode to route voice commands through Codex exec for repo-level work.
+          </p>
 
           <p class="label">Current system limits</p>
           <ul class="path">

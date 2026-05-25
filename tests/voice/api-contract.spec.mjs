@@ -81,4 +81,15 @@ test("provider health exposes voice, intent, and speaker identity layers", async
   expect(health.stt.configuredProvider).toBeTruthy();
   expect(health.speechIntent.mode).toBeTruthy();
   expect(health.speakerGuard.purpose).toContain("speaker identity");
+  expect(health.codexPilot.purpose).toContain("Codex exec");
+});
+
+test("codex pilot status exposes local exec integration", async ({ request }) => {
+  const response = await request.get("/api/codex/status");
+
+  expect(response.ok()).toBeTruthy();
+  const status = await response.json();
+  expect(status.enabled).toBe(true);
+  expect(status.command).toContain("codex");
+  expect(status.sandbox).toBeTruthy();
 });

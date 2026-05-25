@@ -24,6 +24,7 @@ Goal:
 - **TTS:** Fish Audio / Fish Speech `s2-pro` through `POST /api/tts` when `FISH_API_KEY` is set.
 - **Fallbacks:** browser STT and browser Web Speech TTS remain available for local debugging.
 - **Prompting:** no hardcoded tutor answer path. The UI sends the current conversation plus the editable system prompt to the LLM.
+- **Codex pilot mode:** optional voice-command route that sends the cleaned user intent to `codex exec` so the desktop agent can inspect, edit, test, and operate this repo using Codex underneath.
 - **Desktop shell:** Electron starts/reuses the Node API and Python STT/ML service, opens Tutor-Tron in a native desktop window, and exposes the test dashboard/logs from the app menu.
 - **Install surface:** the same voice core also ships as a web/PWA surface for iPhone/Mac testing.
 
@@ -97,6 +98,40 @@ Desktop logs:
 tmp/desktop-api.log
 tmp/desktop-stt.log
 ```
+
+## Codex Pilot Mode
+
+Turn on **Codex pilot mode** in the left control panel when a voice turn should be handled by Codex instead of the fast tutor LLM.
+
+The route is:
+
+```text
+voice/audio turn
+-> WhisperX STT
+-> Flow-style speech intent cleanup
+-> /api/codex/exec
+-> local codex exec in this repo
+-> spoken summary back through the same TTS queue
+```
+
+Default behavior:
+
+- Uses the project-local `@openai/codex` CLI from `node_modules/.bin/codex`.
+- Runs in `workspace-write` sandbox mode.
+- Uses non-interactive approval mode `never`.
+- Keeps the final answer concise so it can be spoken.
+
+Useful env overrides:
+
+```bash
+CODEX_PILOT_ENABLED=1
+CODEX_PILOT_COMMAND=/path/to/codex
+CODEX_PILOT_MODEL=gpt-5-codex
+CODEX_PILOT_SANDBOX=workspace-write
+CODEX_PILOT_TIMEOUT_MS=300000
+```
+
+For full-machine control, Codex itself must be configured for that level of access. The default desktop route intentionally keeps voice-triggered edits inside this repository.
 
 ## Manual Web Mode
 
