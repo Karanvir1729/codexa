@@ -14,7 +14,13 @@
     "phone:install": "uv venv .venv-pipecat --python 3.12 && uv pip install --python .venv-pipecat/bin/python -r requirements-pipecat-phone.txt",
     "phone": "node scripts/run-pipecat-phone.mjs",
     "phone:webrtc": ".venv-pipecat/bin/python services/pipecat_twilio_bot.py -t webrtc --host 0.0.0.0 --port 7860",
+    "phone:test:codex": "node scripts/test-phone-codex-bridge.mjs",
+    "phone:test:stack": "node scripts/test-phone-stack.mjs",
+    "phone:test": "npm run phone:test:codex && npm run phone:test:stack",
     "twilio:configure": "node scripts/setup-twilio-voice-webhook.mjs",
+    "openclaw:readiness": "node scripts/openclaw-readiness.mjs",
+    "openclaw:doctor": "npx openclaw doctor --lint --non-interactive --no-workspace-suggestions --severity-min error",
+    "openclaw:gateway": "npx openclaw gateway --dev --bind loopback run",
     "dev:loop": "node scripts/develop-test-loop.mjs",
     "dev:loop:watch": "node scripts/develop-test-loop.mjs --watch",
     "bench": "node scripts/bench-voice-loop.mjs",
@@ -32,6 +38,7 @@
   "devDependencies": {
     "@openai/codex": "^0.133.0",
     "@playwright/test": "^1.60.0",
-    "electron": "^42.2.0"
+    "electron": "^42.2.0",
+    "openclaw": "^2026.5.22"
   }
 }

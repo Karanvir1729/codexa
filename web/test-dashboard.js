@@ -1,5 +1,7 @@
 const dom = {
   runQuickBtn: document.querySelector("#runQuickBtn"),
+  runPhoneBtn: document.querySelector("#runPhoneBtn"),
+  runOpenClawBtn: document.querySelector("#runOpenClawBtn"),
   runFullBtn: document.querySelector("#runFullBtn"),
   latestStatus: document.querySelector("#latestStatus"),
   latestMeta: document.querySelector("#latestMeta"),
@@ -14,7 +16,9 @@ const dom = {
 };
 
 const quickSuites = ["preflight", "eval", "api", "ui", "bench"];
-const fullSuites = ["preflight", "eval", "api", "ui", "bench", "acoustic"];
+const phoneSuites = ["phone"];
+const openClawSuites = ["openclaw"];
+const fullSuites = ["preflight", "eval", "api", "ui", "bench", "phone", "openclaw", "acoustic"];
 
 function formatDuration(ms) {
   if (!Number.isFinite(ms)) return "--";
@@ -33,6 +37,8 @@ function renderLatest(payload) {
   dom.activeRun.textContent = active ? "Running" : "Idle";
   dom.activeMeta.textContent = active ? `${active.id} started ${new Date(active.startedAt).toLocaleTimeString()}` : "No active test process.";
   dom.runQuickBtn.disabled = Boolean(active);
+  dom.runPhoneBtn.disabled = Boolean(active);
+  dom.runOpenClawBtn.disabled = Boolean(active);
   dom.runFullBtn.disabled = Boolean(active);
 
   if (!latest) {
@@ -129,6 +135,22 @@ async function startRun(suites) {
 dom.runQuickBtn.addEventListener("click", async () => {
   try {
     await startRun(quickSuites);
+  } catch (error) {
+    dom.parsedResults.textContent = error instanceof Error ? error.message : String(error);
+  }
+});
+
+dom.runPhoneBtn.addEventListener("click", async () => {
+  try {
+    await startRun(phoneSuites);
+  } catch (error) {
+    dom.parsedResults.textContent = error instanceof Error ? error.message : String(error);
+  }
+});
+
+dom.runOpenClawBtn.addEventListener("click", async () => {
+  try {
+    await startRun(openClawSuites);
   } catch (error) {
     dom.parsedResults.textContent = error instanceof Error ? error.message : String(error);
   }

@@ -46,6 +46,27 @@ const suiteRegistry = {
     command: ["node", ["scripts/bench-voice-loop.mjs"]],
     required: false,
   },
+  phone: {
+    id: "phone",
+    name: "No-call phone Codex bridge",
+    category: "phone",
+    command: ["node", ["scripts/test-phone-codex-bridge.mjs"]],
+    required: false,
+  },
+  phone_stack: {
+    id: "phone_stack",
+    name: "Twilio/Pipecat stack readiness",
+    category: "phone",
+    command: ["node", ["scripts/test-phone-stack.mjs"]],
+    required: false,
+  },
+  openclaw: {
+    id: "openclaw",
+    name: "OpenClaw system-control readiness",
+    category: "system-control",
+    command: ["node", ["scripts/openclaw-readiness.mjs"]],
+    required: false,
+  },
   acoustic: {
     id: "acoustic",
     name: "Speaker-to-mic acoustic interruption test",

@@ -38,6 +38,12 @@ button {
   cursor: pointer;
 }
 
+.secondary {
+  border-color: var(--line);
+  background: #ffffff;
+  color: var(--ink);
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.55;

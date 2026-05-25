@@ -193,6 +193,50 @@ Production/demo path:
 Twilio number -> Pipecat Cloud Twilio WebSocket endpoint -> Tutor-Tron Pipecat bot
 ```
 
+### Test the Phone Brain Without Calling
+
+Use this to test the same Codex bridge used by the phone bot without dialing Twilio:
+
+```bash
+npm run phone:test:codex
+```
+
+Use this to check the Twilio/Pipecat/ngrok wiring without placing a call:
+
+```bash
+npm run phone:test:stack
+```
+
+The local QA dashboard also has a **No-call phone test** button:
+
+```text
+http://localhost:3000/test-dashboard.html
+```
+
+## OpenClaw System-Control Path
+
+OpenClaw is installed as the local system-control layer for growing Tutor-Tron from "voice talks to Codex" into "voice can operate the development environment."
+
+Readiness:
+
+```bash
+npm run openclaw:readiness
+```
+
+Foreground gateway for local dev:
+
+```bash
+npm run openclaw:gateway
+```
+
+Design note:
+
+```text
+docs/architecture/openclaw-codex-system-control.md
+```
+
+Pipecat remains the realtime voice runtime. OpenClaw is the broader control plane for full-system actions and Codex/plugin routing.
+
 ## Manual Web Mode
 
 Start the WhisperX adapter:

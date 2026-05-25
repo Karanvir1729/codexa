@@ -1449,7 +1449,7 @@ async function handleStartTestRun(req, res) {
   }
 
   const body = await readJson(req).catch(() => ({}));
-  const allowedSuites = new Set(["preflight", "eval", "api", "ui", "bench", "acoustic"]);
+  const allowedSuites = new Set(["preflight", "eval", "api", "ui", "bench", "phone", "phone_stack", "openclaw", "acoustic"]);
   const requestedSuites = Array.isArray(body.suites) && body.suites.length
     ? body.suites.map(String)
     : ["preflight", "eval", "api", "ui", "bench"];
