@@ -254,6 +254,8 @@ def check_pipecat(file_env: dict[str, str]) -> Check:
     voice_runtime = env_value("VOICE_RUNTIME", file_env) or "text"
     deepgram = env_value("DEEPGRAM_API_KEY", file_env)
     cartesia = env_value("CARTESIA_API_KEY", file_env)
+    local_tts_provider = env_value("LOCAL_TTS_PROVIDER", file_env) or "auto"
+    fish_base_url = env_value("FISH_SPEECH_BASE_URL", file_env) or "http://127.0.0.1:8080"
     if cloud_ws and cloud_host:
         return Check("pipecat", "ready", "Pipecat Cloud WebSocket route is configured.")
     if voice_runtime == "local_pipecat":
@@ -262,6 +264,7 @@ def check_pipecat(file_env: dict[str, str]) -> Check:
             "pyaudio": "pipecat-ai[local] plus Homebrew portaudio on macOS",
             "mlx_whisper": "pipecat-ai[mlx-whisper]",
             "kokoro_onnx": "pipecat-ai[kokoro]",
+            "ormsgpack": "Fish Speech HTTP msgpack client",
             "onnxruntime": "pipecat-ai base Silero VAD dependency",
         }
         missing = [name for name in required_modules if importlib.util.find_spec(name) is None]
@@ -273,10 +276,34 @@ def check_pipecat(file_env: dict[str, str]) -> Check:
                 f"Local Pipecat mode is selected, but missing modules: {details}.",
                 'Run: brew install portaudio && .venv/bin/python -m pip install -e "backend[voice]".',
             )
+        if local_tts_provider == "fish_speech":
+            status, data, error = http_json(f"{fish_base_url.rstrip('/')}/v1/health", timeout=5)
+            if status == 200 and data:
+                return Check(
+                    "pipecat",
+                    "ready",
+                    "Local Pipecat runtime is installed and Fish Speech TTS server is healthy.",
+                )
+            return Check(
+                "pipecat",
+                "blocked",
+                f"LOCAL_TTS_PROVIDER=fish_speech, but Fish Speech health failed: {error or status}",
+                "Start Fish Speech server on FISH_SPEECH_BASE_URL, or set LOCAL_TTS_PROVIDER=auto/kokoro.",
+            )
+        if local_tts_provider == "auto":
+            status, data, _error = http_json(f"{fish_base_url.rstrip('/')}/v1/health", timeout=2)
+            fish_detail = (
+                "Fish Speech TTS server is healthy and will be used."
+                if status == 200 and data
+                else "Fish Speech TTS server is not running; auto mode will use Kokoro."
+            )
+        else:
+            fish_detail = "Kokoro TTS is forced by LOCAL_TTS_PROVIDER=kokoro."
         return Check(
             "pipecat",
             "ready",
-            "Local Pipecat voice runtime is installed with PyAudio, MLX Whisper, Kokoro, and Silero VAD.",
+            "Local Pipecat voice runtime is installed with PyAudio, MLX Whisper, Kokoro, "
+            f"Fish Speech client support, and Silero VAD. {fish_detail}",
         )
     if voice_runtime == "pipecat" and deepgram and cartesia:
         return Check("pipecat", "ready", "Self-hosted Pipecat runtime has STT and TTS keys configured.")

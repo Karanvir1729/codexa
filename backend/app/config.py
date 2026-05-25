@@ -51,15 +51,28 @@ class Settings(BaseSettings):
     cartesia_api_key: str | None = None
     cartesia_voice_id: str = "71a7ad14-091c-4e8e-a314-022ece01c121"
     local_voice_language: str = "en"
+    local_stt_language: str = "auto"
+    local_tts_language: str = "en"
     local_audio_input_device_index: int | None = None
     local_audio_output_device_index: int | None = None
     local_audio_input_sample_rate: int = Field(default=16000, ge=8000)
     local_audio_output_sample_rate: int = Field(default=24000, ge=8000)
-    local_stt_model: str = "mlx-community/whisper-tiny"
+    local_stt_model: str = "mlx-community/whisper-large-v3-turbo-q4"
     local_stt_no_speech_prob: float = Field(default=0.6, ge=0, le=1)
     local_stt_temperature: float = Field(default=0.0, ge=0)
     local_stt_ttfs_p99_latency: float = Field(default=1.25, ge=0)
+    local_tts_provider: Literal["auto", "kokoro", "fish_speech"] = "auto"
     local_tts_voice: str = "af_heart"
+    fish_speech_base_url: str = "http://127.0.0.1:8080"
+    fish_speech_api_key: str | None = None
+    fish_speech_reference_id: str | None = None
+    fish_speech_latency: Literal["normal", "balanced"] = "normal"
+    fish_speech_chunk_length: int = Field(default=300, ge=50)
+    fish_speech_max_new_tokens: int = Field(default=1024, ge=0)
+    fish_speech_top_p: float = Field(default=0.8, ge=0, le=1)
+    fish_speech_repetition_penalty: float = Field(default=1.1, ge=0)
+    fish_speech_temperature: float = Field(default=0.8, ge=0)
+    fish_speech_timeout_seconds: float = Field(default=120, ge=1)
     local_vad_confidence: float = Field(default=0.65, ge=0, le=1)
     local_vad_start_secs: float = Field(default=0.15, ge=0)
     local_vad_stop_secs: float = Field(default=0.25, ge=0)

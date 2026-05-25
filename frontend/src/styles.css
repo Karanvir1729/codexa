@@ -171,7 +171,7 @@ h2 {
 
 .statusGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1px;
   margin: 28px 0;
   border: 1px solid #1d242b;
@@ -342,11 +342,41 @@ h2 {
 .sideStack {
   display: grid;
   gap: 18px;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;
 }
 
 .panel {
   min-width: 0;
+}
+
+.pipecatKitPanel {
+  overflow: visible;
+}
+
+.kitStage {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  padding: 18px;
+}
+
+.kitBadges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.kitControlBar {
+  justify-content: center;
+  border-top: 1px solid #1d242b;
+  padding: 14px 18px 18px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.kitControlBar button {
+  min-height: 40px;
 }
 
 .evalList {
@@ -435,7 +465,6 @@ pre {
     padding: 20px;
   }
 
-  .statusGrid,
   .mainGrid {
     grid-template-columns: 1fr;
   }

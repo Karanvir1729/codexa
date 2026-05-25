@@ -30,7 +30,10 @@ class LocalVoiceConversationRecorder:
                         "llm_provider": self.settings.llm_provider,
                         "model": self.settings.active_model,
                         "stt_model": self.settings.local_stt_model,
+                        "stt_language": self.settings.local_stt_language,
+                        "tts_provider": self.settings.local_tts_provider,
                         "tts_voice": self.settings.local_tts_voice,
+                        "fish_speech_reference_id": self.settings.fish_speech_reference_id,
                         "transport": "pipecat.local_audio",
                     }
                 ),
@@ -88,6 +91,51 @@ def build_system_instruction(settings: Settings, prompt_repo: PromptRepository) 
     return instruction
 
 
+def _language_or_auto(value: str | None) -> str | None:
+    normalized = (value or "").strip().lower()
+    if normalized in {"", "auto", "detect", "none", "null"}:
+        return None
+    return normalized
+
+
+def resolve_stt_language(settings: Settings):
+    from pipecat.transcriptions.language import Language
+
+    code = _language_or_auto(settings.local_stt_language or settings.local_voice_language)
+    return Language(code) if code else None
+
+
+def resolve_tts_language(settings: Settings):
+    from pipecat.transcriptions.language import Language
+
+    code = _language_or_auto(settings.local_tts_language or settings.local_voice_language) or "en"
+    return Language(code)
+
+
+async def create_local_tts_service(settings: Settings):
+    from loguru import logger
+    from pipecat.services.kokoro.tts import KokoroTTSService
+
+    provider = settings.local_tts_provider
+    if provider in {"auto", "fish_speech"}:
+        from .fish_speech_tts import create_fish_speech_tts_service, fish_speech_healthcheck
+
+        if provider == "fish_speech":
+            return "fish_speech", create_fish_speech_tts_service(settings)
+
+        healthy, detail = await fish_speech_healthcheck(settings)
+        if healthy:
+            logger.info("Fish Speech server detected; using Fish Speech TTS.")
+            return "fish_speech", create_fish_speech_tts_service(settings)
+        logger.info(f"{detail} Falling back to Kokoro TTS.")
+
+    language = resolve_tts_language(settings)
+    return "kokoro", KokoroTTSService(
+        settings=KokoroTTSService.Settings(voice=settings.local_tts_voice, language=language),
+        sample_rate=settings.local_audio_output_sample_rate,
+    )
+
+
 async def run_local_pipecat_voice_agent(
     settings: Settings | None = None,
     db: Database | None = None,
@@ -126,10 +174,8 @@ async def run_local_pipecat_voice_agent(
     )
     from pipecat.processors.audio.vad_processor import VADProcessor
     from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-    from pipecat.services.kokoro.tts import KokoroTTSService
     from pipecat.services.openai.llm import OpenAILLMService
     from pipecat.services.whisper.stt import WhisperSTTServiceMLX
-    from pipecat.transcriptions.language import Language
     from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
     from pipecat.turns.user_stop import SpeechTimeoutUserTurnStopStrategy
     from pipecat.turns.user_turn_strategies import UserTurnStrategies
@@ -179,7 +225,7 @@ async def run_local_pipecat_voice_agent(
                 logger.error(f"PIPELINE ERROR: {frame.error}")
             await self.push_frame(frame, direction)
 
-    language = Language(settings.local_voice_language)
+    stt_language = resolve_stt_language(settings)
     transport = LocalAudioTransport(
         LocalAudioTransportParams(
             audio_in_enabled=True,
@@ -194,7 +240,7 @@ async def run_local_pipecat_voice_agent(
     stt = WhisperSTTServiceMLX(
         settings=WhisperSTTServiceMLX.Settings(
             model=settings.local_stt_model,
-            language=language,
+            language=stt_language,
             no_speech_prob=settings.local_stt_no_speech_prob,
             temperature=settings.local_stt_temperature,
         ),
@@ -215,10 +261,7 @@ async def run_local_pipecat_voice_agent(
             max_completion_tokens=NOT_GIVEN,
         ),
     )
-    tts = KokoroTTSService(
-        settings=KokoroTTSService.Settings(voice=settings.local_tts_voice, language=language),
-        sample_rate=settings.local_audio_output_sample_rate,
-    )
+    tts_provider, tts = await create_local_tts_service(settings)
     vad = VADProcessor(
         vad_analyzer=SileroVADAnalyzer(
             sample_rate=settings.local_audio_input_sample_rate,
@@ -272,7 +315,8 @@ async def run_local_pipecat_voice_agent(
     logger.info("Local Pipecat voice agent is live.")
     logger.info(f"Conversation ID: {recorder.conversation_id}")
     logger.info(
-        f"STT={settings.local_stt_model} TTS={settings.local_tts_voice} LLM={settings.active_model}"
+        f"STT={settings.local_stt_model} language={settings.local_stt_language} "
+        f"TTS={tts_provider} LLM={settings.active_model}"
     )
     logger.info("Speak into the Mac microphone. Start talking over the assistant to test interruption.")
     await PipelineRunner(handle_sigint=True).run(task)

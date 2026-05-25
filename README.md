@@ -24,14 +24,14 @@ Built locally:
   - `/twilio/inbound` TwiML route.
   - Pipecat Cloud WebSocket shortcut support.
   - self-hosted Pipecat runtime module for STT/LLM/TTS pipeline wiring.
-  - local Pipecat microphone/speaker runtime with open-source MLX Whisper STT, Kokoro TTS, Silero VAD, and VAD-driven interruption.
+  - local Pipecat microphone/speaker runtime with open-source MLX Whisper STT, Fish Speech/Kokoro TTS, Silero VAD, and VAD-driven interruption.
 - React operator console:
   - session simulator.
   - feedback submission.
   - eval run controls.
   - scheduled eval start/stop controls.
   - prompt version visibility.
-  - Pipecat Voice UI Kit dependency included for voice UI expansion.
+  - Pipecat Voice UI Kit device/mic panel with local media waveform and device selection.
 - AWS deployment assets:
   - CloudFormation stack for GPU vLLM host.
   - Terraform scaffold.
@@ -157,12 +157,28 @@ Run the local Pipecat voice agent:
 Default local voice stack:
 
 - Transport: Pipecat `LocalAudioTransport` using the Mac microphone and speaker.
-- STT: `WhisperSTTServiceMLX` with `mlx-community/whisper-tiny`.
-- TTS: `KokoroTTSService` with voice `af_heart`.
+- STT: `WhisperSTTServiceMLX` with `mlx-community/whisper-large-v3-turbo-q4` and `LOCAL_STT_LANGUAGE=auto` for multilingual auto-detect.
+- TTS: `LOCAL_TTS_PROVIDER=auto`, which uses a healthy local Fish Speech server when available and falls back to `KokoroTTSService` with voice `af_heart`.
 - VAD/interruption: Pipecat Silero VAD with `SpeechTimeoutUserTurnStopStrategy`.
 - LLM: Ollama OpenAI-compatible API using `qwen2.5:0.5b`.
 
-On the first run, Kokoro downloads its ONNX model/voice files and MLX Whisper downloads the tiny Whisper model. macOS may ask for microphone permission for the terminal app. Speak over the assistant while it is talking to test interruption.
+On the first run, Kokoro downloads its ONNX model/voice files and MLX Whisper downloads the selected Whisper model. macOS may ask for microphone permission for the terminal app. Speak over the assistant while it is talking to test interruption.
+
+For the fastest smoke test, override STT back to the tiny model:
+
+```bash
+LOCAL_STT_MODEL=mlx-community/whisper-tiny ./scripts/run_local_voice.sh
+```
+
+For Fish Speech TTS, start the Fish Speech API server separately and keep this app pointed at it:
+
+```bash
+LOCAL_TTS_PROVIDER=fish_speech \
+FISH_SPEECH_BASE_URL=http://127.0.0.1:8080 \
+./scripts/run_local_voice.sh
+```
+
+Fish Speech S2 is a heavier TTS stack than Kokoro. The official docs list Linux/WSL and 24GB GPU memory for inference, so this repo integrates with the Fish Speech HTTP server instead of vendoring the model weights into the backend.
 
 Local voice turns are written to the same SQLite `conversations` and `turns` tables as the text/API loop, so later eval export and feedback work against the same data store.
 
@@ -347,6 +363,8 @@ Export curated positive-feedback and passing-eval examples:
   - Twilio.
   - NVIDIA or AWS-hosted vLLM.
   - Pipecat Cloud, or Deepgram/Cartesia for Twilio self-hosted Pipecat.
+- Run Fish Speech server on a GPU box for production-grade multilingual/multi-speaker TTS.
+- Add WhisperX as a post-call eval/alignment step for diarization and word-level timing; keep local Whisper MLX in the live loop.
 - Run a live phone-call test through Twilio.
 - Add latency benchmarking around Twilio media stream, Pipecat transport, model response time, TTS, and end-to-end turn-taking.
 - Add more eval suites for:
@@ -408,4 +426,12 @@ does the voice agent work? can I talk, does interruption work?
 
 ```text
 Why the hell are we using the browser stuff, take a look at pipecat and almost all of pipecat's used stt and tts are opensource why the hell are we not downloading it and using it. BUILD IT and MAKE IT WORK. I want a full voice agent not a hardcoded siri.
+```
+
+```text
+the stt we have currently is ass, also where is browser voice ui kit from pipecat, i want that. Is there a better stt that can take in mutliple languages too like is WhisperX good?
+```
+
+```text
+I forgot to say before it worked well it's just that the stt was bad. Also for tts let's use fish speech: [fishaudio/fish-speech](https://github.com/fishaudio/fish-speech), because this has multispeech support.
 ```

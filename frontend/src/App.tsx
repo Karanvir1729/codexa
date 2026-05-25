@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Brain,
@@ -17,6 +17,12 @@ import {
   ThumbsDown,
   ThumbsUp
 } from "lucide-react";
+import {
+  Badge,
+  CircularWaveform,
+  ControlBar,
+  UserAudioComponent
+} from "@pipecat-ai/voice-ui-kit";
 import {
   ChatResponse,
   CostGuard,
@@ -70,6 +76,13 @@ export function App() {
   const [scheduler, setScheduler] = useState<EvalSchedulerState | null>(null);
   const [cost, setCost] = useState<CostGuard | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [kitStream, setKitStream] = useState<MediaStream | null>(null);
+  const [availableMics, setAvailableMics] = useState<MediaDeviceInfo[]>([]);
+  const [availableSpeakers, setAvailableSpeakers] = useState<MediaDeviceInfo[]>([]);
+  const [selectedMicId, setSelectedMicId] = useState<string | undefined>();
+  const [selectedSpeakerId, setSelectedSpeakerId] = useState<string | undefined>();
+  const [kitNotice, setKitNotice] = useState<string | null>(null);
+  const kitStreamRef = useRef<MediaStream | null>(null);
 
   async function refresh() {
     const [healthState, promptState, runs, costState, schedulerState] = await Promise.all([
@@ -90,8 +103,79 @@ export function App() {
     refresh().catch((error) => setNotice(error.message));
   }, []);
 
+  useEffect(() => {
+    kitStreamRef.current = kitStream;
+  }, [kitStream]);
+
+  useEffect(() => {
+    refreshKitDevices().catch((error) => setKitNotice(error.message));
+    navigator.mediaDevices?.addEventListener?.("devicechange", refreshKitDevices);
+    return () => {
+      navigator.mediaDevices?.removeEventListener?.("devicechange", refreshKitDevices);
+      stopMediaStream(kitStreamRef.current);
+    };
+  }, []);
+
   const lastAssistant = useMemo(() => [...turns].reverse().find((turn) => turn.role === "assistant"), [turns]);
   const latency = lastAssistant?.latency_ms ?? 0;
+  const kitAudioTrack = kitStream?.getAudioTracks()[0] ?? null;
+  const selectedMic = availableMics.find((device) => device.deviceId === selectedMicId);
+  const selectedSpeaker = availableSpeakers.find((device) => device.deviceId === selectedSpeakerId);
+
+  function stopMediaStream(stream: MediaStream | null) {
+    stream?.getTracks().forEach((track) => track.stop());
+  }
+
+  async function refreshKitDevices() {
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      setKitNotice("Media devices unavailable in this browser.");
+      return;
+    }
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const mics = devices.filter((device) => device.kind === "audioinput");
+    const speakers = devices.filter((device) => device.kind === "audiooutput");
+    setAvailableMics(mics);
+    setAvailableSpeakers(speakers);
+    setSelectedMicId((current) => current ?? mics[0]?.deviceId);
+    setSelectedSpeakerId((current) => current ?? speakers[0]?.deviceId);
+  }
+
+  async function startKitMic(deviceId?: string) {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setKitNotice("Microphone access unavailable in this browser.");
+      return;
+    }
+    setKitNotice(null);
+    const audio: MediaTrackConstraints | boolean = deviceId ? { deviceId: { exact: deviceId } } : true;
+    const stream = await navigator.mediaDevices.getUserMedia({ audio });
+    stopMediaStream(kitStreamRef.current);
+    setKitStream(stream);
+    setSelectedMicId(stream.getAudioTracks()[0]?.getSettings().deviceId ?? deviceId);
+    await refreshKitDevices();
+  }
+
+  async function toggleKitMic() {
+    if (kitStream) {
+      stopMediaStream(kitStream);
+      setKitStream(null);
+      return;
+    }
+    try {
+      await startKitMic(selectedMicId);
+    } catch (error) {
+      setKitNotice(error instanceof Error ? error.message : "Microphone access failed.");
+    }
+  }
+
+  async function updateKitMic(deviceId: string) {
+    setSelectedMicId(deviceId);
+    if (!kitStream) return;
+    try {
+      await startKitMic(deviceId);
+    } catch (error) {
+      setKitNotice(error instanceof Error ? error.message : "Microphone switch failed.");
+    }
+  }
 
   async function submit(event?: FormEvent, override?: string) {
     event?.preventDefault();
@@ -265,6 +349,57 @@ export function App() {
           </div>
 
           <div className="sideStack">
+            <section className="panel pipecatKitPanel">
+              <div className="sectionHead">
+                <div>
+                  <h2>Pipecat Kit</h2>
+                  <p>{kitStream ? "local media active" : "device standby"}</p>
+                </div>
+                <Badge color={kitStream ? "active" : "inactive"} variant="outline" rounded="sm">
+                  {kitStream ? "mic open" : "mic off"}
+                </Badge>
+              </div>
+
+              <div className="kitStage">
+                <CircularWaveform
+                  audioTrack={kitAudioTrack}
+                  backgroundColor="#0a0e12"
+                  barWidth={4}
+                  color1="#d8fb6f"
+                  color2="#67e8f9"
+                  isThinking={!kitStream}
+                  numBars={42}
+                  rotationEnabled={Boolean(kitStream)}
+                  sensitivity={1.2}
+                  size={148}
+                />
+                <div className="kitBadges">
+                  <Badge color="client" variant="outline" rounded="sm">Whisper auto</Badge>
+                  <Badge color="agent" variant="outline" rounded="sm">Fish TTS route</Badge>
+                  <Badge color="secondary" variant="outline" rounded="sm">Pipecat local</Badge>
+                </div>
+              </div>
+
+              <ControlBar className="kitControlBar" noAnimateIn>
+                <UserAudioComponent
+                  activeText="Mic on"
+                  availableMics={availableMics}
+                  availableSpeakers={availableSpeakers}
+                  inactiveText="Mic off"
+                  isMicEnabled={Boolean(kitStream)}
+                  noVisualizer
+                  onClick={toggleKitMic}
+                  selectedMic={selectedMic}
+                  selectedSpeaker={selectedSpeaker}
+                  size="lg"
+                  updateMic={updateKitMic}
+                  updateSpeaker={setSelectedSpeakerId}
+                  variant="outline"
+                />
+              </ControlBar>
+              {kitNotice && <p className="errorText">{kitNotice}</p>}
+            </section>
+
             <section className="panel">
               <div className="sectionHead">
                 <div>

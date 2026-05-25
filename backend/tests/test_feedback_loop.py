@@ -18,6 +18,8 @@ from app.local_voice_runtime import (
     LocalVoiceConversationRecorder,
     build_system_instruction,
     require_openai_compatible_llm,
+    resolve_stt_language,
+    resolve_tts_language,
 )
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -92,6 +94,13 @@ def test_local_voice_requires_real_llm_provider(tmp_path: Path):
 
     with pytest.raises(RuntimeError, match="LLM_PROVIDER=ollama"):
         require_openai_compatible_llm(settings)
+
+
+def test_local_voice_uses_auto_detect_stt_and_explicit_tts_language():
+    settings = Settings(local_stt_language="auto", local_tts_language="en")
+
+    assert resolve_stt_language(settings) is None
+    assert str(resolve_tts_language(settings)) == "en"
 
 
 def test_local_voice_records_turns_in_feedback_database(tmp_path: Path):
