@@ -19,6 +19,8 @@ test("main voice UI exposes installable speech-layer controls", async ({ page })
   await expect(page.getByRole("button", { name: "Start chat" })).toBeVisible();
   await expect(page.locator("#textInput")).toHaveAttribute("aria-describedby", "textRouteNote");
   await expect(page.locator("#textRouteNote")).toContainText("same project, chat, OpenClaw/Codex route");
+  await expect(page.locator("#telephonyState")).toContainText("Twilio:");
+  await expect(page.getByText("Phone/SMS")).toBeVisible();
   await expect(page.getByRole("link", { name: "Test dashboard" })).toBeVisible();
 
   const manifestResponse = await page.request.get("/manifest.webmanifest");

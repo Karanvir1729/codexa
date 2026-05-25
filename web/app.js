@@ -6,6 +6,7 @@ const dom = {
   interruptBtn: document.querySelector("#interruptBtn"),
   agentState: document.querySelector("#agentState"),
   providerState: document.querySelector("#providerState"),
+  telephonyState: document.querySelector("#telephonyState"),
   liveTranscript: document.querySelector("#liveTranscript"),
   turnState: document.querySelector("#turnState"),
   messages: document.querySelector("#messages"),
@@ -618,7 +619,12 @@ function renderSessionUi() {
       ? state.sessions
           .slice(0, 8)
           .map((session) => {
-            const source = session.source === "phone_bridge" ? "phone" : session.source || "browser";
+            const source =
+              session.source === "phone_bridge"
+                ? "phone"
+                : session.source === "sms_bridge"
+                  ? "sms"
+                  : session.source || "browser";
             const detail = session.lastUserText ? session.lastUserText : "No user turn saved yet.";
             return `<button type="button" class="history-item history-button" data-session-id="${escapeHtml(session.id)}">
               <strong>${escapeHtml(session.title || "Untitled chat")}</strong>
@@ -885,6 +891,14 @@ function setCodexPilotState(text) {
   if (dom.codexPilotState) dom.codexPilotState.textContent = text;
 }
 
+function telephonyStatusText(data) {
+  if (!data.twilioConfigured) return "Twilio: not configured";
+  const phone = data.twilioPhoneNumber || "configured number";
+  const voice = data.twilioVoiceWebhookPath || "/api/twilio/voice";
+  const sms = data.twilioSmsWebhookPath || "/api/twilio/sms";
+  return `Twilio: ${phone} | call ${voice} | SMS ${sms}`;
+}
+
 async function updateProviderStatus() {
   try {
     const res = await fetch("/api/status");
@@ -898,6 +912,7 @@ async function updateProviderStatus() {
       `TTS: ${data.ttsProvider}${data.fishConfigured ? " / Fish ready" : " / Fish not configured"}; ` +
       `Codex: ${data.codexPilotAvailable ? "ready" : "unavailable"}; ` +
       `OpenClaw: ${data.openclawAvailable ? "ready" : "unavailable"}`;
+    if (dom.telephonyState) dom.telephonyState.textContent = telephonyStatusText(data);
     setCodexPilotState(
       data.codexPilotAvailable
         ? `Ready: ${selectedControlProviderLabel()}. Codex sandbox ${data.codexPilotSandbox || "workspace-write"}; OpenClaw ${data.openclawAvailable ? "available" : "unavailable"}.`
@@ -905,6 +920,7 @@ async function updateProviderStatus() {
     );
   } catch {
     dom.providerState.textContent = "provider: server unavailable";
+    if (dom.telephonyState) dom.telephonyState.textContent = "Twilio: server unavailable";
     setCodexPilotState("Unavailable: server status check failed.");
   }
 }

@@ -29,6 +29,7 @@
           </p>
           <div class="route-strip" aria-label="Agent route">
             <span>Voice</span>
+            <span>Phone/SMS</span>
             <span>OpenClaw</span>
             <span>Codex</span>
             <span>Activity mirror</span>
@@ -37,6 +38,7 @@
         <div class="status-card">
           <span id="agentState" class="state-pill">Idle</span>
           <span id="providerState" class="provider">provider: checking</span>
+          <span id="telephonyState" class="provider telephony-state">Twilio: checking</span>
           <a class="dashboard-link" href="/test-dashboard.html">Test dashboard</a>
         </div>
       </section>
@@ -275,7 +277,8 @@ ship it => Implement the change, verify it, then summarize files and checks.</te
             <div><strong>1</strong><span>Speech cleaned into a coding prompt</span></div>
             <div><strong>2</strong><span>OpenClaw controls Codex/system tools</span></div>
             <div><strong>3</strong><span>Codex edits, tests, and reports back</span></div>
-            <div><strong>4</strong><span>Read-only mirror lands in Codex activity</span></div>
+            <div><strong>4</strong><span>Voice, SMS, and text share the same chat history</span></div>
+            <div><strong>5</strong><span>Read-only mirror lands in Codex activity</span></div>
           </div>
 
           <p class="label">Call / chat history</p>

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import http from "node:http";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -12,6 +13,26 @@ const testRunsDir = path.join(__dirname, "data", "test-runs");
 const voiceSessionsPath = path.join(__dirname, "data", "voice-sessions.json");
 const port = Number(process.env.PORT ?? 3000);
 let activeTestRun = null;
+
+function loadDotenvIntoProcess() {
+  const envPath = path.join(__dirname, ".env");
+  if (!fs.existsSync(envPath)) return;
+  for (const rawLine of fs.readFileSync(envPath, "utf8").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const index = line.indexOf("=");
+    if (index === -1) continue;
+    const key = line.slice(0, index).trim();
+    if (!key || process.env[key] !== undefined) continue;
+    let value = line.slice(index + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] = value;
+  }
+}
+
+loadDotenvIntoProcess();
 
 const PROVIDER = process.env.VOICE_AGENT_PROVIDER ?? "ollama";
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
@@ -67,6 +88,13 @@ const OPENCLAW_TIMEOUT_SECS = Number(process.env.OPENCLAW_TIMEOUT_SECS ?? 45);
 const OPENCLAW_THINKING = process.env.OPENCLAW_THINKING ?? "off";
 const OPENCLAW_SESSION_PREFIX = process.env.OPENCLAW_SESSION_PREFIX ?? "agentic-coding-assistant";
 const PHONE_CODEX_CONTROL_PROVIDER = process.env.PHONE_CODEX_CONTROL_PROVIDER ?? CODEX_CONTROL_PROVIDER;
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID ?? "";
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN ?? "";
+const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER ?? "";
+const TWILIO_WEBHOOK_BASE_URL = process.env.TWILIO_WEBHOOK_BASE_URL ?? "";
+const TWILIO_SMS_STATUS_CALLBACK_URL = process.env.TWILIO_SMS_STATUS_CALLBACK_URL ?? "";
+const PIPECAT_PUBLIC_WS_URL = process.env.PIPECAT_PUBLIC_WS_URL ?? "";
+const PIPECAT_WS_PROXY_TARGET = process.env.PIPECAT_WS_PROXY_TARGET ?? "127.0.0.1:7860";
 const CODEX_PILOT_SYSTEM_PROMPT =
   process.env.CODEX_PILOT_SYSTEM_PROMPT ??
   `You are the Codex pilot underneath an agentic coding voice assistant.
@@ -154,9 +182,36 @@ function sse(res, event, data) {
 }
 
 async function readJson(req) {
+  const body = await readRequestText(req);
+  return body ? JSON.parse(body) : {};
+}
+
+async function readRequestText(req) {
   let body = "";
   for await (const chunk of req) body += chunk;
-  return body ? JSON.parse(body) : {};
+  return body;
+}
+
+async function readForm(req) {
+  const body = await readRequestText(req);
+  return Object.fromEntries(new URLSearchParams(body));
+}
+
+function xmlEscape(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function sendTwiML(res, body) {
+  res.writeHead(200, {
+    "Content-Type": "text/xml; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  res.end(`<?xml version="1.0" encoding="UTF-8"?><Response>${body}</Response>`);
 }
 
 function readJsonFile(filePath, fallback) {
@@ -307,6 +362,24 @@ function recordPhoneBridgeExchange(messages = [], assistantText = "") {
   writeVoiceSessions(sessions);
   if (latestUser) appendVoiceSessionMessage(session.id, { role: "user", content: latestUser, source: "phone_bridge", route: "codex_pilot" });
   if (assistantText) appendVoiceSessionMessage(session.id, { role: "assistant", content: assistantText, source: "phone_bridge", route: "codex_pilot" });
+}
+
+function findOrCreateTelephonySession({ source, userId, userName, projectName, title }) {
+  const sessions = readVoiceSessions();
+  const existing = sessions.find((session) => session.source === source && session.userId === userId && session.status === "active");
+  if (existing) return existing;
+
+  const session = createVoiceSession({
+    source,
+    projectMode: "existing_project",
+    projectName,
+    title,
+    userId,
+    userName,
+  });
+  sessions.unshift(session);
+  writeVoiceSessions(sessions);
+  return session;
 }
 
 function normalizeMessages(messages = [], systemPrompt = DEFAULT_AGENT_PROMPT) {
@@ -1639,6 +1712,210 @@ function buildPhoneCodexPrompt(messages = []) {
   ].join("\n");
 }
 
+function decodeOpenAICompatibleSse(payload) {
+  let content = "";
+  const events = [];
+  for (const block of String(payload || "").split(/\n\n+/)) {
+    for (const rawLine of block.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line.startsWith("data:")) continue;
+      const data = line.slice("data:".length).trim();
+      if (!data || data === "[DONE]") continue;
+      try {
+        const parsed = JSON.parse(data);
+        events.push(parsed);
+        content += parsed.choices?.[0]?.delta?.content ?? parsed.choices?.[0]?.message?.content ?? "";
+      } catch {
+        events.push({ raw: data });
+      }
+    }
+  }
+  return { content: content.trim(), events };
+}
+
+function twilioConfigured() {
+  return Boolean(TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN && TWILIO_PHONE_NUMBER);
+}
+
+function twilioVoiceStreamUrl(req) {
+  if (PIPECAT_PUBLIC_WS_URL) return PIPECAT_PUBLIC_WS_URL;
+  const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
+  return `wss://${host}/ws`;
+}
+
+function twilioWebhookUrl(pathname) {
+  const base = TWILIO_WEBHOOK_BASE_URL.replace(/\/$/, "");
+  return base ? `${base}${pathname}` : pathname;
+}
+
+function sendTwilioSms({ to, from, body }) {
+  if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !from || !to || !body) {
+    return Promise.resolve({ ok: false, reason: "missing_twilio_config" });
+  }
+
+  return fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`).toString("base64")}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      From: from,
+      To: to,
+      Body: body.slice(0, 1500),
+      ...(TWILIO_SMS_STATUS_CALLBACK_URL ? { StatusCallback: TWILIO_SMS_STATUS_CALLBACK_URL } : {}),
+    }),
+  })
+    .then(async (response) => ({ ok: response.ok, status: response.status, body: await response.text() }))
+    .catch((error) => ({ ok: false, reason: error instanceof Error ? error.message : String(error) }));
+}
+
+async function completeSmsAssistantText(messages, client) {
+  const prompt = buildPhoneCodexPrompt(messages);
+  const controlProvider = activeControlProvider(PHONE_CODEX_CONTROL_PROVIDER, client);
+
+  if (controlProvider === "openclaw" && openClawAvailable()) {
+    const result = await runOpenClawAgent(
+      [
+        "You are powering an agentic coding assistant over SMS.",
+        "Use OpenClaw to control Codex/system tools when useful, then return a concise text-message response.",
+        "",
+        prompt,
+      ].join("\n"),
+      client,
+      __dirname,
+    );
+    const text = result.ok
+      ? result.text
+      : `OpenClaw control failed and I could not complete the SMS request. ${result.error || result.stderr?.trim().split("\n").filter(Boolean).slice(-1)[0] || ""}`.trim();
+    const polishedText = await polishAssistantResponse({
+      text,
+      messages,
+      client,
+      targetWorkspace: __dirname,
+    });
+    return polishedText || text;
+  }
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/phone/v1/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: "Bearer local-codex",
+    },
+    body: JSON.stringify({
+      model: "codex-pilot",
+      stream: true,
+      controlProvider: "codex",
+      messages,
+    }),
+  });
+  const raw = await response.text();
+  if (!response.ok) throw new Error(`SMS Codex bridge failed ${response.status}: ${raw.slice(0, 300)}`);
+  const { content } = decodeOpenAICompatibleSse(raw);
+  return content || "I finished, but could not summarize the result clearly.";
+}
+
+async function runSmsAssistantTurn({ sessionId, from, to, messages }) {
+  const client = {
+    project_name: "SMS coding assistant",
+    session_id: sessionId,
+    user_id: safeId(`sms_${from}`, "sms_caller"),
+    control_provider: PHONE_CODEX_CONTROL_PROVIDER,
+  };
+
+  try {
+    const text = await completeSmsAssistantText(messages, client);
+    appendVoiceSessionMessage(sessionId, {
+      role: "assistant",
+      content: text,
+      source: "sms_bridge",
+      route: "codex_pilot",
+    });
+    await sendTwilioSms({ to: from, from: to || TWILIO_PHONE_NUMBER, body: text });
+  } catch (error) {
+    const text = `I hit an error while working on that SMS request: ${error instanceof Error ? error.message : String(error)}`.slice(0, 1500);
+    appendVoiceSessionMessage(sessionId, {
+      role: "assistant",
+      content: text,
+      source: "sms_bridge",
+      route: "codex_pilot",
+    });
+    await sendTwilioSms({ to: from, from: to || TWILIO_PHONE_NUMBER, body: text });
+  }
+}
+
+async function twilioParams(req, url) {
+  const query = Object.fromEntries(url.searchParams);
+  if (req.method === "GET") return query;
+  const type = String(req.headers["content-type"] || "");
+  if (type.includes("application/json")) return { ...query, ...(await readJson(req)) };
+  return { ...query, ...(await readForm(req)) };
+}
+
+async function handleTwilioVoiceWebhook(req, res) {
+  const streamUrl = twilioVoiceStreamUrl(req);
+  sendTwiML(
+    res,
+    `<Connect><Stream url="${xmlEscape(streamUrl)}" /></Connect>`,
+  );
+}
+
+async function handleTwilioSmsWebhook(req, res, url) {
+  const params = await twilioParams(req, url);
+  const body = safeText(params.Body);
+  const from = safeText(params.From, "unknown");
+  const to = safeText(params.To, TWILIO_PHONE_NUMBER);
+  const userId = safeId(`sms_${from}`, "sms_caller");
+
+  if (/\b(no-sms|smoke test)\b/i.test(body)) {
+    sendTwiML(res, "<Message>no-sms webhook ready</Message>");
+    return;
+  }
+
+  if (!body) {
+    sendTwiML(res, "<Message>Send me a coding request and I will work on it through Codex.</Message>");
+    return;
+  }
+
+  const session = findOrCreateTelephonySession({
+    source: "sms_bridge",
+    userId,
+    userName: from,
+    projectName: "SMS coding assistant",
+    title: sessionTitleFromText(body, "SMS coding request"),
+  });
+  const appended = appendVoiceSessionMessage(session.id, {
+    role: "user",
+    content: body,
+    source: "sms_bridge",
+    route: "codex_pilot",
+  });
+  const messages = appended?.session?.messages || [{ role: "user", content: body }];
+
+  sendTwiML(res, "<Message>Got it. I am working through Codex and will text back with the result.</Message>");
+  setImmediate(() => {
+    runSmsAssistantTurn({ sessionId: session.id, from, to, messages }).catch((error) => {
+      console.error("sms assistant turn failed", error);
+    });
+  });
+}
+
+function handleTwilioStatus(res) {
+  json(res, 200, {
+    configured: twilioConfigured(),
+    phoneNumber: TWILIO_PHONE_NUMBER || null,
+    voiceWebhookPath: "/api/twilio/voice",
+    smsWebhookPath: "/api/twilio/sms",
+    voiceWebhookUrl: twilioWebhookUrl("/api/twilio/voice"),
+    smsWebhookUrl: twilioWebhookUrl("/api/twilio/sms"),
+    mediaStreamUrl: PIPECAT_PUBLIC_WS_URL || null,
+    localMediaStreamProxy: `/ws -> ${PIPECAT_WS_PROXY_TARGET}/ws`,
+    voiceRuntime: "Twilio Programmable Voice -> Media Stream -> Pipecat -> Codex bridge",
+    smsRuntime: "Twilio Programmable Messaging -> app webhook -> OpenClaw/Codex -> outbound SMS",
+  });
+}
+
 async function handlePhoneCodexCompletion(req, res) {
   const body = await readJson(req);
   const id = `chatcmpl-phone-${randomUUID()}`;
@@ -2333,6 +2610,14 @@ async function handleProviderHealth(req, res) {
           "Creates a normal Codex Desktop app chat in generated project folders so they appear under Projects.",
       },
     },
+    twilio: {
+      configured: twilioConfigured(),
+      phoneNumber: TWILIO_PHONE_NUMBER || null,
+      voiceWebhookPath: "/api/twilio/voice",
+      smsWebhookPath: "/api/twilio/sms",
+      mediaStreamConfigured: Boolean(PIPECAT_PUBLIC_WS_URL),
+      purpose: "Phone calls and SMS route into the same OpenClaw/Codex coding assistant.",
+    },
     openclaw: openClawStatusPayload(),
     tts: {
       defaultProvider: TTS_PROVIDER,
@@ -2568,6 +2853,10 @@ const server = http.createServer(async (req, res) => {
         codexControlProvider: CODEX_CONTROL_PROVIDER,
         openclawAvailable: openClawAvailable(),
         openclawLocalMode: OPENCLAW_LOCAL,
+        twilioConfigured: twilioConfigured(),
+        twilioPhoneNumber: TWILIO_PHONE_NUMBER || null,
+        twilioVoiceWebhookPath: "/api/twilio/voice",
+        twilioSmsWebhookPath: "/api/twilio/sms",
       });
       return;
     }
@@ -2604,6 +2893,21 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === "/api/openclaw/status") {
       json(res, 200, openClawStatusPayload());
+      return;
+    }
+
+    if (url.pathname === "/api/twilio/status" && req.method === "GET") {
+      handleTwilioStatus(res);
+      return;
+    }
+
+    if (url.pathname === "/api/twilio/voice" && (req.method === "POST" || req.method === "GET")) {
+      await handleTwilioVoiceWebhook(req, res);
+      return;
+    }
+
+    if (url.pathname === "/api/twilio/sms" && (req.method === "POST" || req.method === "GET")) {
+      await handleTwilioSmsWebhook(req, res, url);
       return;
     }
 
@@ -2719,6 +3023,41 @@ const server = http.createServer(async (req, res) => {
     json(res, 500, { error: error instanceof Error ? error.message : "Internal server error" });
   }
 });
+
+function proxyPipecatWebSocket(req, socket, head) {
+  const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+  if (url.pathname !== "/ws") {
+    socket.destroy();
+    return;
+  }
+
+  const [host, rawPort] = PIPECAT_WS_PROXY_TARGET.split(":");
+  const portNumber = Number(rawPort || 7860);
+  const upstream = net.connect(portNumber, host || "127.0.0.1");
+
+  upstream.on("connect", () => {
+    const headers = { ...req.headers, host: PIPECAT_WS_PROXY_TARGET };
+    const requestHead = [
+      `${req.method} ${req.url} HTTP/${req.httpVersion}`,
+      ...Object.entries(headers).map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : value}`),
+      "",
+      "",
+    ].join("\r\n");
+    upstream.write(requestHead);
+    if (head?.length) upstream.write(head);
+    socket.pipe(upstream);
+    upstream.pipe(socket);
+  });
+
+  upstream.on("error", () => {
+    socket.destroy();
+  });
+  socket.on("error", () => {
+    upstream.destroy();
+  });
+}
+
+server.on("upgrade", proxyPipecatWebSocket);
 
 server.listen(port, () => {
   console.log(`Agentic coding voice assistant running at http://localhost:${port}`);

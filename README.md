@@ -188,7 +188,7 @@ That file is intentionally ignored by git. Browser, typed, and phone-bridge turn
 
 ## Phone Calls Without Rebuilding Voice Infra
 
-Do not hand-roll Twilio audio transport. The phone path should use Pipecat:
+Do not hand-roll Twilio audio transport. Calls use Twilio Media Streams through Pipecat, while SMS uses Twilio Programmable Messaging and the same OpenClaw/Codex control path as browser text:
 
 ```text
 Twilio call
@@ -196,6 +196,11 @@ Twilio call
 -> Pipecat FastAPIWebsocketTransport + TwilioFrameSerializer
 -> STT / LLM-or-Codex-pilot / TTS pipeline
 -> Twilio caller
+
+Twilio SMS
+-> /api/twilio/sms
+-> OpenClaw/Codex coding turn
+-> Twilio outbound SMS response
 ```
 
 Architecture decision:
@@ -207,10 +212,11 @@ docs/architecture/voice-telephony-stack-decision.md
 Local free-tier development flow:
 
 1. Create a Twilio trial account and trial voice number.
-2. Expose the local Pipecat bot with ngrok.
-3. Configure a TwiML Bin with `<Connect><Stream url="wss://YOUR_NGROK_DOMAIN/ws" />`.
-4. Assign the TwiML Bin to the trial number.
-5. Call from a verified caller ID.
+2. Run the Node app on port `3000` and the Pipecat bot on port `7860`.
+3. Expose the Node app with a public HTTPS URL. The Node app proxies `/ws` to the local Pipecat bot, so one public URL can cover Voice, SMS, and the media stream.
+4. Set `TWILIO_WEBHOOK_BASE_URL` to the app URL and either clear `PIPECAT_PUBLIC_WS_URL` or set it to `wss://YOUR_APP_DOMAIN/ws`.
+5. Configure the trial number with `npm run twilio:configure`.
+6. Call from a verified caller ID or text the trial number from a verified phone.
 
 The repo now includes a local Pipecat/Twilio bot:
 
@@ -219,19 +225,33 @@ npm run phone:install
 npm run phone
 ```
 
-Expose it from a second terminal:
+Expose the Node app from another terminal:
 
 ```bash
-ngrok http 7860
+ngrok http 3000
 ```
 
-Then wire the claimed Twilio number to the runner's generated TwiML endpoint:
+Keep Pipecat local on port `7860`; the Node app forwards Twilio's WebSocket upgrade from `/ws` to `PIPECAT_WS_PROXY_TARGET`:
+
+```env
+PIPECAT_WS_PROXY_TARGET=127.0.0.1:7860
+```
+
+Then wire the claimed Twilio number to the app webhook endpoint:
 
 ```bash
 npm run twilio:configure
 ```
 
-That writes `TWILIO_WEBHOOK_BASE_URL` and `PIPECAT_PUBLIC_WS_URL` to `.env` and configures the Twilio number's Voice webhook to `POST https://YOUR_NGROK_DOMAIN/`. Pipecat's runner returns TwiML that connects the call to `wss://YOUR_NGROK_DOMAIN/ws`.
+That writes `TWILIO_WEBHOOK_BASE_URL`, `TWILIO_VOICE_WEBHOOK_URL`, `TWILIO_SMS_WEBHOOK_URL`, and `PIPECAT_PUBLIC_WS_URL` to `.env`, then configures the Twilio number:
+
+```text
+Voice webhook: POST https://YOUR_NGROK_DOMAIN/api/twilio/voice
+SMS webhook:   POST https://YOUR_NGROK_DOMAIN/api/twilio/sms
+Media stream:  wss://YOUR_NGROK_DOMAIN/ws -> local Pipecat :7860/ws
+```
+
+The Node app returns Voice TwiML with `<Connect><Stream />` and handles inbound SMS immediately with a short acknowledgement. The coding work runs asynchronously through OpenClaw/Codex and sends the result back by outbound Twilio SMS.
 
 The first call may take longer because local Whisper and Kokoro models can download/warm up. The current phone runtime uses:
 
@@ -239,6 +259,7 @@ The first call may take longer because local Whisper and Kokoro models can downl
 - Local Whisper STT through `WhisperSTTService`.
 - Local Ollama `qwen3.5` through `OLLamaLLMService`.
 - Local Kokoro TTS through `KokoroTTSService`.
+- Twilio SMS webhooks through `/api/twilio/sms`, using the same session/history store as browser and phone turns.
 
 Production/demo path:
 

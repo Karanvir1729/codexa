@@ -10,6 +10,10 @@ function twimlHasStream(text) {
   return /<\s*Connect[\s>]/i.test(text) && /<\s*Stream[\s>]/i.test(text) && /wss:\/\//i.test(text);
 }
 
+function twimlHasSmsReady(text) {
+  return /<\s*Message[\s>]/i.test(text) && /no-sms webhook ready/i.test(text);
+}
+
 async function checkHttpPost(url, label) {
   const response = await fetch(url, { method: "POST" });
   const text = await response.text();
@@ -17,6 +21,25 @@ async function checkHttpPost(url, label) {
     name: label,
     ok: response.ok && twimlHasStream(text),
     detail: response.ok ? `HTTP ${response.status}, TwiML stream ${twimlHasStream(text) ? "found" : "missing"}` : `HTTP ${response.status}`,
+    status: response.status,
+  };
+}
+
+async function checkSmsPost(url, label) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      From: "+15555550100",
+      To: env.TWILIO_PHONE_NUMBER || "+15555550199",
+      Body: "no-sms smoke test",
+    }),
+  });
+  const text = await response.text();
+  return {
+    name: label,
+    ok: response.ok && twimlHasSmsReady(text),
+    detail: response.ok ? `HTTP ${response.status}, SMS TwiML ${twimlHasSmsReady(text) ? "found" : "missing"}` : `HTTP ${response.status}`,
     status: response.status,
   };
 }
@@ -63,19 +86,26 @@ async function checkTwilioWebhook(baseUrl) {
     },
   );
   const payload = await response.json().catch(() => ({}));
-  const expected = `${baseUrl.replace(/\/$/, "")}/`;
+  const expectedVoice = `${baseUrl.replace(/\/$/, "")}/api/twilio/voice`;
+  const expectedSms = `${baseUrl.replace(/\/$/, "")}/api/twilio/sms`;
   return {
     name: "Twilio number webhook",
-    ok: response.ok && payload.voice_url === expected && payload.voice_method === "POST",
+    ok:
+      response.ok &&
+      payload.voice_url === expectedVoice &&
+      payload.voice_method === "POST" &&
+      payload.sms_url === expectedSms &&
+      payload.sms_method === "POST",
     detail: response.ok
-      ? `voice_url ${payload.voice_url === expected ? "matches" : "does not match"}, method=${payload.voice_method}`
+      ? `voice_url ${payload.voice_url === expectedVoice ? "matches" : "does not match"}, sms_url ${payload.sms_url === expectedSms ? "matches" : "does not match"}`
       : `Twilio API returned ${response.status}`,
   };
 }
 
 async function main() {
   const port = env.PHONE_BOT_PORT || "7860";
-  const baseUrl = (env.TWILIO_WEBHOOK_BASE_URL || env.PIPECAT_PUBLIC_URL || "").replace(/\/$/, "");
+  const appBaseUrl = (env.TWILIO_WEBHOOK_BASE_URL || "").replace(/\/$/, "");
+  const pipecatPublicUrl = (env.PIPECAT_PUBLIC_URL || "").replace(/\/$/, "");
   const checks = [];
 
   checks.push(await checkHttpPost(`http://127.0.0.1:${port}/`, "local Pipecat TwiML endpoint").catch((error) => ({
@@ -83,26 +113,50 @@ async function main() {
     ok: false,
     detail: error instanceof Error ? error.message : String(error),
   })));
+  checks.push(await checkHttpPost("http://127.0.0.1:3000/api/twilio/voice", "local app Voice webhook").catch((error) => ({
+    name: "local app Voice webhook",
+    ok: false,
+    detail: error instanceof Error ? error.message : String(error),
+  })));
+  checks.push(await checkSmsPost("http://127.0.0.1:3000/api/twilio/sms", "local app SMS webhook").catch((error) => ({
+    name: "local app SMS webhook",
+    ok: false,
+    detail: error instanceof Error ? error.message : String(error),
+  })));
 
-  checks.push(await checkNgrok(baseUrl).catch((error) => ({
+  checks.push(await checkNgrok(appBaseUrl || pipecatPublicUrl).catch((error) => ({
     name: "ngrok tunnel",
     ok: false,
     detail: error instanceof Error ? error.message : String(error),
   })));
 
-  if (baseUrl) {
-    checks.push(await checkHttpPost(`${baseUrl}/`, "public TwiML endpoint").catch((error) => ({
-      name: "public TwiML endpoint",
+  if (pipecatPublicUrl && pipecatPublicUrl !== appBaseUrl) {
+    checks.push(await checkHttpPost(`${pipecatPublicUrl}/`, "public Pipecat TwiML endpoint").catch((error) => ({
+      name: "public Pipecat TwiML endpoint",
       ok: false,
       detail: error instanceof Error ? error.message : String(error),
     })));
-    checks.push(await checkTwilioWebhook(baseUrl).catch((error) => ({
+  }
+
+  if (appBaseUrl) {
+    checks.push(await checkHttpPost(`${appBaseUrl}/api/twilio/voice`, "public app Voice webhook").catch((error) => ({
+      name: "public app Voice webhook",
+      ok: false,
+      detail: error instanceof Error ? error.message : String(error),
+    })));
+    checks.push(await checkSmsPost(`${appBaseUrl}/api/twilio/sms`, "public app SMS webhook").catch((error) => ({
+      name: "public app SMS webhook",
+      ok: false,
+      detail: error instanceof Error ? error.message : String(error),
+    })));
+    checks.push(await checkTwilioWebhook(appBaseUrl).catch((error) => ({
       name: "Twilio number webhook",
       ok: false,
       detail: error instanceof Error ? error.message : String(error),
     })));
   } else {
-    checks.push({ name: "public TwiML endpoint", ok: false, detail: "TWILIO_WEBHOOK_BASE_URL is not configured" });
+    checks.push({ name: "public app Voice webhook", ok: false, detail: "TWILIO_WEBHOOK_BASE_URL is not configured" });
+    checks.push({ name: "public app SMS webhook", ok: false, detail: "TWILIO_WEBHOOK_BASE_URL is not configured" });
     checks.push({ name: "Twilio number webhook", ok: false, detail: "TWILIO_WEBHOOK_BASE_URL is not configured" });
   }
 

@@ -115,6 +115,31 @@ test("openclaw status exposes the system-control adapter", async ({ request }) =
   expect(status.purpose).toContain("control Codex");
 });
 
+test("twilio webhooks expose voice stream TwiML and SMS bridge TwiML", async ({ request }) => {
+  const statusResponse = await request.get("/api/twilio/status");
+  expect(statusResponse.ok()).toBeTruthy();
+  const status = await statusResponse.json();
+  expect(status.voiceWebhookPath).toBe("/api/twilio/voice");
+  expect(status.smsWebhookPath).toBe("/api/twilio/sms");
+  expect(status.smsRuntime).toContain("OpenClaw/Codex");
+
+  const voice = await request.post("/api/twilio/voice");
+  expect(voice.ok()).toBeTruthy();
+  const voiceXml = await voice.text();
+  expect(voiceXml).toContain("<Response>");
+  expect(voiceXml).toContain("<Connect>");
+  expect(voiceXml).toContain("<Stream");
+  expect(voiceXml).toContain("wss://");
+
+  const sms = await request.post("/api/twilio/sms", {
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    data: "From=%2B15555550100&To=%2B15555550199&Body=no-sms%20smoke%20test",
+  });
+  expect(sms.ok()).toBeTruthy();
+  const smsXml = await sms.text();
+  expect(smsXml).toContain("<Message>no-sms webhook ready</Message>");
+});
+
 test("voice sessions persist project chat history", async ({ request }) => {
   const projectName = `Test project ${Date.now()}`;
   const create = await request.post("/api/sessions", {
