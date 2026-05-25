@@ -200,12 +200,16 @@ http://localhost:3000/test-dashboard.html
 Runner commands:
 
 ```bash
+npm run dev:loop
+npm run dev:loop:watch
 npm run test:voice:runner
 npm run test:voice:eval
 npm run test:voice:api
 npm run test:voice:ui
 npm run test:voice:acoustic
 ```
+
+`npm run dev:loop` is the default build/test loop for active development. It runs syntax checks, then the dashboard-backed voice test runner. `npm run dev:loop:watch` polls source files and reruns the same loop whenever code changes.
 
 Suites:
 
@@ -221,6 +225,7 @@ Test run artifacts are written to:
 ```text
 data/test-runs/latest.json
 data/test-runs/history.json
+data/test-runs/dev-loop-latest.json
 data/test-runs/<run-id>.json
 ```
 

@@ -11,6 +11,8 @@
     "start": "node server.mjs",
     "stt": ".venv-whisperx/bin/python services/whisperx_adapter.py --port 9001",
     "stt:install": "python3.12 -m venv .venv-whisperx && .venv-whisperx/bin/pip install -U pip && .venv-whisperx/bin/pip install -r requirements-whisperx.txt",
+    "dev:loop": "node scripts/develop-test-loop.mjs",
+    "dev:loop:watch": "node scripts/develop-test-loop.mjs --watch",
     "bench": "node scripts/bench-voice-loop.mjs",
     "test:voice:runner": "node scripts/voice-test-runner.mjs",
     "test:voice:eval": "node scripts/voice-eval-suite.mjs",
