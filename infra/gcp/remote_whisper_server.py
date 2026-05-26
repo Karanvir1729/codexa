@@ -14,6 +14,7 @@ DEVICE = os.environ.get("REMOTE_WHISPER_DEVICE", "cuda")
 COMPUTE_TYPE = os.environ.get("REMOTE_WHISPER_COMPUTE_TYPE", "int8_float16")
 CPU_THREADS = int(os.environ.get("REMOTE_WHISPER_CPU_THREADS", "4"))
 NUM_WORKERS = int(os.environ.get("REMOTE_WHISPER_NUM_WORKERS", "1"))
+MIN_RMS = float(os.environ.get("REMOTE_WHISPER_MIN_RMS", "0.002"))
 
 app = FastAPI()
 model: WhisperModel | None = None
@@ -62,6 +63,25 @@ async def transcribe(
     raw = await request.body()
     audio = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
     audio_duration_s = len(audio) / sample_rate if sample_rate else 0
+    audio_rms = float(np.sqrt(np.mean(np.square(audio)))) if len(audio) else 0.0
+    if audio_duration_s < 0.08 or audio_rms < MIN_RMS:
+        return {
+            "text": "",
+            "language": language,
+            "language_probability": None,
+            "duration": audio_duration_s,
+            "audio_duration_ms": int(audio_duration_s * 1000),
+            "elapsed_ms": 0,
+            "realtime_factor": 0,
+            "segments": [],
+            "provider": "remote_whisper",
+            "model": MODEL_NAME,
+            "device": DEVICE,
+            "compute_type": COMPUTE_TYPE,
+            "audio_rms": audio_rms,
+            "filtered_reason": "silence",
+        }
+
     started = time.perf_counter()
     segments_iter, info = globals()["model"].transcribe(
         audio,

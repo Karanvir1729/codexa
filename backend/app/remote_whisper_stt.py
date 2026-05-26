@@ -58,7 +58,10 @@ class RemoteWhisperSTTService(SegmentedSTTService):
             await self.stop_processing_metrics()
         except Exception as exc:
             logger.exception("Remote Whisper STT failed")
-            yield ErrorFrame(error=f"Remote Whisper STT failed: {exc}")
+            await self.stop_processing_metrics()
+            yield ErrorFrame(
+                error=f"Remote Whisper STT failed: {_failure_detail(exc, self.options.base_url)}"
+            )
             return
 
         text = str(transcript.get("text", "")).strip()
@@ -115,3 +118,16 @@ def _pipecat_language(language: str | None) -> Language | None:
         return Language(language)
     except ValueError:
         return None
+
+
+def _failure_detail(exc: Exception, base_url: str) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        body = exc.response.text.strip()
+        if len(body) > 300:
+            body = f"{body[:300]}..."
+        return f"{type(exc).__name__} from {base_url}: HTTP {exc.response.status_code} {body}"
+
+    message = str(exc).strip()
+    if message:
+        return f"{type(exc).__name__} contacting {base_url}: {message}"
+    return f"{type(exc).__name__} contacting {base_url}"

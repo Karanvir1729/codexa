@@ -183,14 +183,19 @@ NVIDIA_TTS_USE_SSL=false \
 ./scripts/run_local_voice.sh
 ```
 
-For a same-VPC GPU Whisper worker, run `infra/gcp/remote_whisper_server.py` on a CUDA VM and point the app at it:
+For a same-VPC GPU Whisper worker, `scripts/gcp_deploy_vllm.sh` provisions vLLM and
+`infra/gcp/remote_whisper_server.py` on the same CUDA VM. Point the app at the worker:
 
 ```bash
 LOCAL_STT_PROVIDER=remote_whisper \
-LOCAL_STT_MODEL=base \
+LOCAL_STT_MODEL=large-v3-turbo \
 REMOTE_WHISPER_BASE_URL=http://10.162.0.2:7001 \
 ./scripts/run_local_voice.sh
 ```
+
+The remote Whisper worker accepts raw 16 kHz int16 PCM, defaults to
+`large-v3-turbo`, and has an RMS silence gate so quiet WebRTC tails do not
+hallucinate filler text.
 
 For an Apple-Silicon MLX fallback, switch provider and model explicitly:
 

@@ -40,8 +40,10 @@ IMAGE_NAME="${GCP_IMAGE_NAME:-}"
 BOOT_DISK_SIZE_GB="${GCP_BOOT_DISK_SIZE_GB:-250}"
 BOOT_DISK_TYPE="${GCP_BOOT_DISK_TYPE:-pd-balanced}"
 FIREWALL_RULE="${GCP_VLLM_FIREWALL_RULE:-voice-agent-vllm-5000}"
+INTERNAL_FIREWALL_RULE="${GCP_VLLM_INTERNAL_FIREWALL_RULE:-voice-agent-vllm-internal}"
 NETWORK="${GCP_NETWORK:-default}"
 NETWORK_TAG="${GCP_VLLM_NETWORK_TAG:-voice-agent-vllm}"
+APP_INTERNAL_CIDR="${GCP_APP_INTERNAL_CIDR:-10.0.0.0/8}"
 
 MODEL_ID="${MODEL_ID:-nvidia/Llama-3.1-Nemotron-Nano-8B-v1}"
 SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-Llama-3.1-Nemotron-Nano-8B-v1}"
@@ -51,6 +53,14 @@ MAX_NUM_SEQS="${MAX_NUM_SEQS:-16}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}"
 VLLM_PORT="${VLLM_PORT:-5000}"
 VLLM_VERSION="${VLLM_VERSION:-0.10.2}"
+NVIDIA_DRIVER_PACKAGE="${NVIDIA_DRIVER_PACKAGE:-nvidia-driver-570}"
+REMOTE_WHISPER_MODEL="${REMOTE_WHISPER_MODEL:-large-v3-turbo}"
+REMOTE_WHISPER_DEVICE="${REMOTE_WHISPER_DEVICE:-cuda}"
+REMOTE_WHISPER_COMPUTE_TYPE="${REMOTE_WHISPER_COMPUTE_TYPE:-int8_float16}"
+REMOTE_WHISPER_CPU_THREADS="${REMOTE_WHISPER_CPU_THREADS:-4}"
+REMOTE_WHISPER_NUM_WORKERS="${REMOTE_WHISPER_NUM_WORKERS:-1}"
+REMOTE_WHISPER_PORT="${REMOTE_WHISPER_PORT:-7001}"
+REMOTE_WHISPER_MIN_RMS="${REMOTE_WHISPER_MIN_RMS:-0.002}"
 AUTO_STOP_HOURS="${AUTO_STOP_HOURS:-4}"
 HUGGINGFACE_TOKEN="${HUGGINGFACE_TOKEN:-${HF_TOKEN:-}}"
 VLLM_API_KEY="${VLLM_API_KEY:-}"
@@ -94,7 +104,9 @@ log "Project: $PROJECT_ID"
 log "Zone: $ZONE"
 log "Instance: $INSTANCE_NAME ($MACHINE_TYPE, ${GPU_COUNT} L4 GPU target)"
 log "Model: $MODEL_ID as $SERVED_MODEL_NAME"
+log "Remote Whisper: $REMOTE_WHISPER_MODEL on port $REMOTE_WHISPER_PORT"
 log "Allowed vLLM CIDR: $ALLOWED_CIDR"
+log "Allowed same-VPC CIDR: $APP_INTERNAL_CIDR"
 log "Auto-stop: ${AUTO_STOP_HOURS}h"
 
 quota_json="$(gcloud compute regions describe "$REGION" --project "$PROJECT_ID" --format=json 2>/dev/null || true)"
@@ -143,7 +155,23 @@ else
     --description "Restrict vLLM OpenAI-compatible API access for the voice agent")
 fi
 
-metadata_csv="model-id=${MODEL_ID},served-model-name=${SERVED_MODEL_NAME},tensor-parallel-size=${TENSOR_PARALLEL_SIZE},max-model-len=${MAX_MODEL_LEN},max-num-seqs=${MAX_NUM_SEQS},gpu-memory-utilization=${GPU_MEMORY_UTILIZATION},vllm-port=${VLLM_PORT},vllm-version=${VLLM_VERSION},auto-stop-hours=${AUTO_STOP_HOURS}"
+if gcloud compute firewall-rules describe "$INTERNAL_FIREWALL_RULE" --project "$PROJECT_ID" >/dev/null 2>&1; then
+  internal_firewall_cmd=(gcloud compute firewall-rules update "$INTERNAL_FIREWALL_RULE"
+    --project "$PROJECT_ID"
+    --allow "tcp:${VLLM_PORT},tcp:${REMOTE_WHISPER_PORT}"
+    --source-ranges "$APP_INTERNAL_CIDR"
+    --target-tags "$NETWORK_TAG")
+else
+  internal_firewall_cmd=(gcloud compute firewall-rules create "$INTERNAL_FIREWALL_RULE"
+    --project "$PROJECT_ID"
+    --network "$NETWORK"
+    --allow "tcp:${VLLM_PORT},tcp:${REMOTE_WHISPER_PORT}"
+    --source-ranges "$APP_INTERNAL_CIDR"
+    --target-tags "$NETWORK_TAG"
+    --description "Allow same-VPC app VMs to reach vLLM and remote Whisper")
+fi
+
+metadata_csv="model-id=${MODEL_ID},served-model-name=${SERVED_MODEL_NAME},tensor-parallel-size=${TENSOR_PARALLEL_SIZE},max-model-len=${MAX_MODEL_LEN},max-num-seqs=${MAX_NUM_SEQS},gpu-memory-utilization=${GPU_MEMORY_UTILIZATION},vllm-port=${VLLM_PORT},vllm-version=${VLLM_VERSION},nvidia-driver-package=${NVIDIA_DRIVER_PACKAGE},remote-whisper-model=${REMOTE_WHISPER_MODEL},remote-whisper-device=${REMOTE_WHISPER_DEVICE},remote-whisper-compute-type=${REMOTE_WHISPER_COMPUTE_TYPE},remote-whisper-cpu-threads=${REMOTE_WHISPER_CPU_THREADS},remote-whisper-num-workers=${REMOTE_WHISPER_NUM_WORKERS},remote-whisper-port=${REMOTE_WHISPER_PORT},remote-whisper-min-rms=${REMOTE_WHISPER_MIN_RMS},auto-stop-hours=${AUTO_STOP_HOURS}"
 if [[ -n "$VLLM_API_KEY" ]]; then
   metadata_csv="${metadata_csv},vllm-api-key=${VLLM_API_KEY}"
 fi
@@ -177,12 +205,14 @@ fi
 
 if [[ "$DRY_RUN" == "true" ]]; then
   shell_quote "${firewall_cmd[@]}"
+  shell_quote "${internal_firewall_cmd[@]}"
   shell_quote "${create_cmd[@]}"
   [[ -n "$hf_token_file" ]] && rm -f "$hf_token_file"
   exit 0
 fi
 
 "${firewall_cmd[@]}"
+"${internal_firewall_cmd[@]}"
 "${create_cmd[@]}"
 [[ -n "$hf_token_file" ]] && rm -f "$hf_token_file"
 
@@ -201,9 +231,13 @@ Local/backend env:
 
 Same-VPC app env:
   LOCAL_LLM_BASE_URL=http://${INTERNAL_IP}:${VLLM_PORT}/v1
+  LOCAL_STT_PROVIDER=remote_whisper
+  LOCAL_STT_MODEL=${REMOTE_WHISPER_MODEL}
+  REMOTE_WHISPER_BASE_URL=http://${INTERNAL_IP}:${REMOTE_WHISPER_PORT}
 
 Logs:
   gcloud compute ssh ${INSTANCE_NAME} --project ${PROJECT_ID} --zone ${ZONE} --command 'sudo journalctl -u vllm -f'
+  gcloud compute ssh ${INSTANCE_NAME} --project ${PROJECT_ID} --zone ${ZONE} --command 'sudo journalctl -u remote-whisper -f'
 EOF
 
 if [[ "$WAIT_FOR_HEALTH" == "true" ]]; then
