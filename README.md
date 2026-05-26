@@ -165,7 +165,9 @@ Default local/cloud voice stack:
 
 - Transport: Pipecat `LocalAudioTransport` using the Mac microphone and speaker.
 - STT: Pipecat `WhisperSTTService` / Faster Whisper with multilingual `LOCAL_STT_MODEL=base` and `LOCAL_STT_LANGUAGE=auto`, which keeps Hindi/English input usable without the 2s+ CPU latency of `small`. Use `LOCAL_STT_PROVIDER=whisperx` or `LOCAL_STT_PROVIDER=nvidia` for heavier model paths.
-- TTS: `LOCAL_TTS_PROVIDER=auto`, which uses a healthy local Fish Speech server when available and falls back to `KokoroTTSService` with voice `af_heart`.
+- TTS: `LOCAL_TTS_PROVIDER=kokoro` or `auto`, using sentence-level aggregation with
+  voice `af_heart`. Do not use token-level aggregation with local TTS unless you
+  intentionally want word-by-word speech.
 - VAD/interruption: Pipecat Silero VAD with a 50 ms speech-start window, 120 ms speech-stop window, 120 ms user speech timeout, and 10 ms output chunks.
 - LLM: Ollama OpenAI-compatible API using `qwen2.5:0.5b`.
 

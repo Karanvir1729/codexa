@@ -331,8 +331,12 @@ async def create_local_tts_service(settings: Settings):
     from pipecat.services.kokoro.tts import KokoroTTSService
 
     language = resolve_tts_language(settings)
+    kokoro_dir = Path(settings.kokoro_download_dir)
+    kokoro_dir.mkdir(parents=True, exist_ok=True)
     return "kokoro", KokoroTTSService(
         settings=KokoroTTSService.Settings(voice=settings.local_tts_voice, language=language),
+        model_path=str(kokoro_dir / "kokoro-v1.0.onnx"),
+        voices_path=str(kokoro_dir / "voices-v1.0.bin"),
         sample_rate=settings.local_audio_output_sample_rate,
         text_aggregation_mode=text_aggregation_mode,
     )

@@ -99,6 +99,7 @@ class Settings(BaseSettings):
     ] = "auto"
     local_tts_voice: str = "af_heart"
     local_tts_text_aggregation_mode: Literal["sentence", "token"] = "sentence"
+    kokoro_download_dir: str = "/app/data/kokoro"
     piper_download_dir: str = "/app/data/piper"
     nvidia_stt_server: str = "grpc.nvcf.nvidia.com:443"
     nvidia_stt_use_ssl: bool = True
