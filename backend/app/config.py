@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Any
 from typing import Literal
 
 from pydantic import Field, field_validator
@@ -67,6 +68,9 @@ class Settings(BaseSettings):
     local_audio_output_10ms_chunks: int = Field(default=1, ge=1)
     local_audio_output_end_silence_secs: int = Field(default=0, ge=0)
     small_webrtc_ice_servers: str = "stun:stun.l.google.com:19302"
+    small_webrtc_turn_urls: str = ""
+    small_webrtc_turn_username: str | None = None
+    small_webrtc_turn_credential: str | None = None
     local_stt_provider: Literal[
         "whisper", "remote_whisper", "whisperx", "mlx_whisper", "nvidia", "deepgram", "google"
     ] = "whisper"
@@ -154,6 +158,22 @@ class Settings(BaseSettings):
     @property
     def small_webrtc_ice_server_list(self) -> list[str]:
         return [server.strip() for server in self.small_webrtc_ice_servers.split(",") if server.strip()]
+
+    @property
+    def small_webrtc_browser_ice_servers(self) -> list[dict[str, Any]]:
+        servers: list[dict[str, Any]] = [
+            {"urls": server} for server in self.small_webrtc_ice_server_list
+        ]
+        turn_urls = [url.strip() for url in self.small_webrtc_turn_urls.split(",") if url.strip()]
+        if turn_urls and self.small_webrtc_turn_username and self.small_webrtc_turn_credential:
+            servers.append(
+                {
+                    "urls": turn_urls,
+                    "username": self.small_webrtc_turn_username,
+                    "credential": self.small_webrtc_turn_credential,
+                }
+            )
+        return servers
 
     @property
     def active_model(self) -> str:

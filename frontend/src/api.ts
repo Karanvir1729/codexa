@@ -55,6 +55,10 @@ export type EvalSchedulerState = {
   next_run_at: string | null;
 };
 
+export type WebRTCIceConfig = {
+  iceServers: RTCIceServer[];
+};
+
 export const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
 export function apiUrl(path: string) {
@@ -86,6 +90,10 @@ export function getPrompt() {
 
 export function getCost() {
   return request<{ cost_guard: CostGuard }>("/api/cost");
+}
+
+export function getWebRTCIceConfig() {
+  return request<WebRTCIceConfig>("/api/webrtc/ice-config");
 }
 
 export function sendMessage(message: string, conversationId?: string) {

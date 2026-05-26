@@ -27,9 +27,11 @@ IMAGE_FAMILY="${GCP_APP_IMAGE_FAMILY:-ubuntu-2204-lts}"
 IMAGE_PROJECT="${GCP_APP_IMAGE_PROJECT:-ubuntu-os-cloud}"
 BOOT_DISK_SIZE_GB="${GCP_APP_BOOT_DISK_SIZE_GB:-60}"
 FIREWALL_RULE="${GCP_APP_FIREWALL_RULE:-voice-agent-app-8080}"
+WEBRTC_FIREWALL_RULE="${GCP_APP_WEBRTC_FIREWALL_RULE:-voice-agent-app-webrtc-udp}"
 NETWORK="${GCP_NETWORK:-default}"
 NETWORK_TAG="${GCP_APP_NETWORK_TAG:-voice-agent-app}"
 APP_PORT="${APP_PORT:-8080}"
+WEBRTC_UDP_PORT_RANGE="${WEBRTC_UDP_PORT_RANGE:-32768-60999}"
 REMOTE_DIR="${REMOTE_DIR:-/opt/voice-agent}"
 
 if [[ "${GCP_BILLING_ACK:-false}" != "true" && "${DRY_RUN:-false}" != "true" ]]; then
@@ -99,6 +101,20 @@ if gcloud compute firewall-rules describe "$FIREWALL_RULE" --project "$PROJECT_I
     --source-ranges "$ALLOWED_CIDR")
 fi
 
+webrtc_firewall_cmd=(gcloud compute firewall-rules create "$WEBRTC_FIREWALL_RULE"
+  --project "$PROJECT_ID"
+  --network "$NETWORK"
+  --allow "udp:${WEBRTC_UDP_PORT_RANGE}"
+  --source-ranges "0.0.0.0/0"
+  --target-tags "$NETWORK_TAG"
+  --description "Allow browser WebRTC media candidates to reach the Pipecat backend")
+if gcloud compute firewall-rules describe "$WEBRTC_FIREWALL_RULE" --project "$PROJECT_ID" >/dev/null 2>&1; then
+  webrtc_firewall_cmd=(gcloud compute firewall-rules update "$WEBRTC_FIREWALL_RULE"
+    --project "$PROJECT_ID"
+    --allow "udp:${WEBRTC_UDP_PORT_RANGE}"
+    --source-ranges "0.0.0.0/0")
+fi
+
 create_cmd=(gcloud compute instances create "$INSTANCE_NAME"
   --project "$PROJECT_ID"
   --zone "$ZONE"
@@ -113,11 +129,13 @@ create_cmd=(gcloud compute instances create "$INSTANCE_NAME"
 
 if [[ "${DRY_RUN:-false}" == "true" ]]; then
   printf '%q ' "${firewall_cmd[@]}"; printf '\n'
+  printf '%q ' "${webrtc_firewall_cmd[@]}"; printf '\n'
   printf '%q ' "${create_cmd[@]}"; printf '\n'
   exit 0
 fi
 
 "${firewall_cmd[@]}"
+"${webrtc_firewall_cmd[@]}"
 if [[ "${REUSE_EXISTING:-false}" != "true" ]]; then
   "${create_cmd[@]}"
 fi
@@ -208,6 +226,9 @@ LOCAL_GOOGLE_CREDENTIALS_PATH=${LOCAL_GOOGLE_CREDENTIALS_PATH:-}
 LOCAL_GOOGLE_STT_LOCATION=${LOCAL_GOOGLE_STT_LOCATION:-global}
 LOCAL_GOOGLE_TTS_LOCATION=${LOCAL_GOOGLE_TTS_LOCATION:-}
 SMALL_WEBRTC_ICE_SERVERS=${SMALL_WEBRTC_ICE_SERVERS:-stun:stun.l.google.com:19302}
+SMALL_WEBRTC_TURN_URLS=${SMALL_WEBRTC_TURN_URLS:-}
+SMALL_WEBRTC_TURN_USERNAME=${SMALL_WEBRTC_TURN_USERNAME:-}
+SMALL_WEBRTC_TURN_CREDENTIAL=${SMALL_WEBRTC_TURN_CREDENTIAL:-}
 LATENCY_TARGET_MS=${LATENCY_TARGET_MS:-1200}
 COST_GUARD_ENABLED=${COST_GUARD_ENABLED:-true}
 COST_GUARD_CAP_USD=${COST_GUARD_CAP_USD:-95}

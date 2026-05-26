@@ -159,6 +159,7 @@ async def health() -> dict[str, Any]:
         "local_tts_provider": settings.local_tts_provider,
         "local_tts_voice": settings.local_tts_voice,
         "local_tts_text_aggregation_mode": settings.local_tts_text_aggregation_mode,
+        "webrtc_ice_servers": len(settings.small_webrtc_browser_ice_servers),
         "voxtral_tts_model": settings.voxtral_tts_model
         if settings.local_tts_provider == "voxtral"
         else None,
@@ -185,6 +186,7 @@ async def config() -> dict[str, Any]:
         "local_stt_model": settings.local_stt_model,
         "local_tts_provider": settings.local_tts_provider,
         "local_tts_text_aggregation_mode": settings.local_tts_text_aggregation_mode,
+        "webrtc_ice_servers": len(settings.small_webrtc_browser_ice_servers),
         "voxtral_tts_model": settings.voxtral_tts_model
         if settings.local_tts_provider == "voxtral"
         else None,
@@ -192,6 +194,24 @@ async def config() -> dict[str, Any]:
         "pipecat_cloud_ready": bool(settings.pipecat_cloud_ws_url and settings.pipecat_cloud_service_host),
         "cost_guard": cost_guard.snapshot().to_dict(),
     }
+
+
+def _small_webrtc_ice_servers():
+    from pipecat.transports.smallwebrtc.connection import IceServer
+
+    return [
+        IceServer(
+            urls=server["urls"],
+            username=server.get("username"),
+            credential=server.get("credential"),
+        )
+        for server in settings.small_webrtc_browser_ice_servers
+    ]
+
+
+@app.get("/api/webrtc/ice-config")
+async def webrtc_ice_config() -> dict[str, Any]:
+    return {"iceServers": settings.small_webrtc_browser_ice_servers}
 
 
 def get_small_webrtc_handler():
@@ -207,9 +227,7 @@ def get_small_webrtc_handler():
                     'Run: .venv/bin/python -m pip install -e "backend[voice]".'
                 ),
             ) from exc
-        small_webrtc_handler = SmallWebRTCRequestHandler(
-            ice_servers=settings.small_webrtc_ice_server_list or None
-        )
+        small_webrtc_handler = SmallWebRTCRequestHandler(ice_servers=_small_webrtc_ice_servers() or None)
     return small_webrtc_handler
 
 

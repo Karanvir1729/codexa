@@ -32,6 +32,7 @@ import {
   getEvalScheduler,
   getCost,
   getHealth,
+  getWebRTCIceConfig,
   getPrompt,
   Health,
   listEvalRuns,
@@ -95,7 +96,7 @@ const prompts = [
 ];
 
 const voiceIceServers: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
-const voiceConnectTimeoutMs = 15000;
+const voiceConnectTimeoutMs = 30000;
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   let timeoutId: number | undefined;
@@ -284,14 +285,19 @@ export function App() {
         return;
       }
       await withTimeout(
-        voiceClient.connect({
-          webrtcRequestParams: {
-            endpoint: apiUrl("/api/offer"),
-            requestData: { source: "browser_console" }
-          }
-        }),
+        getWebRTCIceConfig()
+          .catch(() => ({ iceServers: voiceIceServers }))
+          .then((iceConfig) =>
+            voiceClient.connect({
+              webrtcRequestParams: {
+                endpoint: apiUrl("/api/offer"),
+                requestData: { source: "browser_console" }
+              },
+              iceConfig
+            })
+          ),
         voiceConnectTimeoutMs,
-        "Voice connection timed out. Check microphone permission and retry."
+        "Voice connection timed out. This network may be blocking WebRTC; switch networks or retry with TURN enabled."
       );
       setMicEnabled(voiceClient.isMicEnabled);
       setVoiceNotice(null);
