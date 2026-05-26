@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from pathlib import Path
 from urllib.parse import parse_qsl
@@ -58,6 +59,7 @@ class EvalSchedulerRequest(BaseModel):
 
 settings: Settings = get_settings()
 REPO_ROOT = Path(__file__).resolve().parents[2]
+logger = logging.getLogger(__name__)
 
 
 def resolve_repo_path(path: str) -> Path:
@@ -101,6 +103,14 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def start_background_services() -> None:
+    if settings.llm_warmup_enabled:
+        async def warmup_model() -> None:
+            try:
+                await agent.warmup_llm()
+            except Exception:
+                logger.debug("LLM warmup failed", exc_info=True)
+
+        asyncio.create_task(warmup_model())
     if settings.eval_schedule_seconds > 0:
         await eval_scheduler.start(settings.eval_schedule_seconds)
 
@@ -137,7 +147,21 @@ async def health() -> dict[str, Any]:
         "environment": settings.app_env,
         "llm_provider": settings.llm_provider,
         "model": settings.active_model,
+        "vertex_nim_region": settings.vertex_nim_region
+        if settings.llm_provider == "vertex_nim"
+        else None,
+        "vertex_nim_endpoint_id": settings.vertex_nim_endpoint_id
+        if settings.llm_provider == "vertex_nim"
+        else None,
         "voice_runtime": settings.voice_runtime,
+        "local_stt_provider": settings.local_stt_provider,
+        "local_stt_model": settings.local_stt_model,
+        "local_tts_provider": settings.local_tts_provider,
+        "local_tts_voice": settings.local_tts_voice,
+        "local_tts_text_aggregation_mode": settings.local_tts_text_aggregation_mode,
+        "voxtral_tts_model": settings.voxtral_tts_model
+        if settings.local_tts_provider == "voxtral"
+        else None,
         "prompt_version": prompt.version,
         "reasoning_mode": settings.reasoning_mode,
         "cost_guard": cost_guard.snapshot().to_dict(),
@@ -150,7 +174,20 @@ async def config() -> dict[str, Any]:
         "llm_provider": settings.llm_provider,
         "model": settings.active_model,
         "base_url": settings.active_base_url,
+        "vertex_nim_region": settings.vertex_nim_region
+        if settings.llm_provider == "vertex_nim"
+        else None,
+        "vertex_nim_endpoint_id": settings.vertex_nim_endpoint_id
+        if settings.llm_provider == "vertex_nim"
+        else None,
         "voice_runtime": settings.voice_runtime,
+        "local_stt_provider": settings.local_stt_provider,
+        "local_stt_model": settings.local_stt_model,
+        "local_tts_provider": settings.local_tts_provider,
+        "local_tts_text_aggregation_mode": settings.local_tts_text_aggregation_mode,
+        "voxtral_tts_model": settings.voxtral_tts_model
+        if settings.local_tts_provider == "voxtral"
+        else None,
         "twilio_ready": bool(settings.twilio_account_sid and settings.twilio_auth_token),
         "pipecat_cloud_ready": bool(settings.pipecat_cloud_ws_url and settings.pipecat_cloud_service_host),
         "cost_guard": cost_guard.snapshot().to_dict(),
@@ -170,7 +207,9 @@ def get_small_webrtc_handler():
                     'Run: .venv/bin/python -m pip install -e "backend[voice]".'
                 ),
             ) from exc
-        small_webrtc_handler = SmallWebRTCRequestHandler()
+        small_webrtc_handler = SmallWebRTCRequestHandler(
+            ice_servers=settings.small_webrtc_ice_server_list or None
+        )
     return small_webrtc_handler
 
 
@@ -265,6 +304,189 @@ async def chat(payload: ChatRequest) -> dict[str, Any]:
 @app.get("/api/conversations/{conversation_id}")
 async def conversation(conversation_id: str) -> dict[str, Any]:
     return {"conversation_id": conversation_id, "turns": agent.transcript(conversation_id)}
+
+
+@app.get("/api/latency/recent")
+async def recent_latency(limit: int = 25, conversation_id: str | None = None) -> dict[str, Any]:
+    bounded_limit = max(1, min(limit, 200))
+    if conversation_id:
+        rows = db.all(
+            """
+            SELECT id, conversation_id, interaction_id, channel, transport,
+                   user_turn_id, assistant_turn_id, providers_json, timings_json, created_at
+            FROM latency_traces
+            WHERE conversation_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (conversation_id, bounded_limit),
+        )
+    else:
+        rows = db.all(
+            """
+            SELECT id, conversation_id, interaction_id, channel, transport,
+                   user_turn_id, assistant_turn_id, providers_json, timings_json, created_at
+            FROM latency_traces
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (bounded_limit,),
+        )
+    return {
+        "latency_traces": [
+            {
+                "id": row["id"],
+                "conversation_id": row["conversation_id"],
+                "interaction_id": row["interaction_id"],
+                "channel": row["channel"],
+                "transport": row["transport"],
+                "user_turn_id": row["user_turn_id"],
+                "assistant_turn_id": row["assistant_turn_id"],
+                "providers": loads(row["providers_json"], {}),
+                "timings": loads(row["timings_json"], {}),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+    }
+
+
+@app.get("/api/latency/summary")
+async def latency_summary(limit: int = 100, conversation_id: str | None = None) -> dict[str, Any]:
+    bounded_limit = max(1, min(limit, 1000))
+    if conversation_id:
+        rows = db.all(
+            """
+            SELECT providers_json, timings_json, created_at
+            FROM latency_traces
+            WHERE conversation_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (conversation_id, bounded_limit),
+        )
+    else:
+        rows = db.all(
+            """
+            SELECT providers_json, timings_json, created_at
+            FROM latency_traces
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (bounded_limit,),
+        )
+
+    timing_rows = [loads(row["timings_json"], {}) for row in rows]
+    provider_rows = [loads(row["providers_json"], {}) for row in rows]
+    metric_names = sorted(
+        {
+            key
+            for timings in timing_rows
+            for key, value in timings.items()
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        }
+    )
+
+    def percentile(values: list[float], p: float) -> float | None:
+        if not values:
+            return None
+        ordered = sorted(values)
+        index = min(len(ordered) - 1, max(0, round((len(ordered) - 1) * p)))
+        return ordered[index]
+
+    metrics = {}
+    for name in metric_names:
+        values = [
+            float(timings[name])
+            for timings in timing_rows
+            if isinstance(timings.get(name), (int, float))
+            and not isinstance(timings.get(name), bool)
+        ]
+        metrics[name] = {
+            "count": len(values),
+            "min_ms": min(values) if values else None,
+            "p50_ms": percentile(values, 0.50),
+            "p95_ms": percentile(values, 0.95),
+            "max_ms": max(values) if values else None,
+        }
+
+    target = settings.latency_target_ms
+    first_audio_values = [
+        timings.get("speech_end_to_first_audio_ms")
+        for timings in timing_rows
+        if isinstance(timings.get("speech_end_to_first_audio_ms"), (int, float))
+    ]
+    return {
+        "count": len(rows),
+        "latency_target_ms": target,
+        "target_breaches": sum(1 for value in first_audio_values if value > target),
+        "runtime_config": {
+            "stt_provider": settings.local_stt_provider,
+            "stt_model": settings.local_stt_model,
+            "stt_language": settings.local_stt_language,
+            "tts_provider": settings.local_tts_provider,
+            "tts_voice": settings.local_tts_voice,
+            "tts_text_aggregation_mode": settings.local_tts_text_aggregation_mode,
+            "voxtral_tts_model": settings.voxtral_tts_model
+            if settings.local_tts_provider == "voxtral"
+            else None,
+            "llm_provider": settings.llm_provider,
+            "llm_model": settings.active_model,
+            "vertex_nim_region": settings.vertex_nim_region
+            if settings.llm_provider == "vertex_nim"
+            else None,
+            "vertex_nim_endpoint_id": settings.vertex_nim_endpoint_id
+            if settings.llm_provider == "vertex_nim"
+            else None,
+        },
+        "providers_latest": provider_rows[0] if provider_rows else {},
+        "metrics": metrics,
+    }
+
+
+@app.get("/api/interactions/recent")
+async def recent_interactions(limit: int = 50, conversation_id: str | None = None) -> dict[str, Any]:
+    bounded_limit = max(1, min(limit, 500))
+    if conversation_id:
+        rows = db.all(
+            """
+            SELECT id, conversation_id, interaction_id, channel, transport,
+                   event, role, text, payload_json, created_at
+            FROM interaction_events
+            WHERE conversation_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (conversation_id, bounded_limit),
+        )
+    else:
+        rows = db.all(
+            """
+            SELECT id, conversation_id, interaction_id, channel, transport,
+                   event, role, text, payload_json, created_at
+            FROM interaction_events
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (bounded_limit,),
+        )
+    return {
+        "interaction_events": [
+            {
+                "id": row["id"],
+                "conversation_id": row["conversation_id"],
+                "interaction_id": row["interaction_id"],
+                "channel": row["channel"],
+                "transport": row["transport"],
+                "event": row["event"],
+                "role": row["role"],
+                "text": row["text"],
+                "payload": loads(row["payload_json"], {}),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+    }
 
 
 @app.websocket("/api/ws")

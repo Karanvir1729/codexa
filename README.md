@@ -1,6 +1,6 @@
 # Voice Agent Feedback Engine
 
-End-to-end voice agent scaffold for a high-reasoning, low-latency telephony agent that uses NVIDIA open-weight models, AWS GPU compute, Pipecat/Twilio voice transport, and a first-party automated evaluation loop.
+End-to-end voice agent scaffold for a high-reasoning, low-latency telephony agent that uses NVIDIA open-weight models, GCP/AWS GPU compute, Pipecat/Twilio voice transport, and a first-party automated evaluation loop.
 
 The goal is not just the best-sounding voice. The goal is a complete voice-agent system where calls, transcripts, feedback, evals, and prompt/model improvements form a continuous feedback loop.
 
@@ -39,6 +39,11 @@ Built locally:
   - credit-safe deployment profile using `g5.xlarge`.
   - optional short benchmark profile for larger 49B Nemotron runs gated behind an explicit opt-in.
   - provider readiness checker for AWS, NVIDIA NIM, Twilio, Pipecat, and local backend.
+- GCP deployment assets:
+  - Compute Engine GPU VM scripts for vLLM on NVIDIA L4/G2 instances.
+  - CPU app VM script for the FastAPI/Pipecat backend and React console.
+  - GCP-specific Docker compose files that install the Pipecat voice extras.
+  - status and destroy helpers that keep VM work easy to reverse.
 - Cost controls:
   - deploy script refuses GPU launch without budget guardrail or `BUDGET_EMAIL`.
   - deploy script checks AWS Cost Explorer month-to-date account spend before GPU launch.
@@ -129,10 +134,12 @@ Then run the backend with:
 LLM_PROVIDER=ollama \
 OLLAMA_BASE_URL=http://localhost:11434/v1 \
 OLLAMA_MODEL=qwen2.5:0.5b \
+OLLAMA_KEEP_ALIVE=30m \
+MAX_COMPLETION_TOKENS=24 \
 ./scripts/run_backend.sh
 ```
 
-`qwen2.5:0.5b` is the default local real LLM because this repo prioritizes voice turn latency. Swap `OLLAMA_MODEL` or `LLM_PROVIDER` to a hosted external model when you are ready for higher quality.
+`qwen2.5:0.5b` is the default local real LLM because this repo prioritizes voice turn latency. The local profile keeps the model warm and caps completions tightly so evals and voice turns do not pay repeated cold-start or rambling-token latency. Swap `OLLAMA_MODEL` or `LLM_PROVIDER` to a hosted external model when you are ready for higher quality.
 
 ## Local Pipecat Voice
 
@@ -154,15 +161,36 @@ Run the local Pipecat voice agent:
 ./scripts/run_local_voice.sh
 ```
 
-Default local voice stack:
+Default local/cloud voice stack:
 
 - Transport: Pipecat `LocalAudioTransport` using the Mac microphone and speaker.
-- STT: WhisperX with `LOCAL_STT_MODEL=large-v3`, `LOCAL_STT_LANGUAGE=auto`, CPU `int8` on Mac, and CUDA `float16` when a GPU is available.
+- STT: Pipecat `WhisperSTTService` / Faster Whisper with multilingual `LOCAL_STT_MODEL=base` and `LOCAL_STT_LANGUAGE=auto`, which keeps Hindi/English input usable without the 2s+ CPU latency of `small`. Use `LOCAL_STT_PROVIDER=whisperx` or `LOCAL_STT_PROVIDER=nvidia` for heavier model paths.
 - TTS: `LOCAL_TTS_PROVIDER=auto`, which uses a healthy local Fish Speech server when available and falls back to `KokoroTTSService` with voice `af_heart`.
-- VAD/interruption: Pipecat Silero VAD with a 50 ms speech-start window, 120 ms speech-stop window, 200 ms user speech timeout, and 10 ms output chunks.
+- VAD/interruption: Pipecat Silero VAD with a 50 ms speech-start window, 120 ms speech-stop window, 120 ms user speech timeout, and 10 ms output chunks.
 - LLM: Ollama OpenAI-compatible API using `qwen2.5:0.5b`.
 
-On the first run, Kokoro downloads its ONNX model/voice files and WhisperX downloads the selected Whisper model. macOS may ask for microphone permission for the terminal app. Speak over the assistant while it is talking to test interruption.
+On the first run, Kokoro downloads its ONNX model/voice files and Whisper downloads the selected Whisper model. macOS may ask for microphone permission for the terminal app. Speak over the assistant while it is talking to test interruption.
+
+For NVIDIA speech, point Pipecat at an NVIDIA/NIM or Riva-compatible gRPC endpoint:
+
+```bash
+LOCAL_STT_PROVIDER=nvidia \
+LOCAL_TTS_PROVIDER=nvidia \
+NVIDIA_STT_SERVER=localhost:50051 \
+NVIDIA_STT_USE_SSL=false \
+NVIDIA_TTS_SERVER=localhost:50051 \
+NVIDIA_TTS_USE_SSL=false \
+./scripts/run_local_voice.sh
+```
+
+For a same-VPC GPU Whisper worker, run `infra/gcp/remote_whisper_server.py` on a CUDA VM and point the app at it:
+
+```bash
+LOCAL_STT_PROVIDER=remote_whisper \
+LOCAL_STT_MODEL=base \
+REMOTE_WHISPER_BASE_URL=http://10.162.0.2:7001 \
+./scripts/run_local_voice.sh
+```
 
 For an Apple-Silicon MLX fallback, switch provider and model explicitly:
 
@@ -220,6 +248,7 @@ Add `--live` when credentials are present and you want to make real provider val
 Current known deployment reality:
 
 - AWS GPU EC2 cannot be launched until AWS approves the rejected G/VT quota request.
+- GCP L4/G2 GPU capacity is now the preferred VM path for the hackathon while AWS credits/quota are blocked.
 - Hosted NVIDIA NIM is the immediate fallback for the high-reasoning model path.
 - Twilio requires `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM_NUMBER`.
 - Local Pipecat voice uses `VOICE_RUNTIME=local_pipecat` and the open-source local dependencies above.
@@ -239,6 +268,76 @@ NVIDIA_MODEL=nvidia/llama-3.3-nemotron-super-49b-v1.5
 ```
 
 Use this when AWS GPU quota is blocked or when NVIDIA API trial access is available.
+
+## GCP GPU vLLM Mode
+
+This is the current preferred cloud path. It keeps the app portable because the backend still talks to an OpenAI-compatible endpoint:
+
+```bash
+LLM_PROVIDER=local
+LOCAL_LLM_BASE_URL=http://<vllm-host>:5000/v1
+LOCAL_LLM_MODEL=<served-model-name>
+```
+
+Before launching paid compute, confirm the active project and quota:
+
+```bash
+gcloud auth login
+gcloud config set project <project-id>
+GCP_PROJECT_ID=<project-id> ./scripts/check_provider_readiness.sh
+```
+
+Launch the default credit-conscious L4 VM:
+
+```bash
+GCP_BILLING_ACK=true \
+GCP_PROJECT_ID=<project-id> \
+GCP_ZONE=us-central1-a \
+ALLOWED_CIDR=<your-ip>/32 \
+./scripts/gcp_deploy_vllm.sh
+```
+
+Defaults:
+
+- VM: `g2-standard-12` with one NVIDIA L4 GPU.
+- Image: Google Deep Learning VM `common-cu128-ubuntu-2204-nvidia-570`.
+- Model: `nvidia/Llama-3.1-Nemotron-Nano-8B-v1` for the smallest practical vLLM profile.
+- Auto-stop: 4 hours.
+- API: port `5000`, restricted by firewall to `ALLOWED_CIDR`.
+
+For a higher-quality benchmark, override the model and machine profile explicitly:
+
+```bash
+GCP_BILLING_ACK=true \
+ALLOW_EXPENSIVE_PROFILE=true \
+GCP_VLLM_MACHINE_TYPE=g2-standard-48 \
+MODEL_ID=nvidia/Llama-3_3-Nemotron-Super-49B-v1_5 \
+SERVED_MODEL_NAME=Llama-3_3-Nemotron-Super-49B-v1_5 \
+TENSOR_PARALLEL_SIZE=4 \
+MAX_MODEL_LEN=32768 \
+./scripts/gcp_deploy_vllm.sh
+```
+
+Deploy the app/Pipecat VM in the same zone and same VPC after vLLM is running:
+
+```bash
+GCP_BILLING_ACK=true \
+GCP_PROJECT_ID=<project-id> \
+GCP_ZONE=us-central1-a \
+GCP_VLLM_INSTANCE_NAME=voice-agent-vllm \
+ALLOWED_CIDR=<your-ip>/32 \
+./scripts/gcp_deploy_app_vm.sh
+```
+
+The app VM serves the console on `http://<app-ip>:8080` and points the backend at vLLM over the internal GCP address. For Twilio, put the app behind HTTPS/WSS first, then set `PUBLIC_BASE_URL` to that HTTPS origin.
+
+Useful operations:
+
+```bash
+./scripts/gcp_vllm_status.sh
+SSH_LOGS=true ./scripts/gcp_vllm_status.sh
+./scripts/gcp_destroy_vllm.sh
+```
 
 ## AWS GPU vLLM Mode
 

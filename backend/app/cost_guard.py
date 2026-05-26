@@ -130,7 +130,7 @@ class CostGuard:
             return self.settings.cost_guard_mock_call_usd
         if provider in {"local", "ollama"}:
             return self.settings.cost_guard_local_call_usd
-        if provider == "nvidia":
+        if provider in {"nvidia", "vertex_nim"}:
             usage = loads(dumps(raw.get("usage", {})), {})
             input_tokens = float(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
             output_tokens = float(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
@@ -146,6 +146,6 @@ class CostGuard:
             return self.settings.cost_guard_mock_call_usd
         if provider in {"local", "ollama"}:
             return self.settings.cost_guard_local_call_usd
-        if provider == "nvidia":
+        if provider in {"nvidia", "vertex_nim"}:
             return self.settings.cost_guard_nvidia_call_usd
         return self.settings.cost_guard_reserve_usd_per_call

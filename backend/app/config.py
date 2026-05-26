@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,13 +13,19 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:8000"
     allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
-    llm_provider: Literal["mock", "nvidia", "local", "ollama"] = "mock"
+    llm_provider: Literal["mock", "nvidia", "vertex_nim", "local", "ollama"] = "mock"
     nvidia_api_key: str | None = None
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     nvidia_model: str = "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+    vertex_nim_project: str | None = None
+    vertex_nim_region: str = "us-east4"
+    vertex_nim_endpoint_id: str | None = None
+    vertex_nim_endpoint_url: str | None = None
+    vertex_nim_model: str = "nvidia/llama-3.1-nemotron-nano-8b-v1"
     ollama_base_url: str = "http://localhost:11434/v1"
     ollama_api_key: str = "ollama"
     ollama_model: str = "qwen2.5:0.5b"
+    ollama_keep_alive: str = "30m"
     local_llm_base_url: str = "http://localhost:5000/v1"
     local_llm_api_key: str = "dummy"
     local_llm_model: str = "Llama-3_3-Nemotron-Super-49B-v1_5"
@@ -27,8 +33,9 @@ class Settings(BaseSettings):
     reasoning_mode: Literal["on", "off"] = "on"
     llm_temperature: float = 0.0
     llm_top_p: float = 0.95
-    max_completion_tokens: int = 48
+    max_completion_tokens: int = 24
     llm_timeout_seconds: float = 60
+    llm_warmup_enabled: bool = True
 
     cost_guard_enabled: bool = True
     cost_guard_cap_usd: float = Field(default=95.0, ge=0)
@@ -59,17 +66,44 @@ class Settings(BaseSettings):
     local_audio_output_sample_rate: int = Field(default=24000, ge=8000)
     local_audio_output_10ms_chunks: int = Field(default=1, ge=1)
     local_audio_output_end_silence_secs: int = Field(default=0, ge=0)
-    local_stt_provider: Literal["whisperx", "mlx_whisper"] = "whisperx"
-    local_stt_model: str = "large-v3"
-    local_stt_no_speech_prob: float = Field(default=0.6, ge=0, le=1)
+    small_webrtc_ice_servers: str = "stun:stun.l.google.com:19302"
+    local_stt_provider: Literal[
+        "whisper", "remote_whisper", "whisperx", "mlx_whisper", "nvidia", "deepgram", "google"
+    ] = "whisper"
+    local_stt_model: str = "base"
+    local_stt_no_speech_prob: float = Field(default=0.35, ge=0, le=1)
     local_stt_temperature: float = Field(default=0.0, ge=0)
     local_stt_ttfb_timeout: float = Field(default=0.6, ge=0)
     local_stt_ttfs_p99_latency: float = Field(default=0.8, ge=0)
+    local_whisper_device: Literal["auto", "cpu", "cuda"] = "auto"
+    local_whisper_compute_type: str = "auto"
+    remote_whisper_base_url: str = "http://127.0.0.1:7001"
+    remote_whisper_timeout_seconds: float = Field(default=8, ge=0.1)
     local_whisperx_device: Literal["auto", "cpu", "cuda"] = "auto"
     local_whisperx_compute_type: str = "auto"
     local_whisperx_batch_size: int = Field(default=1, ge=1)
-    local_tts_provider: Literal["auto", "kokoro", "fish_speech"] = "auto"
+    local_tts_provider: Literal[
+        "auto",
+        "kokoro",
+        "piper",
+        "fish_speech",
+        "voxtral",
+        "nvidia",
+        "cartesia",
+        "deepgram",
+        "google",
+    ] = "auto"
     local_tts_voice: str = "af_heart"
+    local_tts_text_aggregation_mode: Literal["sentence", "token"] = "sentence"
+    piper_download_dir: str = "/app/data/piper"
+    nvidia_stt_server: str = "grpc.nvcf.nvidia.com:443"
+    nvidia_stt_use_ssl: bool = True
+    nvidia_tts_server: str = "grpc.nvcf.nvidia.com:443"
+    nvidia_tts_use_ssl: bool = True
+    local_google_credentials: str | None = None
+    local_google_credentials_path: str | None = None
+    local_google_stt_location: str = "global"
+    local_google_tts_location: str | None = None
     fish_speech_base_url: str = "http://127.0.0.1:8080"
     fish_speech_api_key: str | None = None
     fish_speech_reference_id: str | None = None
@@ -80,14 +114,26 @@ class Settings(BaseSettings):
     fish_speech_repetition_penalty: float = Field(default=1.1, ge=0)
     fish_speech_temperature: float = Field(default=0.8, ge=0)
     fish_speech_timeout_seconds: float = Field(default=120, ge=1)
-    local_vad_confidence: float = Field(default=0.5, ge=0, le=1)
+    voxtral_tts_base_url: str = "http://127.0.0.1:8002/v1"
+    voxtral_tts_api_key: str | None = None
+    voxtral_tts_model: str = "mistralai/Voxtral-4B-TTS-2603"
+    voxtral_tts_voice: str | None = "vivian"
+    voxtral_tts_voice_id: str | None = None
+    voxtral_tts_language: str | None = "Auto"
+    voxtral_tts_instructions: str | None = None
+    voxtral_tts_ref_audio_path: str | None = None
+    voxtral_tts_response_format: Literal["pcm", "wav"] = "wav"
+    voxtral_tts_stream: bool = False
+    voxtral_tts_initial_codec_chunk_frames: int | None = Field(default=None, ge=1)
+    voxtral_tts_timeout_seconds: float = Field(default=120, ge=1)
+    local_vad_confidence: float = Field(default=0.6, ge=0, le=1)
     local_vad_start_secs: float = Field(default=0.05, ge=0)
     local_vad_stop_secs: float = Field(default=0.12, ge=0)
-    local_vad_min_volume: float = Field(default=0.2, ge=0)
+    local_vad_min_volume: float = Field(default=0.3, ge=0)
     local_vad_speech_activity_period: float = Field(default=0.05, ge=0)
     local_vad_audio_idle_timeout: float = Field(default=0.35, ge=0)
-    local_user_speech_timeout: float = Field(default=0.2, ge=0)
-    local_user_turn_stop_timeout: float = Field(default=1.0, ge=0.1)
+    local_user_speech_timeout: float = Field(default=0.12, ge=0)
+    local_user_turn_stop_timeout: float = Field(default=0.4, ge=0.1)
 
     latency_target_ms: int = Field(default=1200, ge=100)
     eval_suite_path: str = "backend/evals/customer_intake.yml"
@@ -98,6 +144,17 @@ class Settings(BaseSettings):
     def origins(self) -> list[str]:
         return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
 
+    @field_validator("voxtral_tts_initial_codec_chunk_frames", mode="before")
+    @classmethod
+    def _empty_int_is_none(cls, value):
+        if value == "":
+            return None
+        return value
+
+    @property
+    def small_webrtc_ice_server_list(self) -> list[str]:
+        return [server.strip() for server in self.small_webrtc_ice_servers.split(",") if server.strip()]
+
     @property
     def active_model(self) -> str:
         if self.llm_provider == "local":
@@ -106,6 +163,8 @@ class Settings(BaseSettings):
             return self.ollama_model
         if self.llm_provider == "nvidia":
             return self.nvidia_model
+        if self.llm_provider == "vertex_nim":
+            return self.vertex_nim_model
         return "mock-agent"
 
     @property

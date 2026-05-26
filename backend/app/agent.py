@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Any
 
@@ -14,13 +15,45 @@ def build_runtime_system_prompt(system_prompt: str) -> str:
     return (
         f"{system_prompt}\n\n"
         "Runtime contract:\n"
-        "Reply in one concise sentence. "
-        "For account help, ask a question that includes account and asks for the email or phone number; do not ask for more details. "
-        "For cancellation, refund, or order cancellation, include both order ID and reason before taking action. "
-        "For human-agent requests, include the word human and say a human agent can help. "
-        "For network-latency questions, include the word latency and give one speed mitigation. "
-        "For anything else, ask one concise clarifying question."
+        "Reply only with the best policy sentence, in one short sentence.\n"
+        "- Your name is PipeCAD's voice assistant; if asked your name or who you are, say: I'm PipeCAD's voice assistant.\n"
+        "- Default to English. If the latest user message asks for English, reply in English only.\n"
+        "- Do not switch to Hindi, Urdu, or another language unless the latest user message explicitly asks for that language.\n"
+        "- If the user explicitly asks for a human, live agent, operator, representative, or handoff, say: A human agent can help; I can hand you off now.\n"
+        "- Never offer a human handoff for greetings, confusion, account help, or name questions.\n"
+        "- Do not infer handoff unless the latest user message contains a clear handoff word.\n"
+        "- If the user mentions cancel, refund, or order, ask: What order ID and reason should I use before taking action?\n"
+        "- If the user mentions account, ask: What account email or phone number should I use?\n"
+        "- If the user greets you, asks if you are there, or asks what is going on, say that you are here and ask how you can help.\n"
+        "- If the user asks about network, speed, or latency, say: We reduce latency with streaming and local voice processing.\n"
+        "- Otherwise, ask one concise clarifying question.\n"
+        "Do not say found, cancelled, refunded, completed, or done unless a tool result proves it."
     )
+
+
+def fast_policy_response(text: str) -> str | None:
+    normalized = re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
+    words = set(normalized.split())
+    if not normalized:
+        return None
+    if words & {"human", "operator", "representative", "handoff"} or "live agent" in normalized:
+        return "A human agent can help; I can hand you off now."
+    if "your name" in normalized or "who are you" in normalized:
+        return "I'm PipeCAD's voice assistant."
+    if (
+        normalized in {"hi", "hello", "hey", "what", "no"}
+        or "are you there" in normalized
+        or "what is going on" in normalized
+        or "whats going on" in normalized
+    ):
+        return "I'm here; how can I help?"
+    if words & {"cancel", "refund", "order"}:
+        return "What order ID and reason should I use before taking action?"
+    if "account" in words:
+        return "What account email or phone number should I use?"
+    if words & {"latency", "speed"} or "network latency" in normalized:
+        return "We reduce latency with streaming and local voice processing."
+    return None
 
 
 class AgentService:
@@ -90,6 +123,44 @@ class AgentService:
         )
         prompt = self.prompts.active()
         messages = self.history(cid)
+        if response_text := fast_policy_response(text):
+            assistant_turn_id = str(uuid.uuid4())
+            self.db.execute(
+                """
+                INSERT INTO turns(
+                    id, conversation_id, role, content, latency_ms, model, prompt_version,
+                    metrics_json
+                )
+                VALUES (?, ?, 'assistant', ?, ?, ?, ?, ?)
+                """,
+                (
+                    assistant_turn_id,
+                    cid,
+                    response_text,
+                    0,
+                    "policy-rule",
+                    prompt.version,
+                    dumps(
+                        {
+                            "provider": "policy-rule",
+                            "latency_target_ms": self.settings.latency_target_ms,
+                            "estimated_cost_usd": 0,
+                        }
+                    ),
+                ),
+            )
+            return {
+                "conversation_id": cid,
+                "user_turn_id": user_turn_id,
+                "assistant_turn_id": assistant_turn_id,
+                "message": response_text,
+                "latency_ms": 0,
+                "model": "policy-rule",
+                "provider": "policy-rule",
+                "prompt_version": prompt.version,
+                "cost_guard": self.cost_guard.snapshot().to_dict(),
+            }
+
         reservation_id = self.cost_guard.reserve(
             self.cost_guard.reserve_amount_for_provider(self.settings.llm_provider),
             source="llm_call",
@@ -98,7 +169,7 @@ class AgentService:
             metadata={"conversation_id": cid, "channel": channel},
         )
         try:
-            result = await self.llm.generate(messages, build_runtime_system_prompt(prompt.system_prompt))
+            result = await self.llm.generate(messages, build_runtime_system_prompt(prompt.compiled))
         except Exception as exc:
             self.cost_guard.release(reservation_id, {"error": type(exc).__name__})
             raise
@@ -144,6 +215,10 @@ class AgentService:
             "prompt_version": prompt.version,
             "cost_guard": self.cost_guard.snapshot().to_dict(),
         }
+
+    async def warmup_llm(self) -> None:
+        if self.settings.llm_warmup_enabled:
+            await self.llm.warmup()
 
     def transcript(self, conversation_id: str) -> list[dict[str, Any]]:
         rows = self.db.all(

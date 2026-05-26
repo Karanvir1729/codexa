@@ -25,6 +25,7 @@ class EvalRunner:
     async def run_suite(self, path: str | Path, apply_feedback: bool = True) -> dict[str, Any]:
         suite_path = Path(path)
         suite = yaml.safe_load(suite_path.read_text()) or {}
+        await self.agent.warmup_llm()
         run_id = str(uuid.uuid4())
         self.db.execute(
             "INSERT INTO eval_runs(id, suite, status) VALUES (?, ?, 'running')",
@@ -117,4 +118,3 @@ class EvalRunner:
             "feedback": feedback,
             "last_message": message,
         }
-

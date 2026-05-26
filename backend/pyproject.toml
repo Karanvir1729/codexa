@@ -15,8 +15,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+voice-cloud = [
+  "pipecat-ai[websocket,webrtc,openai,nvidia,deepgram,cartesia,google,whisper,kokoro,piper]>=1.2.1",
+  "ormsgpack>=1.7.0",
+]
 voice = [
-  "pipecat-ai[websocket,webrtc,openai,deepgram,cartesia,local,mlx-whisper,kokoro]>=1.2.1",
+  "pipecat-ai[websocket,webrtc,openai,nvidia,deepgram,cartesia,local,mlx-whisper,kokoro,piper,whisper]>=1.2.1",
   "ormsgpack>=1.7.0",
   "whisperx>=3.8.5",
 ]

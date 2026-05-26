@@ -6,17 +6,18 @@ from pathlib import Path
 
 import pytest
 
-from app.agent import AgentService, build_runtime_system_prompt
+from app.agent import AgentService, build_runtime_system_prompt, fast_policy_response
 from app.config import Settings
 from app.cost_guard import CostGuard, CostLimitExceeded
 from app.db import Database
 from app.eval_scheduler import EvalScheduler
 from app.evaluator import EvalRunner
 from app.feedback import FeedbackLearner, PromptRepository
-from app.llm import MockLLMClient
+from app.llm import LLMResult, MockLLMClient
 from app.local_voice_runtime import (
     LocalVoiceConversationRecorder,
     build_system_instruction,
+    merge_adjacent_chat_messages,
     require_openai_compatible_llm,
     resolve_stt_language,
     resolve_tts_language,
@@ -103,14 +104,33 @@ def test_local_voice_uses_auto_detect_stt_and_explicit_tts_language():
     assert str(resolve_tts_language(settings)) == "en"
 
 
-def test_local_voice_defaults_to_whisperx_and_fast_turn_timing():
+def test_local_voice_defaults_to_self_hosted_multilingual_whisper_and_fast_turn_timing():
     settings = Settings()
 
-    assert settings.local_stt_provider == "whisperx"
-    assert settings.local_stt_model == "large-v3"
+    assert settings.local_stt_provider == "whisper"
+    assert settings.local_stt_model == "base"
+    assert settings.local_stt_language == "auto"
+    assert settings.local_stt_no_speech_prob <= 0.35
     assert settings.max_completion_tokens <= 48
     assert settings.local_vad_start_secs <= 0.05
-    assert settings.local_user_speech_timeout <= 0.2
+    assert settings.local_vad_stop_secs <= 0.12
+    assert settings.local_user_speech_timeout <= 0.12
+
+
+def test_local_voice_merges_adjacent_turns_for_vllm_chat_template():
+    messages = [
+        {"role": "user", "content": "Hello."},
+        {"role": "user", "content": "Are you there?"},
+        {"role": "assistant", "content": "Yes."},
+        {"role": "assistant", "content": "How can I help?"},
+        {"role": "user", "content": "I need help with my account."},
+    ]
+
+    assert merge_adjacent_chat_messages(messages) == [
+        {"role": "user", "content": "Hello.\nAre you there?"},
+        {"role": "assistant", "content": "Yes.\nHow can I help?"},
+        {"role": "user", "content": "I need help with my account."},
+    ]
 
 
 def test_runtime_prompt_adds_customer_intake_contract():
@@ -119,7 +139,75 @@ def test_runtime_prompt_adds_customer_intake_contract():
     assert "email or phone number" in prompt
     assert "order ID and reason" in prompt
     assert "human agent can help" in prompt
+    assert "PipeCAD's voice assistant" in prompt
     assert "latency" in prompt
+
+
+def test_fast_policy_response_handles_name_without_handoff():
+    assert fast_policy_response("What's your name?") == "I'm PipeCAD's voice assistant."
+    assert fast_policy_response("Hello? Are you there?") == "I'm here; how can I help?"
+    assert fast_policy_response("I need help with my account.") == (
+        "What account email or phone number should I use?"
+    )
+
+
+@pytest.mark.asyncio
+async def test_agent_fast_policy_bypasses_bad_handoff_model(tmp_path: Path):
+    class BadHandoffLLM:
+        called = False
+
+        async def generate(self, _messages, _system_prompt: str) -> LLMResult:
+            self.called = True
+            return LLMResult(
+                text="A human agent can help; I can hand you off now.",
+                latency_ms=999,
+                model="bad",
+                provider="mock",
+                raw={},
+            )
+
+        async def warmup(self) -> None:
+            return None
+
+    settings = Settings(database_path=str(tmp_path / "agent.sqlite3"), llm_provider="mock")
+    llm = BadHandoffLLM()
+    agent = AgentService(Database(settings.database_path), settings, llm)
+
+    response = await agent.respond("What's your name?", channel="test")
+
+    assert response["message"] == "I'm PipeCAD's voice assistant."
+    assert response["provider"] == "policy-rule"
+    assert llm.called is False
+
+
+@pytest.mark.asyncio
+async def test_agent_uses_compiled_prompt_with_learned_hints(tmp_path: Path):
+    class CapturingLLM:
+        system_prompt = ""
+
+        async def generate(self, _messages, system_prompt: str) -> LLMResult:
+            self.system_prompt = system_prompt
+            return LLMResult(
+                text="What account email or phone number should I use?",
+                latency_ms=1,
+                model="capture",
+                provider="mock",
+                raw={},
+            )
+
+        async def warmup(self) -> None:
+            return None
+
+    settings = Settings(database_path=str(tmp_path / "agent.sqlite3"), llm_provider="mock")
+    db = Database(settings.database_path)
+    repo = PromptRepository(db)
+    repo.create("Base prompt.", "- Learned hint from eval.", "test")
+    llm = CapturingLLM()
+    agent = AgentService(db, settings, llm)
+
+    await agent.respond("I have a billing question.", channel="test")
+
+    assert "Learned hint from eval" in llm.system_prompt
 
 
 def test_local_voice_records_turns_in_feedback_database(tmp_path: Path):
@@ -170,6 +258,75 @@ def test_local_voice_recorder_deduplicates_repeated_final_transcripts(tmp_path: 
     assert first_turn_id
     assert second_turn_id == ""
     assert [(row["role"], row["content"]) for row in rows] == [("user", "Hello.")]
+
+
+def test_local_voice_recorder_persists_latency_trace(tmp_path: Path):
+    settings = Settings(
+        database_path=str(tmp_path / "agent.sqlite3"),
+        llm_provider="ollama",
+        ollama_model="qwen2.5:0.5b",
+    )
+    db = Database(settings.database_path)
+    repo = PromptRepository(db)
+    recorder = LocalVoiceConversationRecorder(db, settings, repo.active().version)
+
+    recorder.start()
+    user_turn_id = recorder.record_turn(
+        "user",
+        "hello",
+        metrics={"interaction_id": "interaction-1"},
+    )
+    assistant_turn_id = recorder.record_turn(
+        "assistant",
+        "hi",
+        latency_ms=321,
+        metrics={"interaction_id": "interaction-1"},
+    )
+    trace_id = recorder.record_latency_trace(
+        interaction_id="interaction-1",
+        user_turn_id=user_turn_id,
+        assistant_turn_id=assistant_turn_id,
+        providers={"stt_provider": "remote_whisper"},
+        timings={"speech_end_to_first_audio_ms": 321},
+    )
+
+    row = db.one("SELECT * FROM latency_traces WHERE id = ?", (trace_id,))
+
+    assert row is not None
+    assert row["conversation_id"] == recorder.conversation_id
+    assert row["interaction_id"] == "interaction-1"
+    assert '"remote_whisper"' in row["providers_json"]
+    assert '"speech_end_to_first_audio_ms":321' in row["timings_json"]
+
+
+def test_local_voice_recorder_persists_interaction_events(tmp_path: Path):
+    settings = Settings(
+        database_path=str(tmp_path / "agent.sqlite3"),
+        llm_provider="ollama",
+        ollama_model="qwen2.5:0.5b",
+    )
+    db = Database(settings.database_path)
+    repo = PromptRepository(db)
+    recorder = LocalVoiceConversationRecorder(db, settings, repo.active().version)
+
+    recorder.start()
+    event_id = recorder.record_interaction_event(
+        interaction_id="interaction-2",
+        event="user_transcribed",
+        role="user",
+        text="hello",
+        payload={"timings": {"stt_provider_elapsed_ms": 123}},
+    )
+
+    row = db.one("SELECT * FROM interaction_events WHERE id = ?", (event_id,))
+
+    assert row is not None
+    assert row["conversation_id"] == recorder.conversation_id
+    assert row["interaction_id"] == "interaction-2"
+    assert row["event"] == "user_transcribed"
+    assert row["role"] == "user"
+    assert row["text"] == "hello"
+    assert '"stt_provider_elapsed_ms":123' in row["payload_json"]
 
 
 def test_local_voice_system_instruction_respects_no_think(tmp_path: Path):

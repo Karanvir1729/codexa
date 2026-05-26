@@ -3,9 +3,10 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from pathlib import Path
+from typing import Any, Mapping
 
-from .agent import build_runtime_system_prompt
+from .agent import build_runtime_system_prompt, fast_policy_response
 from .config import Settings, get_settings
 from .db import Database, dumps
 from .feedback import PromptRepository
@@ -84,6 +85,70 @@ class LocalVoiceConversationRecorder:
         )
         return turn_id
 
+    def record_latency_trace(
+        self,
+        *,
+        interaction_id: str,
+        user_turn_id: str | None,
+        assistant_turn_id: str | None,
+        providers: dict[str, Any],
+        timings: dict[str, Any],
+    ) -> str:
+        trace_id = str(uuid.uuid4())
+        self.db.execute(
+            """
+            INSERT INTO latency_traces(
+                id, conversation_id, interaction_id, channel, transport,
+                user_turn_id, assistant_turn_id, providers_json, timings_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                trace_id,
+                self.conversation_id,
+                interaction_id,
+                self.channel,
+                self.transport_name,
+                user_turn_id,
+                assistant_turn_id,
+                dumps(providers),
+                dumps(timings),
+            ),
+        )
+        return trace_id
+
+    def record_interaction_event(
+        self,
+        *,
+        interaction_id: str,
+        event: str,
+        role: str | None = None,
+        text: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> str:
+        event_id = str(uuid.uuid4())
+        self.db.execute(
+            """
+            INSERT INTO interaction_events(
+                id, conversation_id, interaction_id, channel, transport,
+                event, role, text, payload_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_id,
+                self.conversation_id,
+                interaction_id,
+                self.channel,
+                self.transport_name,
+                event,
+                role,
+                text,
+                dumps(payload or {}),
+            ),
+        )
+        return event_id
+
 
 def require_openai_compatible_llm(settings: Settings) -> None:
     if settings.llm_provider == "mock":
@@ -99,11 +164,13 @@ def require_openai_compatible_llm(settings: Settings) -> None:
 
 
 def build_system_instruction(settings: Settings, prompt_repo: PromptRepository) -> str:
-    instruction = build_runtime_system_prompt(prompt_repo.active().system_prompt)
+    instruction = build_runtime_system_prompt(prompt_repo.active().compiled)
     instruction = (
         f"{instruction}\n\n"
         "Live voice constraints:\n"
         "- Answer immediately in one short sentence by default.\n"
+        "- Speak English only unless the latest user utterance explicitly asks for another language.\n"
+        "- Use plain ASCII English when the TTS voice is English.\n"
         "- Keep normal spoken replies under 35 words; use two sentences only when necessary.\n"
         "- If the user asks for a long story or explanation, ask how long they want it before continuing.\n"
         "- Do not mention model identity, internal policy, or provider names unless the user asks."
@@ -134,14 +201,124 @@ def resolve_tts_language(settings: Settings):
     return Language(code)
 
 
+def _message_role(message: Any) -> str | None:
+    if isinstance(message, Mapping):
+        role = message.get("role")
+        return role if isinstance(role, str) else None
+    return None
+
+
+def _message_content_text(message: Any) -> str | None:
+    if isinstance(message, Mapping):
+        content = message.get("content")
+        return content if isinstance(content, str) else None
+    return None
+
+
+def merge_adjacent_chat_messages(messages: list[Any]) -> list[Any]:
+    """Collapse adjacent same-role turns for chat templates that require alternation."""
+
+    merged: list[Any] = []
+    for message in messages:
+        role = _message_role(message)
+        text = _message_content_text(message)
+        last = merged[-1] if merged else None
+        last_role = _message_role(last)
+        last_text = _message_content_text(last)
+        if role in {"user", "assistant"} and text and last_role == role and last_text:
+            merged[-1] = {**last, "content": f"{last_text.rstrip()}\n{text.strip()}"}
+        else:
+            merged.append(message)
+    return merged
+
+
 async def create_local_tts_service(settings: Settings):
     from loguru import logger
-    from pipecat.services.kokoro.tts import KokoroTTSService
+    from pipecat.services.tts_service import TextAggregationMode
 
     provider = settings.local_tts_provider
+    text_aggregation_mode = (
+        TextAggregationMode.TOKEN
+        if settings.local_tts_text_aggregation_mode == "token"
+        else TextAggregationMode.SENTENCE
+    )
+    if provider == "nvidia":
+        from pipecat.services.nvidia.tts import NvidiaTTSService
+
+        language = resolve_tts_language(settings)
+        return "nvidia", NvidiaTTSService(
+            api_key=settings.nvidia_api_key,
+            server=settings.nvidia_tts_server,
+            use_ssl=settings.nvidia_tts_use_ssl,
+            settings=NvidiaTTSService.Settings(voice=settings.local_tts_voice, language=language),
+            sample_rate=settings.local_audio_output_sample_rate,
+            text_aggregation_mode=text_aggregation_mode,
+        )
+
+    if provider == "cartesia":
+        if not settings.cartesia_api_key:
+            raise RuntimeError("LOCAL_TTS_PROVIDER=cartesia requires CARTESIA_API_KEY.")
+        from pipecat.services.cartesia.tts import CartesiaTTSService
+
+        return "cartesia", CartesiaTTSService(
+            api_key=settings.cartesia_api_key,
+            settings=CartesiaTTSService.Settings(voice=settings.cartesia_voice_id),
+            sample_rate=settings.local_audio_output_sample_rate,
+            text_aggregation_mode=text_aggregation_mode,
+        )
+
+    if provider == "deepgram":
+        if not settings.deepgram_api_key:
+            raise RuntimeError("LOCAL_TTS_PROVIDER=deepgram requires DEEPGRAM_API_KEY.")
+        from pipecat.services.deepgram.tts import DeepgramTTSService
+
+        return "deepgram", DeepgramTTSService(
+            api_key=settings.deepgram_api_key,
+            settings=DeepgramTTSService.Settings(voice=settings.local_tts_voice),
+            sample_rate=settings.local_audio_output_sample_rate,
+            text_aggregation_mode=text_aggregation_mode,
+        )
+
+    if provider == "google":
+        from pipecat.services.google.tts import GoogleTTSService
+
+        language = resolve_tts_language(settings)
+        return "google", GoogleTTSService(
+            credentials=settings.local_google_credentials,
+            credentials_path=settings.local_google_credentials_path,
+            location=settings.local_google_tts_location or None,
+            settings=GoogleTTSService.Settings(voice=settings.local_tts_voice, language=language),
+            sample_rate=settings.local_audio_output_sample_rate,
+            text_aggregation_mode=text_aggregation_mode,
+        )
+
+    if provider == "piper":
+        from pipecat.services.piper.tts import PiperTTSService
+
+        download_dir = Path(settings.piper_download_dir)
+        download_dir.mkdir(parents=True, exist_ok=True)
+        return "piper", PiperTTSService(
+            settings=PiperTTSService.Settings(voice=settings.local_tts_voice),
+            download_dir=download_dir,
+            sample_rate=settings.local_audio_output_sample_rate,
+            text_aggregation_mode=text_aggregation_mode,
+        )
+
+    if provider == "voxtral":
+        from .voxtral_tts import create_voxtral_tts_service
+
+        return "voxtral", create_voxtral_tts_service(settings)
+
     if provider in {"auto", "fish_speech"}:
         from .fish_speech_tts import create_fish_speech_tts_service, fish_speech_healthcheck
+        from .voxtral_tts import create_voxtral_tts_service, voxtral_tts_healthcheck
 
+        if provider == "auto":
+            healthy, detail = await voxtral_tts_healthcheck(settings)
+            if healthy:
+                logger.info("Voxtral TTS server detected; using Voxtral TTS.")
+                return "voxtral", create_voxtral_tts_service(settings)
+            logger.info(detail)
         if provider == "fish_speech":
             return "fish_speech", create_fish_speech_tts_service(settings)
 
@@ -151,14 +328,86 @@ async def create_local_tts_service(settings: Settings):
             return "fish_speech", create_fish_speech_tts_service(settings)
         logger.info(f"{detail} Falling back to Kokoro TTS.")
 
+    from pipecat.services.kokoro.tts import KokoroTTSService
+
     language = resolve_tts_language(settings)
     return "kokoro", KokoroTTSService(
         settings=KokoroTTSService.Settings(voice=settings.local_tts_voice, language=language),
         sample_rate=settings.local_audio_output_sample_rate,
+        text_aggregation_mode=text_aggregation_mode,
     )
 
 
 def create_local_stt_service(settings: Settings):
+    if settings.local_stt_provider == "nvidia":
+        from pipecat.services.nvidia.stt import NvidiaSTTService
+        from pipecat.transcriptions.language import Language
+
+        language = resolve_stt_language(settings) or Language.EN_US
+        return "nvidia", NvidiaSTTService(
+            api_key=settings.nvidia_api_key,
+            server=settings.nvidia_stt_server,
+            use_ssl=settings.nvidia_stt_use_ssl,
+            sample_rate=settings.local_audio_input_sample_rate,
+            ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
+            settings=NvidiaSTTService.Settings(
+                language=language,
+                automatic_punctuation=True,
+                interim_results=True,
+            ),
+        )
+
+    if settings.local_stt_provider == "deepgram":
+        if not settings.deepgram_api_key:
+            raise RuntimeError("LOCAL_STT_PROVIDER=deepgram requires DEEPGRAM_API_KEY.")
+        from pipecat.services.deepgram.stt import DeepgramSTTService
+        from pipecat.transcriptions.language import Language
+
+        language = resolve_stt_language(settings) or Language.EN
+        return "deepgram", DeepgramSTTService(
+            api_key=settings.deepgram_api_key,
+            sample_rate=settings.local_audio_input_sample_rate,
+            settings=DeepgramSTTService.Settings(
+                model=settings.local_stt_model,
+                language=language,
+            ),
+            stt_ttfb_timeout=settings.local_stt_ttfb_timeout,
+            ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
+        )
+
+    if settings.local_stt_provider == "google":
+        from pipecat.services.google.stt import GoogleSTTService
+        from pipecat.transcriptions.language import Language
+
+        language = resolve_stt_language(settings) or Language.EN_US
+        return "google", GoogleSTTService(
+            credentials=settings.local_google_credentials,
+            credentials_path=settings.local_google_credentials_path,
+            location=settings.local_google_stt_location or "global",
+            sample_rate=settings.local_audio_input_sample_rate,
+            ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
+            settings=GoogleSTTService.Settings(
+                model=settings.local_stt_model,
+                languages=[language],
+                enable_automatic_punctuation=True,
+                enable_interim_results=True,
+            ),
+        )
+
+    if settings.local_stt_provider == "remote_whisper":
+        from .remote_whisper_stt import RemoteWhisperSTTService
+
+        return "remote_whisper", RemoteWhisperSTTService(
+            base_url=settings.remote_whisper_base_url,
+            model=settings.local_stt_model,
+            language=_language_or_auto(settings.local_stt_language or settings.local_voice_language),
+            no_speech_prob=settings.local_stt_no_speech_prob,
+            sample_rate=settings.local_audio_input_sample_rate,
+            timeout_seconds=settings.remote_whisper_timeout_seconds,
+            stt_ttfb_timeout=settings.local_stt_ttfb_timeout,
+            ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
+        )
+
     if settings.local_stt_provider == "whisperx":
         from .whisperx_stt import WhisperXSTTService
 
@@ -169,6 +418,26 @@ def create_local_stt_service(settings: Settings):
             batch_size=settings.local_whisperx_batch_size,
             language=_language_or_auto(settings.local_stt_language or settings.local_voice_language),
             no_speech_prob=settings.local_stt_no_speech_prob,
+            sample_rate=settings.local_audio_input_sample_rate,
+            stt_ttfb_timeout=settings.local_stt_ttfb_timeout,
+            ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
+        )
+
+    if settings.local_stt_provider == "whisper":
+        from pipecat.services.whisper.stt import WhisperSTTService
+
+        stt_language = resolve_stt_language(settings)
+        compute_type = settings.local_whisper_compute_type
+        if compute_type == "auto":
+            compute_type = "default" if settings.local_whisper_device == "cuda" else "int8"
+        return "whisper", WhisperSTTService(
+            device=settings.local_whisper_device,
+            compute_type=compute_type,
+            settings=WhisperSTTService.Settings(
+                model=settings.local_stt_model,
+                language=stt_language,
+                no_speech_prob=settings.local_stt_no_speech_prob,
+            ),
             sample_rate=settings.local_audio_input_sample_rate,
             stt_ttfb_timeout=settings.local_stt_ttfb_timeout,
             ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
@@ -232,16 +501,146 @@ async def _run_voice_pipeline(
     from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
     @dataclass
+    class VoiceLatencyTrace:
+        interaction_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+        user_turn_id: str | None = None
+        assistant_turn_id: str | None = None
+        user_text: str = ""
+        assistant_text: str = ""
+        language: str | None = None
+        vad_started_at: float = 0.0
+        vad_stopped_at: float = 0.0
+        transcript_at: float = 0.0
+        llm_request_started_at: float = 0.0
+        llm_first_text_at: float = 0.0
+        llm_completed_at: float = 0.0
+        tts_text_started_at: float = 0.0
+        tts_first_audio_at: float = 0.0
+        tts_completed_at: float = 0.0
+        stt_provider_elapsed_ms: int | None = None
+        tts_audio_chunk_count: int = 0
+        interrupted: bool = False
+
+        def ms(self, start: float, end: float) -> int | None:
+            if not start or not end or end < start:
+                return None
+            return int((end - start) * 1000)
+
+        def timings(self) -> dict[str, Any]:
+            first_response_at = self.tts_first_audio_at or self.llm_first_text_at
+            return {
+                "vad_speech_ms": self.ms(self.vad_started_at, self.vad_stopped_at),
+                "stt_after_speech_end_ms": self.ms(self.vad_stopped_at, self.transcript_at),
+                "stt_after_speech_start_ms": self.ms(self.vad_started_at, self.transcript_at),
+                "stt_provider_elapsed_ms": self.stt_provider_elapsed_ms,
+                "turn_finalization_ms": self.ms(self.transcript_at, self.llm_request_started_at),
+                "llm_ttfb_ms": self.ms(self.llm_request_started_at, self.llm_first_text_at),
+                "llm_total_ms": self.ms(self.llm_request_started_at, self.llm_completed_at),
+                "tts_ttfb_from_first_text_ms": self.ms(self.tts_text_started_at, self.tts_first_audio_at),
+                "tts_total_ms": self.ms(self.tts_text_started_at, self.tts_completed_at),
+                "speech_end_to_first_text_ms": self.ms(self.vad_stopped_at, self.llm_first_text_at),
+                "speech_end_to_first_audio_ms": self.ms(self.vad_stopped_at, self.tts_first_audio_at),
+                "speech_start_to_first_audio_ms": self.ms(self.vad_started_at, self.tts_first_audio_at),
+                "transcript_to_first_text_ms": self.ms(self.transcript_at, self.llm_first_text_at),
+                "transcript_to_first_audio_ms": self.ms(self.transcript_at, self.tts_first_audio_at),
+                "transcript_to_response_done_ms": self.ms(self.transcript_at, self.tts_completed_at),
+                "total_interaction_ms": self.ms(self.vad_started_at, self.tts_completed_at),
+                "first_response_ms": self.ms(self.vad_stopped_at, first_response_at),
+                "tts_audio_chunk_count": self.tts_audio_chunk_count,
+                "interrupted": self.interrupted,
+            }
+
+        def providers(self) -> dict[str, Any]:
+            return {
+                "stt_provider": stt_provider,
+                "configured_stt_provider": settings.local_stt_provider,
+                "stt_model": settings.local_stt_model,
+                "stt_language": settings.local_stt_language,
+                "remote_whisper_base_url": settings.remote_whisper_base_url
+                if settings.local_stt_provider == "remote_whisper"
+                else None,
+                "tts_provider": tts_provider,
+                "configured_tts_provider": settings.local_tts_provider,
+                "tts_voice": settings.local_tts_voice,
+                "tts_text_aggregation_mode": settings.local_tts_text_aggregation_mode,
+                "voxtral_tts_model": settings.voxtral_tts_model
+                if tts_provider == "voxtral"
+                else None,
+                "voxtral_tts_base_url": settings.voxtral_tts_base_url
+                if tts_provider == "voxtral"
+                else None,
+                "llm_provider": settings.llm_provider,
+                "llm_model": settings.active_model,
+            }
+
+    @dataclass
     class VoiceLatencyState:
-        user_vad_started_at: float = 0.0
-        user_vad_stopped_at: float = 0.0
-        user_transcript_at: float = 0.0
-        assistant_llm_started_at: float = 0.0
-        assistant_first_text_at: float = 0.0
-        assistant_first_audio_at: float = 0.0
+        active_trace: VoiceLatencyTrace | None = None
+        response_trace: VoiceLatencyTrace | None = None
         assistant_speaking: bool = False
 
     latency_state = VoiceLatencyState()
+
+    def log_latency(event: str, trace: VoiceLatencyTrace, **extra: Any) -> None:
+        payload = {
+            "event": event,
+            "conversation_id": recorder.conversation_id,
+            "interaction_id": trace.interaction_id,
+            "channel": recorder.channel,
+            "providers": trace.providers(),
+            "timings": trace.timings(),
+            **extra,
+        }
+        text = extra.get("text") if isinstance(extra.get("text"), str) else None
+        role = None
+        if event == "user_transcribed":
+            role = "user"
+        elif event in {"llm_first_text", "llm_completed", "tts_first_audio", "interaction_completed"}:
+            role = "assistant"
+        try:
+            recorder.record_interaction_event(
+                interaction_id=trace.interaction_id,
+                event=event,
+                role=role,
+                text=text,
+                payload=payload,
+            )
+        except Exception:
+            logger.debug("Failed to persist interaction event", exc_info=True)
+        logger.info("VOICE_LATENCY " + dumps(payload))
+
+    class VoiceOpenAILLMService(OpenAILLMService):
+        async def _process_context(self, context: LLMContext):
+            latest_user_text = ""
+            for message in reversed(context.get_messages()):
+                if _message_role(message) == "user":
+                    latest_user_text = _message_content_text(message) or ""
+                    break
+            if policy_text := fast_policy_response(latest_user_text):
+                trace = latency_state.active_trace
+                now = time.perf_counter()
+                if trace:
+                    trace.llm_request_started_at = now
+                    trace.llm_first_text_at = now
+                    trace.llm_completed_at = now
+                    latency_state.response_trace = trace
+                    log_latency("llm_policy_response", trace, text=policy_text)
+                await self._push_llm_text(policy_text)
+                return
+            await super()._process_context(context)
+
+        async def get_chat_completions(self, context: LLMContext):
+            trace = latency_state.active_trace
+            if trace:
+                trace.llm_request_started_at = time.perf_counter()
+                latency_state.response_trace = trace
+                log_latency("llm_request_started", trace)
+            normalized = LLMContext(
+                messages=merge_adjacent_chat_messages(context.get_messages()),
+                tools=context.tools,
+                tool_choice=context.tool_choice,
+            )
+            return await super().get_chat_completions(normalized)
 
     class TranscriptCaptureProcessor(FrameProcessor):
         def __init__(self, *, capture_user: bool = False, capture_assistant: bool = False):
@@ -254,96 +653,85 @@ async def _run_voice_pipeline(
         async def process_frame(self, frame: Frame, direction: FrameDirection):
             await super().process_frame(frame, direction)
             if isinstance(frame, VADUserStartedSpeakingFrame):
-                latency_state.user_vad_started_at = time.perf_counter()
+                trace = VoiceLatencyTrace(vad_started_at=time.perf_counter())
+                latency_state.active_trace = trace
+                log_latency("vad_started", trace)
             elif isinstance(frame, VADUserStoppedSpeakingFrame):
-                latency_state.user_vad_stopped_at = time.perf_counter()
+                trace = latency_state.active_trace
+                if trace:
+                    trace.vad_stopped_at = time.perf_counter()
+                    log_latency("vad_stopped", trace)
 
             if self._capture_user and isinstance(frame, TranscriptionFrame):
                 text = frame.text.strip()
                 if text:
                     now = time.perf_counter()
-                    latency_state.user_transcript_at = now
+                    trace = latency_state.active_trace or VoiceLatencyTrace()
+                    if latency_state.active_trace is None:
+                        latency_state.active_trace = trace
+                    trace.transcript_at = now
+                    trace.user_text = text
                     language = str(frame.language) if frame.language else None
-                    vad_to_transcript_ms = (
-                        int((now - latency_state.user_vad_started_at) * 1000)
-                        if latency_state.user_vad_started_at
-                        else None
-                    )
-                    speech_end_to_transcript_ms = (
-                        int((now - latency_state.user_vad_stopped_at) * 1000)
-                        if latency_state.user_vad_stopped_at
-                        else None
-                    )
-                    recorder.record_turn(
+                    trace.language = language
+                    result = getattr(frame, "result", None)
+                    if isinstance(result, Mapping):
+                        elapsed_ms = result.get("elapsed_ms")
+                        if isinstance(elapsed_ms, int):
+                            trace.stt_provider_elapsed_ms = elapsed_ms
+                    user_turn_id = recorder.record_turn(
                         "user",
                         text,
                         metrics={
+                            "interaction_id": trace.interaction_id,
                             "language": language,
                             "source": settings.local_stt_provider,
                             "stt_model": settings.local_stt_model,
-                            "vad_to_transcript_ms": vad_to_transcript_ms,
-                            "speech_end_to_transcript_ms": speech_end_to_transcript_ms,
+                            **trace.timings(),
                         },
                     )
+                    trace.user_turn_id = user_turn_id or trace.user_turn_id
                     logger.info(f"USER: {text}")
+                    log_latency("user_transcribed", trace, text=text, language=language)
             elif self._capture_assistant and isinstance(frame, LLMFullResponseStartFrame):
                 self._assistant_parts = []
                 self._assistant_started_at = time.perf_counter()
-                latency_state.assistant_llm_started_at = self._assistant_started_at
-                latency_state.assistant_first_text_at = 0.0
-                latency_state.assistant_first_audio_at = 0.0
+                trace = latency_state.response_trace or latency_state.active_trace
+                if trace:
+                    if not trace.llm_request_started_at:
+                        trace.llm_request_started_at = self._assistant_started_at
+                    trace.llm_first_text_at = 0.0
+                    trace.llm_completed_at = 0.0
+                    trace.tts_text_started_at = 0.0
+                    trace.tts_first_audio_at = 0.0
+                    trace.tts_completed_at = 0.0
+                    trace.tts_audio_chunk_count = 0
                 latency_state.assistant_speaking = False
             elif self._capture_assistant and isinstance(frame, TextFrame):
-                if not latency_state.assistant_first_text_at:
-                    latency_state.assistant_first_text_at = time.perf_counter()
+                trace = latency_state.response_trace or latency_state.active_trace
+                if trace and not trace.llm_first_text_at:
+                    trace.llm_first_text_at = time.perf_counter()
+                    trace.tts_text_started_at = trace.llm_first_text_at
+                    log_latency("llm_first_text", trace, text=frame.text)
                 self._assistant_parts.append(frame.text)
             elif self._capture_assistant and isinstance(frame, LLMFullResponseEndFrame):
                 text = "".join(self._assistant_parts).strip()
                 completed_at = time.perf_counter()
-                generation_ms = (
-                    int((time.perf_counter() - self._assistant_started_at) * 1000)
-                    if self._assistant_started_at
-                    else None
-                )
-                speech_to_first_text_ms = (
-                    int((latency_state.assistant_first_text_at - latency_state.user_transcript_at) * 1000)
-                    if latency_state.user_transcript_at and latency_state.assistant_first_text_at
-                    else None
-                )
-                speech_to_first_audio_ms = (
-                    int((latency_state.assistant_first_audio_at - latency_state.user_transcript_at) * 1000)
-                    if latency_state.user_transcript_at and latency_state.assistant_first_audio_at
-                    else None
-                )
-                latency_ms = speech_to_first_audio_ms or speech_to_first_text_ms or generation_ms
-                if text:
-                    recorder.record_turn(
-                        "assistant",
-                        text,
-                        latency_ms=latency_ms,
-                        metrics={
-                            "source": "local_pipecat",
-                            "generation_ms": generation_ms,
-                            "speech_to_first_text_ms": speech_to_first_text_ms,
-                            "speech_to_first_audio_ms": speech_to_first_audio_ms,
-                            "completed_after_user_transcript_ms": (
-                                int((completed_at - latency_state.user_transcript_at) * 1000)
-                                if latency_state.user_transcript_at
-                                else None
-                            ),
-                        },
-                    )
-                    logger.info(f"ASSISTANT: {text}")
+                trace = latency_state.response_trace or latency_state.active_trace
+                if trace:
+                    trace.llm_completed_at = completed_at
+                    trace.assistant_text = text
+                    log_latency("llm_completed", trace, text=text)
             elif isinstance(frame, InterruptionFrame):
-                since_user_start_ms = (
-                    int((time.perf_counter() - latency_state.user_vad_started_at) * 1000)
-                    if latency_state.user_vad_started_at
-                    else None
-                )
+                trace = latency_state.active_trace or latency_state.response_trace
+                if trace:
+                    trace.interrupted = True
+                since_user_start_ms = trace.ms(trace.vad_started_at, time.perf_counter()) if trace else None
                 logger.info(
                     "INTERRUPTION: user speech interrupted the assistant "
                     f"after {since_user_start_ms} ms"
                 )
+                if trace:
+                    log_latency("interruption", trace, since_user_start_ms=since_user_start_ms)
             elif isinstance(frame, ErrorFrame):
                 logger.error(f"PIPELINE ERROR: {frame.error}")
             await self.push_frame(frame, direction)
@@ -351,15 +739,50 @@ async def _run_voice_pipeline(
     class OutputAudioProbeProcessor(FrameProcessor):
         async def process_frame(self, frame: Frame, direction: FrameDirection):
             await super().process_frame(frame, direction)
-            if isinstance(frame, TTSAudioRawFrame) and not latency_state.assistant_first_audio_at:
-                latency_state.assistant_first_audio_at = time.perf_counter()
+            trace = latency_state.response_trace
+            if isinstance(frame, TTSAudioRawFrame):
+                if trace:
+                    trace.tts_audio_chunk_count += 1
+                    if not trace.tts_first_audio_at:
+                        trace.tts_first_audio_at = time.perf_counter()
+                        log_latency("tts_first_audio", trace)
                 latency_state.assistant_speaking = True
             elif isinstance(frame, TTSStoppedFrame):
+                if trace:
+                    trace.tts_completed_at = time.perf_counter()
+                    latency_ms = (
+                        trace.timings().get("speech_end_to_first_audio_ms")
+                        or trace.timings().get("speech_end_to_first_text_ms")
+                        or trace.timings().get("llm_total_ms")
+                    )
+                    if trace.assistant_text:
+                        assistant_turn_id = recorder.record_turn(
+                            "assistant",
+                            trace.assistant_text,
+                            latency_ms=latency_ms,
+                            metrics={
+                                "interaction_id": trace.interaction_id,
+                                "source": "local_pipecat",
+                                **trace.providers(),
+                                **trace.timings(),
+                            },
+                        )
+                        trace.assistant_turn_id = assistant_turn_id or trace.assistant_turn_id
+                        logger.info(f"ASSISTANT: {trace.assistant_text}")
+                    trace_id = recorder.record_latency_trace(
+                        interaction_id=trace.interaction_id,
+                        user_turn_id=trace.user_turn_id,
+                        assistant_turn_id=trace.assistant_turn_id,
+                        providers=trace.providers(),
+                        timings=trace.timings(),
+                    )
+                    log_latency("interaction_completed", trace, latency_trace_id=trace_id)
+                    latency_state.response_trace = None
                 latency_state.assistant_speaking = False
             await self.push_frame(frame, direction)
 
     stt_provider, stt = create_local_stt_service(settings)
-    llm = OpenAILLMService(
+    llm = VoiceOpenAILLMService(
         api_key=settings.active_api_key,
         base_url=settings.active_base_url,
         retry_timeout_secs=settings.llm_timeout_seconds,

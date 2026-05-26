@@ -6,6 +6,7 @@ import base64
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import urllib.error
@@ -63,6 +64,22 @@ def aws_json(args: list[str], region: str | None = None) -> tuple[dict[str, Any]
         return None, f"Invalid AWS JSON output: {exc}"
 
 
+def run_gcloud(args: list[str]) -> tuple[int, str, str]:
+    command = ["gcloud", *args]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    return completed.returncode, completed.stdout.strip(), completed.stderr.strip()
+
+
+def gcloud_json(args: list[str]) -> tuple[dict[str, Any] | list[Any] | None, str]:
+    code, stdout, stderr = run_gcloud([*args, "--format", "json"])
+    if code != 0:
+        return None, stderr or stdout
+    try:
+        return json.loads(stdout), ""
+    except json.JSONDecodeError as exc:
+        return None, f"Invalid gcloud JSON output: {exc}"
+
+
 def http_json(
     url: str,
     method: str = "GET",
@@ -84,8 +101,24 @@ def http_json(
         return 0, None, str(exc)
 
 
+def openai_models_url(base_url: str) -> str:
+    base = base_url.rstrip("/")
+    if base.endswith("/v1"):
+        return f"{base}/models"
+    return f"{base}/v1/models"
+
+
 def check_aws(region: str) -> list[Check]:
     checks: list[Check] = []
+    if shutil.which("aws") is None:
+        return [
+            Check(
+                "aws_cli",
+                "info",
+                "AWS CLI is not installed in this shell.",
+                "Use AWS CloudShell for AWS quota checks, or install/configure the AWS CLI locally.",
+            )
+        ]
     identity, error = aws_json(["sts", "get-caller-identity"])
     if not identity:
         checks.append(
@@ -144,6 +177,132 @@ def check_aws(region: str) -> list[Check]:
                 "aws_p_gpu_quota",
                 "info",
                 f"Running On-Demand P quota is {float(p_quota['Quota']['Value']):g} vCPU.",
+            )
+        )
+    return checks
+
+
+def check_gcp(file_env: dict[str, str]) -> list[Check]:
+    checks: list[Check] = []
+    if shutil.which("gcloud") is None:
+        return [
+            Check(
+                "gcp_cli",
+                "info",
+                "gcloud CLI is not installed in this shell.",
+                "Install the Google Cloud CLI or use Google Cloud Shell for GCP VM deployment.",
+            )
+        ]
+
+    configured_project = env_value("GCP_PROJECT_ID", file_env)
+    if configured_project:
+        project = configured_project
+    else:
+        code, stdout, stderr = run_gcloud(["config", "get-value", "project"])
+        project = stdout if code == 0 and stdout != "(unset)" else ""
+        if not project:
+            checks.append(
+                Check(
+                    "gcp_project",
+                    "info",
+                    f"No active GCP project is configured: {stderr or stdout}",
+                    "Run: gcloud config set project <project-id>, or set GCP_PROJECT_ID.",
+                )
+            )
+            return checks
+
+    checks.append(Check("gcp_project", "ready", f"Using GCP project {project}."))
+
+    accounts, error = gcloud_json(["auth", "list", "--filter=status:ACTIVE"])
+    if isinstance(accounts, list) and accounts:
+        account = accounts[0].get("account", "unknown")
+        checks.append(Check("gcp_identity", "ready", f"Authenticated to GCP as {account}."))
+    else:
+        checks.append(
+            Check(
+                "gcp_identity",
+                "blocked",
+                error or "No active gcloud account.",
+                "Run: gcloud auth login, or use the authenticated Cloud Shell.",
+            )
+        )
+        return checks
+
+    zone = env_value("GCP_ZONE", file_env) or "us-central1-a"
+    region = env_value("GCP_REGION", file_env) or zone.rsplit("-", 1)[0]
+    machine_type = env_value("GCP_VLLM_MACHINE_TYPE", file_env) or "g2-standard-12"
+    gpu_need = {"g2-standard-24": 2, "g2-standard-48": 4, "g2-standard-96": 8}.get(machine_type, 1)
+    region_data, error = gcloud_json(["compute", "regions", "describe", region, "--project", project])
+    if not isinstance(region_data, dict):
+        checks.append(
+            Check(
+                "gcp_l4_quota",
+                "info",
+                f"Could not read GCP region quota for {region}: {error}",
+                "Enable compute.googleapis.com and check Compute Engine quotas for NVIDIA_L4_GPUS.",
+            )
+        )
+    else:
+        quotas = {item.get("metric"): item for item in region_data.get("quotas", [])}
+        l4_quota = quotas.get("NVIDIA_L4_GPUS")
+        if l4_quota:
+            limit = float(l4_quota.get("limit", 0))
+            usage = float(l4_quota.get("usage", 0))
+            available = limit - usage
+            status = "ready" if available >= gpu_need else "blocked"
+            checks.append(
+                Check(
+                    "gcp_l4_quota",
+                    status,
+                    f"{region} NVIDIA_L4_GPUS quota has {available:g} available of {limit:g}; {machine_type} needs {gpu_need}.",
+                    "Request L4 GPU quota in this region or choose a different G2 zone." if status == "blocked" else "",
+                )
+            )
+        else:
+            checks.append(
+                Check(
+                    "gcp_l4_quota",
+                    "info",
+                    f"Region {region} did not report NVIDIA_L4_GPUS quota.",
+                    "The deploy script will still let Compute Engine validate the selected G2 machine type.",
+                )
+            )
+
+    if env_value("GCP_BILLING_ACK", file_env).lower() == "true":
+        checks.append(Check("gcp_billing_ack", "configured", "GCP_BILLING_ACK=true is set for deployment scripts."))
+    else:
+        checks.append(
+            Check(
+                "gcp_billing_ack",
+                "info",
+                "GCP deployment scripts will not launch VMs until GCP_BILLING_ACK=true is set.",
+                "Set it only immediately before intentionally launching paid VM capacity.",
+            )
+        )
+
+    instance = env_value("GCP_VLLM_INSTANCE_NAME", file_env) or "voice-agent-vllm"
+    instance_data, _error = gcloud_json(
+        ["compute", "instances", "describe", instance, "--project", project, "--zone", zone]
+    )
+    if isinstance(instance_data, dict):
+        status = instance_data.get("status", "unknown")
+        network = (instance_data.get("networkInterfaces") or [{}])[0]
+        external = ((network.get("accessConfigs") or [{}])[0]).get("natIP")
+        internal = network.get("networkIP")
+        checks.append(
+            Check(
+                "gcp_vllm_instance",
+                "ready" if status == "RUNNING" else "configured",
+                f"{instance} is {status}; internal={internal or 'none'} external={external or 'none'}.",
+            )
+        )
+    else:
+        checks.append(
+            Check(
+                "gcp_vllm_instance",
+                "info",
+                f"{instance} is not deployed in {zone}.",
+                "Run scripts/gcp_deploy_vllm.sh after confirming project, region, quota, and cost guardrails.",
             )
         )
     return checks
@@ -256,6 +415,7 @@ def check_pipecat(file_env: dict[str, str]) -> Check:
     cartesia = env_value("CARTESIA_API_KEY", file_env)
     local_tts_provider = env_value("LOCAL_TTS_PROVIDER", file_env) or "auto"
     fish_base_url = env_value("FISH_SPEECH_BASE_URL", file_env) or "http://127.0.0.1:8080"
+    voxtral_base_url = env_value("VOXTRAL_TTS_BASE_URL", file_env) or "http://127.0.0.1:8002/v1"
     if cloud_ws and cloud_host:
         return Check("pipecat", "ready", "Pipecat Cloud WebSocket route is configured.")
     if voice_runtime == "local_pipecat":
@@ -280,6 +440,20 @@ def check_pipecat(file_env: dict[str, str]) -> Check:
                 f"Local Pipecat mode is selected, but missing modules: {details}.",
                 'Run: brew install portaudio && .venv/bin/python -m pip install -e "backend[voice]".',
             )
+        if local_tts_provider == "voxtral":
+            status, data, error = http_json(openai_models_url(voxtral_base_url), timeout=5)
+            if status == 200 and data is not None:
+                return Check(
+                    "pipecat",
+                    "ready",
+                    "Local Pipecat runtime is installed and Voxtral TTS server is healthy.",
+                )
+            return Check(
+                "pipecat",
+                "blocked",
+                f"LOCAL_TTS_PROVIDER=voxtral, but Voxtral model server health failed: {error or status}",
+                "Start the Voxtral vLLM-Omni server, or set LOCAL_TTS_PROVIDER=piper/fish_speech/auto.",
+            )
         if local_tts_provider == "fish_speech":
             status, data, error = http_json(f"{fish_base_url.rstrip('/')}/v1/health", timeout=5)
             if status == 200 and data:
@@ -295,19 +469,24 @@ def check_pipecat(file_env: dict[str, str]) -> Check:
                 "Start Fish Speech server on FISH_SPEECH_BASE_URL, or set LOCAL_TTS_PROVIDER=auto/kokoro.",
             )
         if local_tts_provider == "auto":
-            status, data, _error = http_json(f"{fish_base_url.rstrip('/')}/v1/health", timeout=2)
-            fish_detail = (
-                "Fish Speech TTS server is healthy and will be used."
-                if status == 200 and data
-                else "Fish Speech TTS server is not running; auto mode will use Kokoro."
+            voxtral_status, voxtral_data, _voxtral_error = http_json(
+                openai_models_url(voxtral_base_url),
+                timeout=2,
             )
+            status, data, _error = http_json(f"{fish_base_url.rstrip('/')}/v1/health", timeout=2)
+            if voxtral_status == 200 and voxtral_data is not None:
+                tts_detail = "Voxtral TTS server is healthy and will be used."
+            elif status == 200 and data:
+                tts_detail = "Fish Speech TTS server is healthy and will be used."
+            else:
+                tts_detail = "Voxtral/Fish servers are not running; auto mode will use Kokoro."
         else:
-            fish_detail = "Kokoro TTS is forced by LOCAL_TTS_PROVIDER=kokoro."
+            tts_detail = f"TTS is forced by LOCAL_TTS_PROVIDER={local_tts_provider}."
         return Check(
             "pipecat",
             "ready",
             "Local Pipecat voice runtime is installed with PyAudio, WhisperX, MLX fallback, Kokoro, "
-            f"Fish Speech client support, and Silero VAD. {fish_detail}",
+            f"Fish Speech/Voxtral client support, and Silero VAD. {tts_detail}",
         )
     if voice_runtime == "pipecat" and deepgram and cartesia:
         return Check("pipecat", "ready", "Self-hosted Pipecat runtime has STT and TTS keys configured.")
@@ -342,8 +521,11 @@ def main() -> int:
 
     file_env = load_env(REPO_ROOT / args.env_file)
     region = env_value("AWS_REGION", file_env) or env_value("AWS_DEFAULT_REGION", file_env) or "us-east-2"
+    gcp_zone = env_value("GCP_ZONE", file_env) or "us-central1-a"
+    gcp_region = env_value("GCP_REGION", file_env) or gcp_zone.rsplit("-", 1)[0]
 
     checks = [
+        *check_gcp(file_env),
         *check_aws(region),
         check_ollama(file_env, args.live),
         check_nvidia(file_env, args.live),
@@ -352,11 +534,16 @@ def main() -> int:
         check_backend(),
     ]
 
-    payload = {"region": region, "live": args.live, "checks": [asdict(check) for check in checks]}
+    payload = {
+        "aws_region": region,
+        "gcp_region": gcp_region,
+        "live": args.live,
+        "checks": [asdict(check) for check in checks],
+    }
     if args.json:
         print(json.dumps(payload, indent=2))
     else:
-        print(f"Provider readiness region={region} live={args.live}")
+        print(f"Provider readiness aws_region={region} gcp_region={gcp_region} live={args.live}")
         for check in checks:
             print(f"[{check.status.upper()}] {check.name}: {check.detail}")
             if check.remediation:

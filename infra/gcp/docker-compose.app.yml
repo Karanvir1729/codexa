@@ -1,0 +1,20 @@
+services:
+  backend:
+    build:
+      context: ../..
+      dockerfile: infra/gcp/Dockerfile.backend-voice
+    env_file:
+      - ../../.env
+    volumes:
+      - ../../data:/app/data
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ../..
+      dockerfile: infra/gcp/Dockerfile.frontend
+    depends_on:
+      - backend
+    ports:
+      - "8080:8080"
+    restart: unless-stopped

@@ -14,7 +14,8 @@
     "baseUrl": ".",
     "paths": {
       "@pipecat-ai/client-js": ["src/types/pipecat-client-js.d.ts"],
-      "@pipecat-ai/small-webrtc-transport": ["src/types/pipecat-small-webrtc.d.ts"]
+      "@pipecat-ai/small-webrtc-transport": ["src/types/pipecat-small-webrtc.d.ts"],
+      "@pipecat-ai/voice-ui-kit": ["src/types/pipecat-voice-ui-kit.d.ts"]
     },
     "resolveJsonModule": true,
     "isolatedModules": true,

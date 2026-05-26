@@ -23,6 +23,7 @@ import {
 } from "@pipecat-ai/voice-ui-kit";
 import { PipecatClient, type TransportState } from "@pipecat-ai/client-js";
 import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
+import { BrowserAudioMediaManager } from "./browserAudioMediaManager";
 import {
   apiUrl,
   ChatResponse,
@@ -93,13 +94,29 @@ const prompts = [
   "Can I talk to a human agent?"
 ];
 
-async function ensureMicrophonePermission() {
+const voiceIceServers: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
+const voiceConnectTimeoutMs = 15000;
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeoutId: number | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId !== undefined) {
+      window.clearTimeout(timeoutId);
+    }
+  }
+}
+
+async function requestMicrophoneStream() {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error("This browser does not expose microphone capture.");
   }
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    stream.getTracks().forEach((track) => track.stop());
+    return await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
   } catch (error) {
     if (error instanceof DOMException && error.name === "NotAllowedError") {
       throw new Error(
@@ -131,6 +148,7 @@ export function App() {
   const [botSpeaking, setBotSpeaking] = useState(false);
   const [userSpeaking, setUserSpeaking] = useState(false);
   const botAudioRef = useRef<HTMLAudioElement | null>(null);
+  const voiceMediaManagerRef = useRef<BrowserAudioMediaManager | null>(null);
   const voiceStateRef = useRef<TransportState>("disconnected");
 
   async function refresh() {
@@ -153,68 +171,91 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const client = new PipecatClient({
-      transport: new SmallWebRTCTransport({ waitForICEGathering: true }),
-      enableMic: true,
-      enableCam: false,
-      callbacks: {
-        onConnected: () => setVoiceNotice(null),
-        onDisconnected: () => {
-          setMicEnabled(false);
-          setBotSpeaking(false);
-          setUserSpeaking(false);
-          setLocalAudioTrack(null);
-          setBotAudioTrack(null);
-        },
-        onTransportStateChanged: (state: TransportState) => {
-          voiceStateRef.current = state;
-          setVoiceState(state);
-        },
-        onError: (message: PipecatErrorMessage) => setVoiceNotice(message.data?.message ?? "Pipecat client error"),
-        onDeviceError: (error: PipecatDeviceError) => {
-          setVoiceNotice(error.message ?? "Device access failed");
-        },
-        onTrackStarted: (track: MediaStreamTrack, participant?: unknown) => {
-          if (track.kind !== "audio") return;
-          if (participant) {
-            setLocalAudioTrack(track);
-            setMicEnabled(true);
-            setVoiceNotice(null);
-          } else {
-            setBotAudioTrack(track);
-          }
-        },
-        onTrackStopped: (track: MediaStreamTrack, participant?: unknown) => {
-          if (track.kind !== "audio") return;
-          if (participant) {
-            setLocalAudioTrack(null);
+    if (!window.RTCPeerConnection) {
+      setVoiceNotice("Browser voice needs WebRTC support.");
+      return;
+    }
+
+    let client: PipecatClient;
+    try {
+      const mediaManager = new BrowserAudioMediaManager();
+      voiceMediaManagerRef.current = mediaManager;
+      client = new PipecatClient({
+        transport: new SmallWebRTCTransport({
+          iceServers: voiceIceServers,
+          mediaManager,
+          waitForICEGathering: false
+        }),
+        enableMic: false,
+        enableCam: false,
+        callbacks: {
+          onConnected: () => setVoiceNotice(null),
+          onDisconnected: () => {
             setMicEnabled(false);
-          } else {
+            setBotSpeaking(false);
+            setUserSpeaking(false);
+            setLocalAudioTrack(null);
             setBotAudioTrack(null);
+          },
+          onTransportStateChanged: (state: TransportState) => {
+            voiceStateRef.current = state;
+            setVoiceState(state);
+          },
+          onError: (message: PipecatErrorMessage) => {
+            if (message.data?.message) {
+              setVoiceNotice(message.data.message);
+            }
+          },
+          onDeviceError: (error: PipecatDeviceError) => {
+            setVoiceNotice(error.message ?? "Device access failed");
+          },
+          onTrackStarted: (track: MediaStreamTrack, participant?: unknown) => {
+            if (track.kind !== "audio") return;
+            if (participant) {
+              setLocalAudioTrack(track);
+              setMicEnabled(true);
+              setVoiceNotice(null);
+            } else {
+              setBotAudioTrack(track);
+            }
+          },
+          onTrackStopped: (track: MediaStreamTrack, participant?: unknown) => {
+            if (track.kind !== "audio") return;
+            if (participant) {
+              setLocalAudioTrack(null);
+              setMicEnabled(false);
+            } else {
+              setBotAudioTrack(null);
+            }
+          },
+          onUserStartedSpeaking: () => setUserSpeaking(true),
+          onUserStoppedSpeaking: () => setUserSpeaking(false),
+          onBotStartedSpeaking: () => setBotSpeaking(true),
+          onBotStoppedSpeaking: () => setBotSpeaking(false),
+          onUserTranscript: (data: TranscriptData) => {
+            const text = data.text?.trim();
+            if (!data.final || !text) return;
+            setTurns((current) =>
+              appendTurn(current, { id: crypto.randomUUID(), role: "user", content: text })
+            );
+          },
+          onBotOutput: (data: BotOutputData) => {
+            const text = data.text?.trim();
+            if (!text || !data.spoken) return;
+            setTurns((current) =>
+              appendTurn(current, { id: crypto.randomUUID(), role: "assistant", content: text })
+            );
           }
-        },
-        onUserStartedSpeaking: () => setUserSpeaking(true),
-        onUserStoppedSpeaking: () => setUserSpeaking(false),
-        onBotStartedSpeaking: () => setBotSpeaking(true),
-        onBotStoppedSpeaking: () => setBotSpeaking(false),
-        onUserTranscript: (data: TranscriptData) => {
-          const text = data.text?.trim();
-          if (!data.final || !text) return;
-          setTurns((current) =>
-            appendTurn(current, { id: crypto.randomUUID(), role: "user", content: text })
-          );
-        },
-        onBotOutput: (data: BotOutputData) => {
-          const text = data.text?.trim();
-          if (!text || !data.spoken) return;
-          setTurns((current) =>
-            appendTurn(current, { id: crypto.randomUUID(), role: "assistant", content: text })
-          );
         }
-      }
-    });
+      });
+    } catch (error) {
+      setVoiceNotice(error instanceof Error ? error.message : "Pipecat client failed to initialize.");
+      return;
+    }
+
     setVoiceClient(client);
     return () => {
+      voiceMediaManagerRef.current = null;
       client.disconnect().catch(() => undefined);
     };
   }, []);
@@ -224,6 +265,8 @@ export function App() {
   const voiceConnected = voiceState === "connected" || voiceState === "ready";
   const voiceBusy = voiceState === "connecting" || voiceState === "initializing";
   const voiceStatus = botSpeaking ? "assistant speaking" : userSpeaking ? "listening" : voiceState;
+  const sttBadge = voiceProviderLabel(health?.local_stt_provider, "STT");
+  const ttsBadge = voiceProviderLabel(health?.local_tts_provider, "TTS");
 
   useEffect(() => {
     const audio = botAudioRef.current;
@@ -240,15 +283,20 @@ export function App() {
         await voiceClient.disconnect();
         return;
       }
-      await voiceClient.connect({
-        webrtcRequestParams: {
-          endpoint: apiUrl("/api/offer"),
-          requestData: { source: "browser_console" }
-        }
-      });
+      await withTimeout(
+        voiceClient.connect({
+          webrtcRequestParams: {
+            endpoint: apiUrl("/api/offer"),
+            requestData: { source: "browser_console" }
+          }
+        }),
+        voiceConnectTimeoutMs,
+        "Voice connection timed out. Check microphone permission and retry."
+      );
       setMicEnabled(voiceClient.isMicEnabled);
       setVoiceNotice(null);
     } catch (error) {
+      await voiceClient.disconnect().catch(() => undefined);
       setVoiceNotice(error instanceof Error ? error.message : "Pipecat connection failed.");
     }
   }
@@ -258,7 +306,12 @@ export function App() {
     try {
       const next = !micEnabled;
       if (next) {
-        await ensureMicrophonePermission();
+        const stream = await withTimeout(
+          requestMicrophoneStream(),
+          voiceConnectTimeoutMs,
+          "Microphone permission timed out. Allow microphone access and try Unmute again."
+        );
+        voiceMediaManagerRef.current?.setPendingMicStream(stream);
       }
       voiceClient.enableMic(next);
       if (!next) {
@@ -469,8 +522,8 @@ export function App() {
                   size={148}
                 />
                 <div className="kitBadges">
-                  <Badge color="client" variant="outline" rounded="sm">Whisper auto</Badge>
-                  <Badge color="agent" variant="outline" rounded="sm">Fish TTS route</Badge>
+                  <Badge color="client" variant="outline" rounded="sm">{sttBadge}</Badge>
+                  <Badge color="agent" variant="outline" rounded="sm">{ttsBadge}</Badge>
                   <Badge color="secondary" variant="outline" rounded="sm">SmallWebRTC</Badge>
                 </div>
               </div>
@@ -542,4 +595,21 @@ function Metric({ icon, label, value, detail }: { icon: JSX.Element; label: stri
       </div>
     </div>
   );
+}
+
+function voiceProviderLabel(provider: string | undefined, kind: "STT" | "TTS") {
+  if (!provider) return kind;
+  const labels: Record<string, string> = {
+    google: `Google ${kind}`,
+    nvidia: `NVIDIA ${kind}`,
+    deepgram: `Deepgram ${kind}`,
+    cartesia: "Cartesia TTS",
+    whisper: "Whisper STT",
+    whisperx: "WhisperX STT",
+    mlx_whisper: "MLX Whisper STT",
+    kokoro: "Kokoro TTS",
+    fish_speech: "Fish Speech TTS",
+    auto: `Auto ${kind}`
+  };
+  return labels[provider] ?? `${provider} ${kind}`;
 }

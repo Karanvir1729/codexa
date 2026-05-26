@@ -13,6 +13,8 @@ export type Health = {
   llm_provider: string;
   model: string;
   voice_runtime: string;
+  local_stt_provider?: string;
+  local_tts_provider?: string;
   prompt_version: number;
   reasoning_mode: string;
   cost_guard: CostGuard;

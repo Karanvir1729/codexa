@@ -116,10 +116,44 @@ CREATE TABLE IF NOT EXISTS cost_events (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS latency_traces (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    interaction_id TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    transport TEXT NOT NULL,
+    user_turn_id TEXT,
+    assistant_turn_id TEXT,
+    providers_json TEXT NOT NULL DEFAULT '{}',
+    timings_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(conversation_id) REFERENCES conversations(id),
+    FOREIGN KEY(user_turn_id) REFERENCES turns(id),
+    FOREIGN KEY(assistant_turn_id) REFERENCES turns(id)
+);
+
+CREATE TABLE IF NOT EXISTS interaction_events (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    interaction_id TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    transport TEXT NOT NULL,
+    event TEXT NOT NULL,
+    role TEXT,
+    text TEXT,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(conversation_id) REFERENCES conversations(id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_turns_conversation ON turns(conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_feedback_conversation ON feedback(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_eval_results_run ON eval_results(run_id);
 CREATE INDEX IF NOT EXISTS idx_cost_events_status ON cost_events(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_latency_traces_conversation ON latency_traces(conversation_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_latency_traces_interaction ON latency_traces(interaction_id);
+CREATE INDEX IF NOT EXISTS idx_interaction_events_conversation ON interaction_events(conversation_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_interaction_events_interaction ON interaction_events(interaction_id, created_at);
 """
 
 
