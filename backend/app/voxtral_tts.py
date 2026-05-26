@@ -31,7 +31,7 @@ class VoxtralTTSService(TTSService):
         base_url: str,
         api_key: str | None = None,
         model: str = "mistralai/Voxtral-4B-TTS-2603",
-        voice: str | None = "vivian",
+        voice: str | None = "neutral_female",
         voice_id: str | None = None,
         language: str | None = "Auto",
         instructions: str | None = None,
@@ -62,6 +62,7 @@ class VoxtralTTSService(TTSService):
         self._stream = stream
         self._initial_codec_chunk_frames = initial_codec_chunk_frames
         self._timeout = httpx.Timeout(timeout_seconds, connect=10)
+        self._target_sample_rate = sample_rate or self.NATIVE_SAMPLE_RATE
         self._resampler = create_stream_resampler()
 
     @traced_tts
@@ -122,7 +123,7 @@ class VoxtralTTSService(TTSService):
                                 ttfb_stopped = True
                             yield TTSAudioRawFrame(
                                 audio=audio,
-                                sample_rate=self.sample_rate,
+                                sample_rate=self._output_sample_rate(),
                                 num_channels=1,
                                 context_id=context_id,
                             )
@@ -135,7 +136,7 @@ class VoxtralTTSService(TTSService):
                         ttfb_stopped = True
                     yield TTSAudioRawFrame(
                         audio=audio,
-                        sample_rate=self.sample_rate,
+                        sample_rate=self._output_sample_rate(),
                         num_channels=1,
                         context_id=context_id,
                     )
@@ -182,7 +183,7 @@ class VoxtralTTSService(TTSService):
             return await self._resampler.resample(
                 _float32_to_int16(content),
                 self.NATIVE_SAMPLE_RATE,
-                self.sample_rate,
+                self._output_sample_rate(),
             )
         if response_format == "wav" or content.startswith(b"RIFF"):
             return await self._decode_wav(content)
@@ -204,7 +205,10 @@ class VoxtralTTSService(TTSService):
             frames = _float32_to_int16(frames)
         elif sample_width != 2:
             raise ValueError(f"expected 16-bit or float32 Voxtral WAV, got {sample_width * 8}-bit")
-        return await self._resampler.resample(frames, source_rate, self.sample_rate)
+        return await self._resampler.resample(frames, source_rate, self._output_sample_rate())
+
+    def _output_sample_rate(self) -> int:
+        return self.sample_rate or self._target_sample_rate
 
 
 async def _iter_sse_events(lines: AsyncIterator[str]) -> AsyncGenerator[tuple[str | None, str], None]:

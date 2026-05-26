@@ -38,10 +38,13 @@ IMAGE_PROJECT="${GCP_IMAGE_PROJECT:-deeplearning-platform-release}"
 IMAGE_FAMILY="${GCP_IMAGE_FAMILY:-common-cu129-ubuntu-2204-nvidia-580}"
 IMAGE_NAME="${GCP_IMAGE_NAME:-}"
 BOOT_DISK_SIZE_GB="${GCP_VOXTRAL_TTS_BOOT_DISK_SIZE_GB:-250}"
-BOOT_DISK_TYPE="${GCP_BOOT_DISK_TYPE:-pd-ssd}"
+BOOT_DISK_TYPE="${GCP_BOOT_DISK_TYPE:-pd-balanced}"
 FIREWALL_RULE="${GCP_VOXTRAL_TTS_FIREWALL_RULE:-voice-agent-voxtral-tts-8000}"
+INTERNAL_FIREWALL_RULE="${GCP_VOXTRAL_TTS_INTERNAL_FIREWALL_RULE:-voice-agent-voxtral-tts-internal}"
 NETWORK="${GCP_NETWORK:-default}"
 NETWORK_TAG="${GCP_VOXTRAL_TTS_NETWORK_TAG:-voice-agent-voxtral-tts}"
+INTERNAL_ALLOWED_CIDR="${GCP_VOXTRAL_TTS_ALLOWED_CIDR:-${GCP_APP_INTERNAL_CIDR:-10.0.0.0/8}}"
+NVIDIA_DRIVER_PACKAGE="${NVIDIA_DRIVER_PACKAGE:-nvidia-driver-580}"
 
 VOXTRAL_MODEL_ID="${VOXTRAL_TTS_MODEL:-mistralai/Voxtral-4B-TTS-2603}"
 VOXTRAL_IMAGE="${VOXTRAL_IMAGE:-vllm/vllm-omni:v0.18.0}"
@@ -76,34 +79,37 @@ esac
 
 CURRENT_IP="$(curl -fsS https://ifconfig.me 2>/dev/null || true)"
 ALLOWED_CIDR="${ALLOWED_CIDR:-${CURRENT_IP:+${CURRENT_IP}/32}}"
-if [[ -z "$ALLOWED_CIDR" ]]; then
-  echo "Set ALLOWED_CIDR, for example 203.0.113.10/32." >&2
-  exit 1
-fi
 
 log "Project: $PROJECT_ID"
 log "Zone: $ZONE"
 log "Instance: $INSTANCE_NAME ($MACHINE_TYPE, ${GPU_COUNT} L4 GPU target)"
 log "Model: $VOXTRAL_MODEL_ID"
 log "Image: $VOXTRAL_IMAGE"
-log "Allowed external CIDR: $ALLOWED_CIDR"
+log "Internal allowed CIDR: $INTERNAL_ALLOWED_CIDR"
+if [[ -n "$ALLOWED_CIDR" ]]; then
+  log "Allowed external CIDR: $ALLOWED_CIDR"
+else
+  log "External Voxtral API firewall disabled; set ALLOWED_CIDR to expose a test URL."
+fi
 log "Auto-stop: ${AUTO_STOP_HOURS}h"
 
 region_json="$(gcloud compute regions describe "$REGION" --project "$PROJECT_ID" --format=json 2>/dev/null || true)"
 project_json="$(gcloud compute project-info describe --project "$PROJECT_ID" --format=json 2>/dev/null || true)"
 if [[ -n "$region_json" || -n "$project_json" ]]; then
-  REGION_JSON="$region_json" PROJECT_JSON="$project_json" python3 - "$GPU_COUNT" "$BOOT_DISK_SIZE_GB" <<'PY'
+  REGION_JSON="$region_json" PROJECT_JSON="$project_json" python3 - "$GPU_COUNT" "$BOOT_DISK_SIZE_GB" "$BOOT_DISK_TYPE" <<'PY'
 import json
 import os
 import sys
 
 need_gpu = float(sys.argv[1])
 need_disk = float(sys.argv[2])
+boot_disk_type = sys.argv[3]
+disk_metric = "SSD_TOTAL_GB" if boot_disk_type == "pd-ssd" else "DISKS_TOTAL_GB"
 blocked = False
 
 region_data = json.loads(os.environ["REGION_JSON"] or "{}")
 region_quotas = {item.get("metric"): item for item in region_data.get("quotas", [])}
-for metric, need in (("NVIDIA_L4_GPUS", need_gpu), ("SSD_TOTAL_GB", need_disk)):
+for metric, need in (("NVIDIA_L4_GPUS", need_gpu), (disk_metric, need_disk)):
     quota = region_quotas.get(metric)
     if not quota:
         print(f"[gcp-voxtral-tts] {metric} quota was not reported; create may still validate it.")
@@ -143,21 +149,42 @@ if gcloud compute instances describe "$INSTANCE_NAME" --project "$PROJECT_ID" --
   gcloud compute instances delete "$INSTANCE_NAME" --project "$PROJECT_ID" --zone "$ZONE" --quiet
 fi
 
-if gcloud compute firewall-rules describe "$FIREWALL_RULE" --project "$PROJECT_ID" >/dev/null 2>&1; then
-  firewall_cmd=(gcloud compute firewall-rules update "$FIREWALL_RULE"
+if gcloud compute firewall-rules describe "$INTERNAL_FIREWALL_RULE" --project "$PROJECT_ID" >/dev/null 2>&1; then
+  internal_firewall_cmd=(gcloud compute firewall-rules update "$INTERNAL_FIREWALL_RULE"
     --project "$PROJECT_ID"
-    --source-ranges "$ALLOWED_CIDR")
+    --source-ranges "$INTERNAL_ALLOWED_CIDR"
+    --allow "tcp:${VOXTRAL_PORT}"
+    --target-tags "$NETWORK_TAG")
 else
-  firewall_cmd=(gcloud compute firewall-rules create "$FIREWALL_RULE"
+  internal_firewall_cmd=(gcloud compute firewall-rules create "$INTERNAL_FIREWALL_RULE"
     --project "$PROJECT_ID"
     --network "$NETWORK"
     --allow "tcp:${VOXTRAL_PORT}"
-    --source-ranges "$ALLOWED_CIDR"
+    --source-ranges "$INTERNAL_ALLOWED_CIDR"
     --target-tags "$NETWORK_TAG"
-    --description "Restrict Voxtral TTS OpenAI-compatible API access for the voice agent")
+    --description "Restrict Voxtral TTS API access to voice-agent internal callers")
 fi
 
-metadata_csv="voxtral-model-id=${VOXTRAL_MODEL_ID},voxtral-image=${VOXTRAL_IMAGE},voxtral-port=${VOXTRAL_PORT},voxtral-gpu-memory-utilization=${VOXTRAL_GPU_MEMORY_UTILIZATION},voxtral-max-model-len=${VOXTRAL_MAX_MODEL_LEN},auto-stop-hours=${AUTO_STOP_HOURS}"
+external_firewall_cmd=()
+if [[ -n "$ALLOWED_CIDR" ]]; then
+  if gcloud compute firewall-rules describe "$FIREWALL_RULE" --project "$PROJECT_ID" >/dev/null 2>&1; then
+    external_firewall_cmd=(gcloud compute firewall-rules update "$FIREWALL_RULE"
+      --project "$PROJECT_ID"
+      --source-ranges "$ALLOWED_CIDR"
+      --allow "tcp:${VOXTRAL_PORT}"
+      --target-tags "$NETWORK_TAG")
+  else
+    external_firewall_cmd=(gcloud compute firewall-rules create "$FIREWALL_RULE"
+      --project "$PROJECT_ID"
+      --network "$NETWORK"
+      --allow "tcp:${VOXTRAL_PORT}"
+      --source-ranges "$ALLOWED_CIDR"
+      --target-tags "$NETWORK_TAG"
+      --description "Restrict external Voxtral TTS OpenAI-compatible API access for testing")
+  fi
+fi
+
+metadata_csv="voxtral-model-id=${VOXTRAL_MODEL_ID},voxtral-image=${VOXTRAL_IMAGE},voxtral-port=${VOXTRAL_PORT},voxtral-gpu-memory-utilization=${VOXTRAL_GPU_MEMORY_UTILIZATION},voxtral-max-model-len=${VOXTRAL_MAX_MODEL_LEN},nvidia-driver-package=${NVIDIA_DRIVER_PACKAGE},auto-stop-hours=${AUTO_STOP_HOURS}"
 if [[ -n "$VOXTRAL_EXTRA_ARGS" ]]; then
   metadata_csv="${metadata_csv},voxtral-extra-args=${VOXTRAL_EXTRA_ARGS}"
 fi
@@ -191,13 +218,19 @@ if [[ -n "$HUGGINGFACE_TOKEN" ]]; then
 fi
 
 if [[ "$DRY_RUN" == "true" ]]; then
-  shell_quote "${firewall_cmd[@]}"
+  shell_quote "${internal_firewall_cmd[@]}"
+  if [[ "${#external_firewall_cmd[@]}" -gt 0 ]]; then
+    shell_quote "${external_firewall_cmd[@]}"
+  fi
   shell_quote "${create_cmd[@]}"
   [[ -n "$hf_token_file" ]] && rm -f "$hf_token_file"
   exit 0
 fi
 
-"${firewall_cmd[@]}"
+"${internal_firewall_cmd[@]}"
+if [[ "${#external_firewall_cmd[@]}" -gt 0 ]]; then
+  "${external_firewall_cmd[@]}"
+fi
 "${create_cmd[@]}"
 [[ -n "$hf_token_file" ]] && rm -f "$hf_token_file"
 
@@ -212,20 +245,29 @@ Backend env:
   LOCAL_TTS_PROVIDER=voxtral
   VOXTRAL_TTS_BASE_URL=http://${INTERNAL_IP}:${VOXTRAL_PORT}/v1
   VOXTRAL_TTS_MODEL=${VOXTRAL_MODEL_ID}
-  VOXTRAL_TTS_VOICE=vivian
+  VOXTRAL_TTS_VOICE=neutral_female
   VOXTRAL_TTS_RESPONSE_FORMAT=wav
-
-External test URL:
-  http://${EXTERNAL_IP}:${VOXTRAL_PORT}/v1/models
 
 Logs:
   gcloud compute ssh ${INSTANCE_NAME} --project ${PROJECT_ID} --zone ${ZONE} --command 'sudo docker logs -f voxtral-tts-server'
 EOF
 
+if [[ -n "$ALLOWED_CIDR" ]]; then
+  cat <<EOF
+
+External test URL:
+  http://${EXTERNAL_IP}:${VOXTRAL_PORT}/v1/models
+EOF
+fi
+
 if [[ "$WAIT_FOR_HEALTH" == "true" ]]; then
   log "Waiting for /v1/models. First model load can take several minutes."
   for _ in {1..120}; do
-    if curl -fsS "http://${EXTERNAL_IP}:${VOXTRAL_PORT}/v1/models" >/dev/null 2>&1; then
+    if [[ -n "$ALLOWED_CIDR" ]] && curl -fsS "http://${EXTERNAL_IP}:${VOXTRAL_PORT}/v1/models" >/dev/null 2>&1; then
+      log "Voxtral TTS is responding."
+      exit 0
+    fi
+    if [[ -z "$ALLOWED_CIDR" ]] && gcloud compute ssh "$INSTANCE_NAME" --project "$PROJECT_ID" --zone "$ZONE" --command "curl -fsS http://127.0.0.1:${VOXTRAL_PORT}/v1/models >/dev/null" >/dev/null 2>&1; then
       log "Voxtral TTS is responding."
       exit 0
     fi

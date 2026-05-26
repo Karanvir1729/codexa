@@ -165,9 +165,10 @@ Default local/cloud voice stack:
 
 - Transport: Pipecat `LocalAudioTransport` using the Mac microphone and speaker.
 - STT: Pipecat `WhisperSTTService` / Faster Whisper with multilingual `LOCAL_STT_MODEL=base` and `LOCAL_STT_LANGUAGE=auto`, which keeps Hindi/English input usable without the 2s+ CPU latency of `small`. Use `LOCAL_STT_PROVIDER=whisperx` or `LOCAL_STT_PROVIDER=nvidia` for heavier model paths.
-- TTS: `LOCAL_TTS_PROVIDER=kokoro` or `auto`, using sentence-level aggregation with
-  voice `af_heart`. Do not use token-level aggregation with local TTS unless you
-  intentionally want word-by-word speech.
+- TTS: production target is a separate GPU-backed Fish Speech or Voxtral worker.
+  `kokoro` is the CPU fallback that keeps the demo usable while GPU quota is
+  unavailable. Keep `LOCAL_TTS_TEXT_AGGREGATION_MODE=sentence`; token-level
+  aggregation makes local voices sound word-by-word.
 - VAD/interruption: Pipecat Silero VAD with a 50 ms speech-start window, 120 ms speech-stop window, 120 ms user speech timeout, and 10 ms output chunks.
 - LLM: Ollama OpenAI-compatible API using `qwen2.5:0.5b`.
 
@@ -212,10 +213,40 @@ For Fish Speech TTS, start the Fish Speech API server separately and keep this a
 ```bash
 LOCAL_TTS_PROVIDER=fish_speech \
 FISH_SPEECH_BASE_URL=http://127.0.0.1:8080 \
+LOCAL_TTS_TEXT_AGGREGATION_MODE=sentence \
 ./scripts/run_local_voice.sh
 ```
 
-Fish Speech S2 is a heavier TTS stack than Kokoro. The official docs list Linux/WSL and 24GB GPU memory for inference, so this repo integrates with the Fish Speech HTTP server instead of vendoring the model weights into the backend.
+Fish Speech S2 is a heavier TTS stack than Kokoro, so this repo integrates
+with the Fish Speech HTTP server instead of vendoring the model weights into
+the backend. On GCP, deploy it as a same-VPC worker:
+
+```bash
+GCP_PROJECT_ID=project-9056e467-7522-4a54-a67 \
+GCP_ZONE=northamerica-northeast2-b \
+GCP_REGION=northamerica-northeast2 \
+GCP_APP_INTERNAL_CIDR=10.162.0.4/32 \
+GCP_BILLING_ACK=true \
+AUTO_STOP_HOURS=0 \
+./scripts/gcp_deploy_fish_tts.sh
+```
+
+For Mistral Voxtral TTS, deploy the OpenAI-compatible vLLM-Omni worker:
+
+```bash
+GCP_PROJECT_ID=project-9056e467-7522-4a54-a67 \
+GCP_ZONE=northamerica-northeast2-b \
+GCP_REGION=northamerica-northeast2 \
+GCP_APP_INTERNAL_CIDR=10.162.0.4/32 \
+GCP_BILLING_ACK=true \
+AUTO_STOP_HOURS=0 \
+./scripts/gcp_deploy_voxtral_tts.sh
+```
+
+Both GPU TTS workers require available project-wide `GPUS_ALL_REGIONS` quota
+in addition to regional L4 quota. If the scripts print that project-wide GPU
+quota is exhausted, Kokoro should stay live until the quota request is granted
+or the LLM/STT GPU worker is moved to a hosted provider.
 
 Local voice turns are written to the same SQLite `conversations` and `turns` tables as the text/API loop, so later eval export and feedback work against the same data store.
 

@@ -122,7 +122,7 @@ class Settings(BaseSettings):
     voxtral_tts_base_url: str = "http://127.0.0.1:8002/v1"
     voxtral_tts_api_key: str | None = None
     voxtral_tts_model: str = "mistralai/Voxtral-4B-TTS-2603"
-    voxtral_tts_voice: str | None = "vivian"
+    voxtral_tts_voice: str | None = "neutral_female"
     voxtral_tts_voice_id: str | None = None
     voxtral_tts_language: str | None = "Auto"
     voxtral_tts_instructions: str | None = None

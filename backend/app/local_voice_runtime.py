@@ -320,12 +320,16 @@ async def create_local_tts_service(settings: Settings):
                 return "voxtral", create_voxtral_tts_service(settings)
             logger.info(detail)
         if provider == "fish_speech":
-            return "fish_speech", create_fish_speech_tts_service(settings)
+            return "fish_speech", create_fish_speech_tts_service(
+                settings, text_aggregation_mode=text_aggregation_mode
+            )
 
         healthy, detail = await fish_speech_healthcheck(settings)
         if healthy:
             logger.info("Fish Speech server detected; using Fish Speech TTS.")
-            return "fish_speech", create_fish_speech_tts_service(settings)
+            return "fish_speech", create_fish_speech_tts_service(
+                settings, text_aggregation_mode=text_aggregation_mode
+            )
         logger.info(f"{detail} Falling back to Kokoro TTS.")
 
     from pipecat.services.kokoro.tts import KokoroTTSService

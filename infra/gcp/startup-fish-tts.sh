@@ -20,6 +20,8 @@ FISH_COMPILE="${FISH_COMPILE:-true}"
 FISH_CHECKPOINT_DIR="${FISH_CHECKPOINT_DIR:-$(metadata_attr fish-checkpoint-dir)}"
 FISH_DECODER_CHECKPOINT_PATH="${FISH_DECODER_CHECKPOINT_PATH:-$(metadata_attr fish-decoder-checkpoint-path)}"
 FISH_DECODER_CONFIG_NAME="${FISH_DECODER_CONFIG_NAME:-$(metadata_attr fish-decoder-config-name)}"
+NVIDIA_DRIVER_PACKAGE="${NVIDIA_DRIVER_PACKAGE:-$(metadata_attr nvidia-driver-package)}"
+NVIDIA_DRIVER_PACKAGE="${NVIDIA_DRIVER_PACKAGE:-nvidia-driver-580}"
 AUTO_STOP_HOURS="${AUTO_STOP_HOURS:-$(metadata_attr auto-stop-hours)}"
 AUTO_STOP_HOURS="${AUTO_STOP_HOURS:-8}"
 
@@ -66,11 +68,17 @@ apt-get install -y --no-install-recommends \
   gnupg \
   python3-pip
 
-if ! command -v nvidia-smi >/dev/null 2>&1; then
-  echo "nvidia-smi is missing. Use a GCP Deep Learning VM image with NVIDIA drivers preinstalled." >&2
+if ! command -v nvidia-smi >/dev/null 2>&1 || ! nvidia-smi >/dev/null 2>&1; then
+  echo "NVIDIA driver is not active; installing ${NVIDIA_DRIVER_PACKAGE}."
+  apt-get install -y "${NVIDIA_DRIVER_PACKAGE}"
+  modprobe nvidia || true
+fi
+
+if ! nvidia-smi; then
+  echo "nvidia-smi still cannot reach the GPU after driver install." >&2
+  echo "Reboot the VM once if DKMS installed a new kernel module for the active kernel." >&2
   exit 1
 fi
-nvidia-smi
 
 install -d -m 0755 /usr/share/keyrings
 curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
@@ -106,11 +114,11 @@ docker run -d \
   --name fish-speech-server \
   --restart unless-stopped \
   --gpus all \
-  -p "${FISH_PORT}:8080" \
+  --network host \
   -v /opt/fish-speech/checkpoints:/app/checkpoints \
   -v /opt/fish-speech/references:/app/references \
   -e "API_SERVER_NAME=0.0.0.0" \
-  -e "API_SERVER_PORT=8080" \
+  -e "API_SERVER_PORT=${FISH_PORT}" \
   -e "LLAMA_CHECKPOINT_PATH=checkpoints/${FISH_CHECKPOINT_DIR}" \
   -e "DECODER_CHECKPOINT_PATH=${FISH_DECODER_CHECKPOINT_PATH}" \
   -e "DECODER_CONFIG_NAME=${FISH_DECODER_CONFIG_NAME}" \

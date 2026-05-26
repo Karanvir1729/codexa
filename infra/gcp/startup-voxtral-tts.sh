@@ -20,6 +20,8 @@ VOXTRAL_GPU_MEMORY_UTILIZATION="${VOXTRAL_GPU_MEMORY_UTILIZATION:-0.90}"
 VOXTRAL_MAX_MODEL_LEN="${VOXTRAL_MAX_MODEL_LEN:-$(metadata_attr voxtral-max-model-len)}"
 VOXTRAL_MAX_MODEL_LEN="${VOXTRAL_MAX_MODEL_LEN:-4096}"
 VOXTRAL_EXTRA_ARGS="${VOXTRAL_EXTRA_ARGS:-$(metadata_attr voxtral-extra-args)}"
+NVIDIA_DRIVER_PACKAGE="${NVIDIA_DRIVER_PACKAGE:-$(metadata_attr nvidia-driver-package)}"
+NVIDIA_DRIVER_PACKAGE="${NVIDIA_DRIVER_PACKAGE:-nvidia-driver-580}"
 HF_TOKEN="${HF_TOKEN:-$(metadata_attr hf-token)}"
 AUTO_STOP_HOURS="${AUTO_STOP_HOURS:-$(metadata_attr auto-stop-hours)}"
 AUTO_STOP_HOURS="${AUTO_STOP_HOURS:-8}"
@@ -34,11 +36,17 @@ apt-get install -y --no-install-recommends \
   gnupg \
   jq
 
-if ! command -v nvidia-smi >/dev/null 2>&1; then
-  echo "nvidia-smi is missing. Use a GCP Deep Learning VM image with NVIDIA drivers preinstalled." >&2
+if ! command -v nvidia-smi >/dev/null 2>&1 || ! nvidia-smi >/dev/null 2>&1; then
+  echo "NVIDIA driver is not active; installing ${NVIDIA_DRIVER_PACKAGE}."
+  apt-get install -y "${NVIDIA_DRIVER_PACKAGE}"
+  modprobe nvidia || true
+fi
+
+if ! nvidia-smi; then
+  echo "nvidia-smi still cannot reach the GPU after driver install." >&2
+  echo "Reboot the VM once if DKMS installed a new kernel module for the active kernel." >&2
   exit 1
 fi
-nvidia-smi
 
 install -d -m 0755 /usr/share/keyrings
 curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
@@ -66,7 +74,7 @@ docker run -d \
   --runtime nvidia \
   --gpus all \
   --ipc=host \
-  -p "${VOXTRAL_PORT}:${VOXTRAL_PORT}" \
+  --network host \
   -v /opt/huggingface:/root/.cache/huggingface \
   -e "HF_TOKEN=${HF_TOKEN}" \
   --entrypoint vllm \
