@@ -25,7 +25,7 @@ from app.local_voice_runtime import (
     resolve_tts_language,
 )
 from app.voice_clone import VoiceCloneProfileStore, voice_clone_followup_response, voice_clone_intent
-from app.voxtral_tts import VoxtralTTSService
+from app.voxtral_tts import CoherentSentenceAggregator, VoxtralTTSService
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
@@ -207,7 +207,7 @@ def test_runtime_prompt_adds_conversational_voice_contract():
 def test_fast_policy_response_handles_name_without_customer_service_hijacks():
     assert fast_policy_response("What's your name?") == "I am an AI assistant."
     assert fast_policy_response("Hello? Are you there?") == "I'm here; how can I help?"
-    assert fast_policy_response("Hey, how's it going?") == "I'm doing well; how can I help?"
+    assert fast_policy_response("Hey, how's it going?") is None
     assert fast_policy_response("I need help with my account.") is None
     assert fast_policy_response("Can I talk to a human agent?") is None
 
@@ -328,6 +328,29 @@ def test_voxtral_ref_audio_takes_precedence_and_whisper_is_stronger():
 
     assert payload["voice_id"] == "saved-voice"
     assert "whisper-like" in payload["instructions"]
+    assert "same voice, pace, pitch" in payload["instructions"]
+
+
+@pytest.mark.asyncio
+async def test_voxtral_sentence_aggregator_coalesces_short_replies():
+    aggregator = CoherentSentenceAggregator(min_chars=80)
+    chunks = []
+
+    async for chunk in aggregator.aggregate("Hey! "):
+        chunks.append(chunk.text)
+    async for chunk in aggregator.aggregate("I'm doing well, thanks for asking. "):
+        chunks.append(chunk.text)
+    async for chunk in aggregator.aggregate("How about you? How can I help you today?"):
+        chunks.append(chunk.text)
+
+    pending = await aggregator.flush()
+
+    assert chunks == []
+    assert pending is not None
+    assert pending.text == (
+        "Hey! I'm doing well, thanks for asking. How about you? "
+        "How can I help you today?"
+    )
 
 
 @pytest.mark.asyncio

@@ -142,13 +142,6 @@ def fast_policy_response(text: str) -> str | None:
     if _latency_intent(normalized, words):
         return "We reduce latency with streaming and local voice processing."
     if (
-        "hows it going" in normalized
-        or "how s it going" in normalized
-        or "how is it going" in normalized
-        or "how are you" in normalized
-    ):
-        return "I'm doing well; how can I help?"
-    if (
         normalized in {"hi", "hello", "hey", "what", "no"}
         or "are you there" in normalized
         or "what is going on" in normalized

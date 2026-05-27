@@ -16,9 +16,62 @@ from pipecat.frames.frames import ErrorFrame, Frame, TTSAudioRawFrame
 from pipecat.services.settings import TTSSettings
 from pipecat.services.tts_service import TTSService, TextAggregationMode
 from pipecat.utils.tracing.service_decorators import traced_tts
+from pipecat.utils.text.base_text_aggregator import (
+    Aggregation,
+    AggregationType,
+    BaseTextAggregator,
+)
+from pipecat.utils.text.simple_text_aggregator import SimpleTextAggregator
 
 from .config import Settings
 from .voice_runtime_controls import VOICE_EMOTION_TTS_INSTRUCTIONS
+
+
+class CoherentSentenceAggregator(BaseTextAggregator):
+    """Coalesce short sentences so one assistant turn keeps one TTS delivery style."""
+
+    def __init__(self, *, min_chars: int = 80):
+        super().__init__(aggregation_type=AggregationType.SENTENCE)
+        self._sentence_aggregator = SimpleTextAggregator(aggregation_type=AggregationType.SENTENCE)
+        self._text = ""
+        self._min_chars = max(1, min_chars)
+
+    @property
+    def text(self) -> Aggregation:
+        return Aggregation(text=self._text.strip(), type=AggregationType.SENTENCE)
+
+    async def aggregate(self, text: str) -> AsyncIterator[Aggregation]:
+        async for sentence in self._sentence_aggregator.aggregate(text):
+            self._append(sentence.text)
+            if len(self._text) >= self._min_chars:
+                yield self._pop()
+
+    async def flush(self) -> Aggregation | None:
+        pending = await self._sentence_aggregator.flush()
+        if pending:
+            self._append(pending.text)
+        if self._text:
+            return self._pop()
+        return None
+
+    async def handle_interruption(self):
+        self._text = ""
+        await self._sentence_aggregator.handle_interruption()
+
+    async def reset(self):
+        self._text = ""
+        await self._sentence_aggregator.reset()
+
+    def _append(self, text: str) -> None:
+        stripped = text.strip()
+        if not stripped:
+            return
+        self._text = f"{self._text.rstrip()} {stripped}" if self._text else stripped
+
+    def _pop(self) -> Aggregation:
+        text = self._text.strip()
+        self._text = ""
+        return Aggregation(text=text, type=AggregationType.SENTENCE)
 
 
 class VoxtralTTSService(TTSService):
@@ -46,6 +99,8 @@ class VoxtralTTSService(TTSService):
         timeout_seconds: float = 120,
         ref_audio_enabled: bool = True,
         sample_rate: int | None = None,
+        text_aggregation_mode: TextAggregationMode = TextAggregationMode.SENTENCE,
+        coherent_sentence_min_chars: int = 80,
         **kwargs,
     ):
         super().__init__(
@@ -53,8 +108,13 @@ class VoxtralTTSService(TTSService):
             push_stop_frames=True,
             sample_rate=sample_rate,
             settings=TTSSettings(model=model, voice=voice_id or voice, language=None),
+            text_aggregation_mode=text_aggregation_mode,
             **kwargs,
         )
+        if text_aggregation_mode == TextAggregationMode.SENTENCE:
+            self._text_aggregator = CoherentSentenceAggregator(
+                min_chars=coherent_sentence_min_chars
+            )
         self._endpoint = _audio_speech_endpoint(base_url)
         self._api_key = api_key
         self._model = model
@@ -89,8 +149,14 @@ class VoxtralTTSService(TTSService):
             self._instructions = self._base_instructions
             return
         base = (self._base_instructions or "").strip()
+        locked_instruction = (
+            f"{emotion_instruction} Keep the same voice, pace, pitch, volume, "
+            "and emotional intensity across every sentence in this assistant turn."
+        )
         self._instructions = (
-            f"{base} Current turn style: {emotion_instruction}" if base else emotion_instruction
+            f"{base} Current response style: {locked_instruction}"
+            if base
+            else locked_instruction
         )
 
     def set_voice_id(self, voice_id: str | None) -> None:
