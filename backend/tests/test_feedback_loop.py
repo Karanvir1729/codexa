@@ -24,7 +24,7 @@ from app.local_voice_runtime import (
     resolve_stt_language,
     resolve_tts_language,
 )
-from app.voice_clone import VoiceCloneProfileStore, voice_clone_intent
+from app.voice_clone import VoiceCloneProfileStore, voice_clone_followup_response, voice_clone_intent
 from app.voxtral_tts import VoxtralTTSService
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -85,6 +85,22 @@ async def test_text_consent_enables_voice_clone_profile(tmp_path: Path):
     assert response["message"].startswith("Voice cloning is on")
     assert status["enabled"] is True
     assert status["sample_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_voice_clone_followup_uses_fast_policy_branch(tmp_path: Path):
+    settings = Settings(
+        database_path=str(tmp_path / "agent.sqlite3"),
+        voice_clone_storage_dir=str(tmp_path / "voice-clones"),
+        llm_provider="mock",
+    )
+    agent = AgentService(Database(settings.database_path), settings, MockLLMClient(settings))
+
+    await agent.respond("You can clone my voice.", channel="test")
+    response = await agent.respond("Do you need any more data?", channel="test")
+
+    assert response["provider"] == "policy-rule"
+    assert response["message"] == "Yes. Keep talking naturally for a few more clear sentences."
 
 
 def test_cost_guard_blocks_when_local_cap_would_be_exceeded(tmp_path: Path):
@@ -250,6 +266,18 @@ def test_voice_clone_profile_store_requires_consent_and_builds_reference(tmp_pat
     assert state["sample_count"] == 0
 
 
+def test_voice_clone_followups_are_fast_when_enabled():
+    status = {"enabled": True, "sample_count": 2}
+
+    assert voice_clone_followup_response("Do you need any more data?", status) == (
+        "Yes. Keep talking naturally for a few more clear sentences."
+    )
+    assert voice_clone_followup_response("Hallo?", status) == (
+        "I'm here. Voice cloning is still on; keep talking naturally."
+    )
+    assert voice_clone_followup_response("Do you need any more data?", {"enabled": False}) is None
+
+
 def test_voxtral_ref_audio_takes_precedence_and_whisper_is_stronger():
     tts = VoxtralTTSService(
         base_url="http://tts.example/v1",
@@ -260,9 +288,13 @@ def test_voxtral_ref_audio_takes_precedence_and_whisper_is_stronger():
 
     payload = tts._build_payload("Hello.")
 
-    assert payload["ref_audio"] == "abc123"
+    assert payload["ref_audio"] == "data:audio/wav;base64,abc123"
     assert "voice" not in payload
     assert "voice_id" not in payload
+
+    payload = tts._build_payload("Hello.", include_ref_audio=False)
+    assert payload["voice_id"] == "saved-voice"
+    assert "ref_audio" not in payload
 
     tts.set_ref_audio_base64(None)
     tts.set_emotion("whisper")

@@ -72,6 +72,44 @@ def voice_clone_response(intent: VoiceCloneIntent) -> str:
     return "I deleted the stored voice clone."
 
 
+def voice_clone_followup_response(text: str, status: dict[str, Any]) -> str | None:
+    if not status.get("enabled"):
+        return None
+    normalized = re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
+    if not normalized:
+        return None
+    sample_count = int(status.get("sample_count") or 0)
+    if (
+        normalized in {"hi", "hello", "hey", "hallo"}
+        or "are you there" in normalized
+        or "you there" in normalized
+        or "hello" in normalized
+        or "hallo" in normalized
+    ):
+        return "I'm here. Voice cloning is still on; keep talking naturally."
+    if any(
+        phrase in normalized
+        for phrase in [
+            "do you need any more data",
+            "do you need more data",
+            "need any more data",
+            "need more data",
+            "how much data",
+            "is that enough data",
+            "is this enough data",
+            "i can keep talking",
+            "keep talking",
+            "voice turns out",
+            "voice is perfect",
+            "voice perfect",
+        ]
+    ):
+        if sample_count < 3:
+            return "Yes. Keep talking naturally for a few more clear sentences."
+        return "That's enough to start. Keep talking naturally and I'll keep updating the voice sample."
+    return None
+
+
 @dataclass
 class CompletedUtterance:
     id: str

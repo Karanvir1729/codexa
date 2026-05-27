@@ -12,7 +12,7 @@ from .db import Database, dumps, loads
 from .feedback import PromptRepository
 from .flow_runtime import FlowRepository, FlowRuntime
 from .llm import make_llm_client
-from .voice_clone import VoiceCloneProfileStore
+from .voice_clone import VoiceCloneProfileStore, voice_clone_followup_response
 from .voice_runtime_controls import (
     VOICE_EMOTION_CODES,
     VOICE_EMOTION_SYSTEM_PROMPT,
@@ -933,6 +933,11 @@ async def _run_voice_pipeline(
             logger.debug("Failed to persist interaction event", exc_info=True)
         logger.info("VOICE_LATENCY " + dumps(payload))
 
+    def response_emotion_code(user_text: str, response_text: str) -> str:
+        if voice_controls.user_tone_override:
+            return voice_controls.emotion_code
+        return emotion_code_for_turn(user_text, response_text)
+
     class VoiceOpenAILLMService(OpenAILLMService):
         async def _process_context(self, context: LLMContext):
             latest_user_text = ""
@@ -940,9 +945,34 @@ async def _run_voice_pipeline(
                 if _message_role(message) == "user":
                     latest_user_text = _message_content_text(message) or ""
                     break
+            if clone_followup_text := voice_clone_followup_response(
+                latest_user_text,
+                voice_clone_store.status(),
+            ):
+                emotion_code = (
+                    response_emotion_code(latest_user_text, clone_followup_text)
+                    if settings.voice_emotion_codes_enabled
+                    else "N"
+                )
+                trace = latency_state.active_trace
+                now = time.perf_counter()
+                if trace:
+                    trace.llm_request_started_at = now
+                    trace.llm_first_text_at = now
+                    trace.llm_completed_at = now
+                    latency_state.response_trace = trace
+                    log_latency(
+                        "llm_policy_response",
+                        trace,
+                        text=clone_followup_text,
+                        emotion_code=emotion_code,
+                        voice_clone=voice_clone_store.status(),
+                    )
+                await self._push_llm_text(prefix_emotion_code(clone_followup_text, emotion_code))
+                return
             if policy_text := fast_policy_response(latest_user_text):
                 emotion_code = (
-                    emotion_code_for_turn(latest_user_text, policy_text)
+                    response_emotion_code(latest_user_text, policy_text)
                     if settings.voice_emotion_codes_enabled
                     else "N"
                 )
@@ -964,7 +994,7 @@ async def _run_voice_pipeline(
             flow_text = await voice_flow.respond(latest_user_text, latency_state.active_trace)
             if flow_text:
                 emotion_code = (
-                    emotion_code_for_turn(latest_user_text, flow_text)
+                    response_emotion_code(latest_user_text, flow_text)
                     if settings.voice_emotion_codes_enabled
                     else "N"
                 )
@@ -1001,9 +1031,10 @@ async def _run_voice_pipeline(
                     f"speech_speed={voice_controls.speed:.2f} "
                     f"({voice_speed_label(voice_controls.speed)}), "
                     f"emotion={voice_controls.emotion}, "
+                    f"user_tone_override={voice_controls.user_tone_override or 'none'}, "
                     f"voice_clone_enabled={voice_clone_store.enabled}. "
-                    "Use this silently. Do not ask again about speed, tone, or voice clone status "
-                    "unless the user changes it."
+                    "Use this silently. Preserve an explicit user tone until the user changes it. "
+                    "Do not ask again about speed, tone, or voice clone status unless the user changes it."
                 ),
             }
             insert_at = 1 if messages and _message_role(messages[0]) == "system" else 0
@@ -1121,18 +1152,21 @@ async def _run_voice_pipeline(
                     self._emotion_prefix_pending = False
                     self._emotion_prefix_buffer = ""
                     if status == "matched" and code:
-                        voice_controls.apply_emotion_code(code)
+                        if not voice_controls.user_tone_override:
+                            voice_controls.apply_emotion_code(code)
                         if trace:
                             log_latency(
                                 "voice_emotion_changed",
                                 trace,
                                 emotion_code=code,
                                 emotion=voice_controls.emotion,
+                                user_tone_override=voice_controls.user_tone_override,
                             )
                         text_for_tts = remainder
                     else:
-                        inferred_code = emotion_code_for_turn(trace.user_text if trace else "", remainder)
-                        voice_controls.apply_emotion_code(inferred_code)
+                        inferred_code = response_emotion_code(trace.user_text if trace else "", remainder)
+                        if not voice_controls.user_tone_override:
+                            voice_controls.apply_emotion_code(inferred_code)
                         text_for_tts = remainder
                     if not text_for_tts:
                         return
