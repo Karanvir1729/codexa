@@ -23,7 +23,6 @@ from app.local_voice_runtime import (
     resolve_stt_language,
     resolve_tts_language,
 )
-from app.voice_runtime_controls import correct_voice_transcript, voice_speed_intent
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
@@ -109,10 +108,10 @@ def test_local_voice_uses_auto_detect_stt_and_explicit_tts_language():
 def test_local_voice_defaults_to_self_hosted_multilingual_whisper_and_fast_turn_timing():
     settings = Settings()
 
-    assert settings.local_stt_provider == "whisper"
-    assert settings.local_stt_model == "base"
+    assert settings.local_stt_provider == "remote_whisper"
+    assert settings.local_stt_model == "large-v3-turbo"
     assert settings.local_stt_language == "auto"
-    assert settings.local_stt_no_speech_prob <= 0.35
+    assert settings.local_stt_no_speech_prob <= 0.25
     assert settings.max_completion_tokens <= 48
     assert settings.local_vad_start_secs <= 0.05
     assert settings.local_vad_stop_secs <= 0.12
@@ -161,18 +160,6 @@ def test_fast_policy_response_handles_voice_speed_and_oneplus_ambiguity():
         "Do you mean the OnePlus phone or one plus one?"
     )
     assert fast_policy_response("What's one plus one?") == "It's 2."
-
-
-def test_voice_transcript_correction_handles_observed_speed_mishears():
-    faster = correct_voice_transcript("Kids are faster.")
-    very_fast = correct_voice_transcript("You're not talking, UriFest.")
-
-    assert faster.corrected is True
-    assert faster.text == "Can you talk faster?"
-    assert voice_speed_intent(faster.text) == "faster"
-    assert very_fast.corrected is True
-    assert "very fast" in very_fast.text.lower()
-    assert voice_speed_intent(very_fast.text) == "very_fast"
 
 
 @pytest.mark.asyncio

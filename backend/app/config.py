@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     voice_runtime: Literal["text", "pipecat", "local_pipecat"] = "text"
     voice_behavior_mode: Literal["assistant", "flow"] = "assistant"
     voice_flow_id: str = "active"
-    voice_stt_correction_enabled: bool = True
+    voice_stt_correction_enabled: bool = False
     voice_emotion_codes_enabled: bool = True
     deepgram_api_key: str | None = None
     cartesia_api_key: str | None = None
@@ -79,9 +79,9 @@ class Settings(BaseSettings):
     small_webrtc_turn_credential: str | None = None
     local_stt_provider: Literal[
         "whisper", "remote_whisper", "whisperx", "mlx_whisper", "nvidia", "deepgram", "google"
-    ] = "whisper"
-    local_stt_model: str = "base"
-    local_stt_no_speech_prob: float = Field(default=0.35, ge=0, le=1)
+    ] = "remote_whisper"
+    local_stt_model: str = "large-v3-turbo"
+    local_stt_no_speech_prob: float = Field(default=0.25, ge=0, le=1)
     local_stt_temperature: float = Field(default=0.0, ge=0)
     local_stt_ttfb_timeout: float = Field(default=0.6, ge=0)
     local_stt_ttfs_p99_latency: float = Field(default=0.8, ge=0)

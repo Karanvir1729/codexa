@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from typing import Literal
 
 
@@ -10,16 +9,16 @@ VoiceEmotionCode = Literal["N", "F", "C", "P", "S", "E"]
 
 
 DEFAULT_STT_INITIAL_PROMPT = (
-    "Transcribe short live voice-agent commands exactly. Common commands include: "
-    "Can you talk faster? Talk faster than that. Talk very fast. Very fast. "
-    "Talk slower. Use normal speed. Preserve PipeCAD, Pipecat, Codex, WebRTC, "
-    "Whisper, Voxtral, and Orchestrator."
+    "Transcribe live voice-agent speech exactly. Preserve the user's wording, "
+    "punctuation, product names, acronyms, and code terms. Use English unless "
+    "the speaker clearly uses another language. Preserve PipeCAD, Pipecat, "
+    "Codex, WebRTC, Whisper, Voxtral, Orchestrator, GitHub, repository, deploy, "
+    "flowchart, and voice agent."
 )
 
 DEFAULT_STT_HOTWORDS = (
-    "Can you talk faster, talk faster than that, talk very fast, very fast, "
-    "talk slower, normal speed, PipeCAD, Pipecat, Codex, WebRTC, Whisper, "
-    "Voxtral, Orchestrator"
+    "PipeCAD, Pipecat, Codex, WebRTC, Whisper, Voxtral, Orchestrator, GitHub, "
+    "repository, deploy, flowchart, voice agent"
 )
 
 VOICE_EMOTION_CODES: dict[VoiceEmotionCode, str] = {
@@ -41,13 +40,6 @@ VOICE_EMOTION_SYSTEM_PROMPT = (
     "and N otherwise."
 )
 
-VOICE_TRANSCRIPT_REPAIR_PROMPT = (
-    "STT repair hints:\n"
-    "- If the transcript says 'kids are faster', treat it as 'Can you talk faster?'.\n"
-    "- If the transcript says 'UriFest' or 'uri fest', treat it as 'very fast'.\n"
-    "- Do this silently and answer the intended command."
-)
-
 VOICE_EMOTION_TTS_INSTRUCTIONS = {
     "neutral": "Neutral, clear, and concise.",
     "friendly": "Friendly and warm, with natural pace.",
@@ -58,76 +50,12 @@ VOICE_EMOTION_TTS_INSTRUCTIONS = {
 }
 
 
-@dataclass(frozen=True)
-class VoiceTranscriptCorrection:
-    text: str
-    corrected: bool = False
-    reason: str | None = None
-
-
 def normalize_for_intent(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
 
 
-def _compact(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", text.casefold())
-
-
-def correct_voice_transcript(text: str) -> VoiceTranscriptCorrection:
-    raw = text.strip()
-    if not raw:
-        return VoiceTranscriptCorrection(raw)
-
-    normalized = normalize_for_intent(raw)
-    compact = _compact(raw)
-
-    kids_faster_variants = {
-        "kids are faster",
-        "kid are faster",
-        "kids faster",
-        "kid faster",
-        "gets are faster",
-        "get are faster",
-    }
-    if normalized in kids_faster_variants:
-        return VoiceTranscriptCorrection(
-            "Can you talk faster?",
-            corrected=True,
-            reason="speed_command_kids_are_faster",
-        )
-
-    if compact in {"urifest", "yourefast", "yourfast"} or normalized in {
-        "uri fest",
-        "very fest",
-        "verry fast",
-        "urry fast",
-    }:
-        return VoiceTranscriptCorrection(
-            "Very fast.",
-            corrected=True,
-            reason="speed_command_urifest",
-        )
-
-    repaired = re.sub(
-        r"\b(?:uri\s*fest|urifest|very\s+fest|verry\s+fast|urry\s+fast)\b",
-        "very fast",
-        raw,
-        flags=re.IGNORECASE,
-    )
-    if repaired != raw:
-        repaired = re.sub(r"\s+", " ", repaired).strip()
-        return VoiceTranscriptCorrection(
-            repaired,
-            corrected=True,
-            reason="speed_command_inline_very_fast",
-        )
-
-    return VoiceTranscriptCorrection(raw)
-
-
 def voice_speed_intent(text: str) -> VoiceSpeedIntent | None:
-    corrected = correct_voice_transcript(text).text
-    normalized = normalize_for_intent(corrected)
+    normalized = normalize_for_intent(text)
     if not normalized:
         return None
 

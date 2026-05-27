@@ -15,7 +15,6 @@ export type Health = {
   voice_runtime: string;
   voice_behavior_mode?: "assistant" | "flow";
   voice_flow_id?: string;
-  voice_stt_correction_enabled?: boolean;
   voice_emotion_codes_enabled?: boolean;
   local_stt_provider?: string;
   local_tts_provider?: string;

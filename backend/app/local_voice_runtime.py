@@ -17,8 +17,6 @@ from .voice_runtime_controls import (
     DEFAULT_STT_INITIAL_PROMPT,
     VOICE_EMOTION_CODES,
     VOICE_EMOTION_SYSTEM_PROMPT,
-    VOICE_TRANSCRIPT_REPAIR_PROMPT,
-    correct_voice_transcript,
     consume_emotion_prefix,
     emotion_code_for_turn,
     next_voice_speed,
@@ -212,7 +210,6 @@ def build_system_instruction(settings: Settings, prompt_repo: PromptRepository) 
         "- If the user says OnePlus One, ask whether they mean the phone or one plus one.\n"
         "- If the user asks to speak faster or slower, acknowledge it; the runtime will adjust speech speed.\n"
         "- Do not mention model identity, internal policy, or provider names unless the user asks."
-        f"\n\n{VOICE_TRANSCRIPT_REPAIR_PROMPT}"
     )
     if settings.voice_emotion_codes_enabled and settings.voice_runtime == "local_pipecat":
         instruction = f"{instruction}\n\n{VOICE_EMOTION_SYSTEM_PROMPT}"
@@ -958,15 +955,8 @@ async def _run_voice_pipeline(
 
             if self._capture_user and isinstance(frame, TranscriptionFrame):
                 raw_text = frame.text.strip()
-                correction = (
-                    correct_voice_transcript(raw_text)
-                    if settings.voice_stt_correction_enabled
-                    else None
-                )
-                text = (correction.text if correction else raw_text).strip()
+                text = raw_text.strip()
                 if text:
-                    if correction and correction.corrected:
-                        frame.text = text
                     speed_state = voice_controls.apply_user_text(text)
                     now = time.perf_counter()
                     trace = latency_state.active_trace or VoiceLatencyTrace()
@@ -990,8 +980,6 @@ async def _run_voice_pipeline(
                             "source": settings.local_stt_provider,
                             "stt_model": settings.local_stt_model,
                             "raw_transcript": raw_text,
-                            "transcript_corrected": bool(correction and correction.corrected),
-                            "correction_reason": correction.reason if correction else None,
                             "voice_speed": round(voice_controls.speed, 2),
                             "voice_speed_label": voice_speed_label(voice_controls.speed),
                             "voice_speed_change": speed_state,
@@ -1005,8 +993,6 @@ async def _run_voice_pipeline(
                         trace,
                         text=text,
                         raw_text=raw_text,
-                        corrected=bool(correction and correction.corrected),
-                        correction_reason=correction.reason if correction else None,
                         language=language,
                         voice_speed=round(voice_controls.speed, 2),
                         voice_speed_label=voice_speed_label(voice_controls.speed),
