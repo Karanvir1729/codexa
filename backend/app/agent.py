@@ -259,7 +259,45 @@ class AgentService:
             result = await self.llm.generate(messages, runtime_prompt)
         except Exception as exc:
             self.cost_guard.release(reservation_id, {"error": type(exc).__name__})
-            raise
+            assistant_turn_id = str(uuid.uuid4())
+            response_text = (
+                "I'm having trouble reaching the language model right now. "
+                "Please try again in a moment."
+            )
+            metrics = {
+                "provider": "llm-error",
+                "error_type": type(exc).__name__,
+                "latency_target_ms": self.settings.latency_target_ms,
+                "estimated_cost_usd": 0,
+            }
+            self.db.execute(
+                """
+                INSERT INTO turns(
+                    id, conversation_id, role, content, latency_ms, model, prompt_version, metrics_json
+                )
+                VALUES (?, ?, 'assistant', ?, ?, ?, ?, ?)
+                """,
+                (
+                    assistant_turn_id,
+                    cid,
+                    response_text,
+                    0,
+                    self.settings.active_model,
+                    prompt.version,
+                    dumps(metrics),
+                ),
+            )
+            return {
+                "conversation_id": cid,
+                "user_turn_id": user_turn_id,
+                "assistant_turn_id": assistant_turn_id,
+                "message": response_text,
+                "latency_ms": 0,
+                "model": self.settings.active_model,
+                "provider": "llm-error",
+                "prompt_version": prompt.version,
+                "cost_guard": self.cost_guard.snapshot().to_dict(),
+            }
         actual_cost = self.cost_guard.estimate_llm_call(result.provider, result.raw)
         self.cost_guard.finalize(
             reservation_id,

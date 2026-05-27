@@ -303,6 +303,28 @@ async def test_agent_uses_compiled_prompt_with_learned_hints(tmp_path: Path):
     assert "Learned hint from eval" in llm.system_prompt
 
 
+@pytest.mark.asyncio
+async def test_agent_returns_fallback_when_llm_fails(tmp_path: Path):
+    class FailingLLM:
+        async def generate(self, _messages, _system_prompt: str) -> LLMResult:
+            raise TimeoutError("upstream timed out")
+
+        async def warmup(self) -> None:
+            return None
+
+    settings = Settings(database_path=str(tmp_path / "agent.sqlite3"), llm_provider="mock")
+    db = Database(settings.database_path)
+    agent = AgentService(db, settings, FailingLLM())
+
+    response = await agent.respond("Can you help?", channel="test")
+
+    assert response["provider"] == "llm-error"
+    assert "language model" in response["message"]
+    transcript = agent.transcript(response["conversation_id"])
+    assert [turn["role"] for turn in transcript] == ["user", "assistant"]
+    assert transcript[-1]["metrics"]["error_type"] == "TimeoutError"
+
+
 def test_local_voice_records_turns_in_feedback_database(tmp_path: Path):
     settings = Settings(
         database_path=str(tmp_path / "agent.sqlite3"),
