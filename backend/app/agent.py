@@ -4,12 +4,6 @@ import re
 import uuid
 from typing import Any
 
-from .voice_clone import (
-    VoiceCloneProfileStore,
-    voice_clone_followup_response,
-    voice_clone_intent,
-    voice_clone_response,
-)
 from .voice_runtime_controls import (
     voice_speed_intent,
     voice_speed_response,
@@ -47,12 +41,11 @@ def build_runtime_system_prompt(system_prompt: str) -> str:
         "- Default to English. If the latest user message asks for English, reply in English only.\n"
         "- Do not switch to Hindi, Urdu, or another language unless the latest user message explicitly asks for that language.\n"
         "- Stay in the conversation as the AI; do not offer to pass the user to another person.\n"
+        "- Voice cloning is not available. Do not claim to save, use, clone, or imitate the user's voice.\n"
         "- If the user greets you, asks if you are there, or asks what is going on, say that you are here and ask how you can help.\n"
         "- If the user says OnePlus One, ask whether they mean the phone or the math problem.\n"
         "- If the user asks you to speak faster or slower, acknowledge the new speed briefly.\n"
         "- If the user asks you to change tone or speaking style, acknowledge that you can do it.\n"
-        "- Voice cloning is sample capture only unless runtime state explicitly says cloned voice playback is enabled. "
-        "Do not claim you are using the user's voice sample for speech when cloned voice playback is disabled.\n"
         "- If the user asks about network, speed, or latency, say: We reduce latency with streaming and local voice processing.\n"
         "- If the user asks for a story, narration, explanation, or more detail, answer directly instead of asking how long it should be.\n"
         "- Otherwise, ask one concise clarifying question when required information is missing.\n"
@@ -135,8 +128,6 @@ def fast_policy_response(text: str) -> str | None:
         return voice_speed_response(speed_intent)
     if tone_intent := voice_tone_intent(text):
         return voice_tone_response(tone_intent)
-    if clone_intent := voice_clone_intent(text):
-        return voice_clone_response(clone_intent)
     if "your name" in normalized or "who are you" in normalized:
         return "I am an AI assistant."
     if _latency_intent(normalized, words):
@@ -218,53 +209,7 @@ class AgentService:
         )
         prompt = self.prompts.active()
         messages = self.history(cid)
-        voice_clone_store = VoiceCloneProfileStore(self.settings)
-        if response_text := voice_clone_followup_response(
-            text,
-            voice_clone_store.status(),
-            ref_audio_enabled=self.settings.cloned_voice_playback_ready,
-        ):
-            assistant_turn_id = str(uuid.uuid4())
-            self.db.execute(
-                """
-                INSERT INTO turns(
-                    id, conversation_id, role, content, latency_ms, model, prompt_version,
-                    metrics_json
-                )
-                VALUES (?, ?, 'assistant', ?, ?, ?, ?, ?)
-                """,
-                (
-                    assistant_turn_id,
-                    cid,
-                    response_text,
-                    0,
-                    "policy-rule",
-                    prompt.version,
-                    dumps(
-                        {
-                            "provider": "policy-rule",
-                            "latency_target_ms": self.settings.latency_target_ms,
-                            "estimated_cost_usd": 0,
-                            "voice_clone": voice_clone_store.status(),
-                        }
-                    ),
-                ),
-            )
-            return {
-                "conversation_id": cid,
-                "user_turn_id": user_turn_id,
-                "assistant_turn_id": assistant_turn_id,
-                "message": response_text,
-                "latency_ms": 0,
-                "model": "policy-rule",
-                "provider": "policy-rule",
-                "prompt_version": prompt.version,
-                "cost_guard": self.cost_guard.snapshot().to_dict(),
-            }
         if response_text := fast_policy_response(text):
-            clone_state = None
-            if voice_clone_intent(text):
-                clone_state = voice_clone_store.handle_transcript(text)
             assistant_turn_id = str(uuid.uuid4())
             self.db.execute(
                 """
@@ -286,7 +231,6 @@ class AgentService:
                             "provider": "policy-rule",
                             "latency_target_ms": self.settings.latency_target_ms,
                             "estimated_cost_usd": 0,
-                            "voice_clone": clone_state,
                         }
                     ),
                 ),
@@ -311,14 +255,7 @@ class AgentService:
             metadata={"conversation_id": cid, "channel": channel},
         )
         try:
-            runtime_prompt = (
-                build_runtime_system_prompt(prompt.compiled)
-                + "\n\nRuntime voice clone state: "
-                + f"capture_enabled={voice_clone_store.enabled}, "
-                + f"cloned_voice_playback_enabled={self.settings.cloned_voice_playback_ready}. "
-                + "If cloned_voice_playback_enabled is false, do not claim you are using the "
-                + "user's saved voice sample for speech."
-            )
+            runtime_prompt = build_runtime_system_prompt(prompt.compiled)
             result = await self.llm.generate(messages, runtime_prompt)
         except Exception as exc:
             self.cost_guard.release(reservation_id, {"error": type(exc).__name__})

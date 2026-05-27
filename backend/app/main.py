@@ -25,7 +25,6 @@ from .local_voice_runtime import require_openai_compatible_llm, run_browser_pipe
 from .pipecat_runtime import run_pipecat_twilio_bot
 from .training_data import export_sft_jsonl
 from .twilio_routes import inbound_twiml
-from .voice_clone import VoiceCloneProfileStore
 
 
 class ChatRequest(BaseModel):
@@ -183,9 +182,6 @@ async def health() -> dict[str, Any]:
         "voice_behavior_mode": settings.voice_behavior_mode,
         "voice_flow_id": settings.voice_flow_id,
         "voice_emotion_codes_enabled": settings.voice_emotion_codes_enabled,
-        "voice_clone_enabled": settings.voice_clone_enabled,
-        "voice_clone_playback_enabled": settings.cloned_voice_playback_ready,
-        "voice_clone_profile_id": settings.voice_clone_profile_id,
         "local_stt_provider": settings.local_stt_provider,
         "local_stt_model": settings.local_stt_model,
         "local_tts_provider": settings.local_tts_provider,
@@ -221,9 +217,6 @@ async def config() -> dict[str, Any]:
         "voice_behavior_mode": settings.voice_behavior_mode,
         "voice_flow_id": settings.voice_flow_id,
         "voice_emotion_codes_enabled": settings.voice_emotion_codes_enabled,
-        "voice_clone_enabled": settings.voice_clone_enabled,
-        "voice_clone_playback_enabled": settings.cloned_voice_playback_ready,
-        "voice_clone_profile_id": settings.voice_clone_profile_id,
         "local_stt_provider": settings.local_stt_provider,
         "local_stt_model": settings.local_stt_model,
         "local_tts_provider": settings.local_tts_provider,
@@ -255,11 +248,6 @@ def _small_webrtc_ice_servers():
 @app.get("/api/webrtc/ice-config")
 async def webrtc_ice_config() -> dict[str, Any]:
     return {"iceServers": settings.small_webrtc_browser_ice_servers}
-
-
-@app.get("/api/voice-clone")
-async def voice_clone_status() -> dict[str, Any]:
-    return {"voice_clone": VoiceCloneProfileStore(settings).status()}
 
 
 def get_small_webrtc_handler():
@@ -592,9 +580,6 @@ async def latency_summary(limit: int = 100, conversation_id: str | None = None) 
             "tts_provider": settings.local_tts_provider,
             "tts_voice": settings.local_tts_voice,
             "tts_text_aggregation_mode": settings.local_tts_text_aggregation_mode,
-            "voice_clone_enabled": settings.voice_clone_enabled,
-            "voice_clone_playback_enabled": settings.cloned_voice_playback_ready,
-            "voice_clone_profile_id": settings.voice_clone_profile_id,
             "voxtral_tts_model": settings.voxtral_tts_model
             if settings.local_tts_provider == "voxtral"
             else None,

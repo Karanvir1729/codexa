@@ -91,7 +91,6 @@ class VoxtralTTSService(TTSService):
         instructions: str | None = None,
         ref_audio_base64: str | None = None,
         whisper_ref_audio_base64: str | None = None,
-        ref_audio_format: str = "auto",
         response_format: str = "wav",
         stream: bool = False,
         pcm_encoding: str = "int16",
@@ -125,11 +124,9 @@ class VoxtralTTSService(TTSService):
         self._base_instructions = instructions
         self._instructions = instructions
         self._ref_audio_base64 = ref_audio_base64
-        self._voice_clone_ref_audio_base64: str | None = None
         self._whisper_ref_audio_base64 = whisper_ref_audio_base64
         self._style_ref_audio_base64: str | None = None
         self._ref_audio_enabled = ref_audio_enabled
-        self._ref_audio_format = _resolve_ref_audio_format(ref_audio_format, base_url)
         self._response_format = response_format
         self._stream = stream
         self._pcm_encoding = pcm_encoding
@@ -179,12 +176,6 @@ class VoxtralTTSService(TTSService):
 
     def set_ref_audio_enabled(self, enabled: bool) -> None:
         self._ref_audio_enabled = enabled
-
-    def set_voice_clone_ref_audio_path(self, path: str | Path | None) -> None:
-        if not path:
-            self._voice_clone_ref_audio_base64 = None
-            return
-        self._voice_clone_ref_audio_base64 = base64.b64encode(Path(path).read_bytes()).decode("ascii")
 
     @traced_tts
     async def run_tts(self, text: str, context_id: str) -> AsyncGenerator[Frame, None]:
@@ -295,16 +286,9 @@ class VoxtralTTSService(TTSService):
             payload["stream"] = True
         ref_audio_base64 = None
         if include_ref_audio and self._ref_audio_enabled:
-            ref_audio_base64 = (
-                self._style_ref_audio_base64
-                or self._voice_clone_ref_audio_base64
-                or self._ref_audio_base64
-            )
+            ref_audio_base64 = self._style_ref_audio_base64 or self._ref_audio_base64
         if ref_audio_base64:
-            payload["ref_audio"] = _ref_audio_payload_value(
-                ref_audio_base64,
-                ref_audio_format=self._ref_audio_format,
-            )
+            payload["ref_audio"] = _ref_audio_payload_value(ref_audio_base64)
         elif self._voice_id:
             payload["voice_id"] = self._voice_id
         elif self._voice:
@@ -425,21 +409,8 @@ def _audio_speech_endpoint(base_url: str) -> str:
     return f"{base}/audio/speech"
 
 
-def _resolve_ref_audio_format(ref_audio_format: str, base_url: str) -> str:
-    normalized = ref_audio_format.casefold().strip()
-    if normalized in {"base64", "data_uri"}:
-        return normalized
-    if "api.mistral.ai" in base_url.casefold():
-        return "base64"
-    return "data_uri"
-
-
-def _ref_audio_payload_value(ref_audio: str, *, ref_audio_format: str) -> str:
+def _ref_audio_payload_value(ref_audio: str) -> str:
     value = ref_audio.strip()
-    if ref_audio_format == "base64":
-        if value.startswith("data:"):
-            return value.split(",", 1)[-1]
-        return value
     if value.startswith(("http://", "https://", "data:", "file://")):
         return value
     return f"data:audio/wav;base64,{value}"
@@ -466,8 +437,8 @@ def _float32_to_int16(data: bytes) -> bytes:
 async def voxtral_tts_healthcheck(settings: Settings) -> tuple[bool, str]:
     url = _models_endpoint(settings.voxtral_tts_base_url)
     headers = {}
-    if settings.voxtral_tts_effective_api_key:
-        headers["authorization"] = f"Bearer {settings.voxtral_tts_effective_api_key}"
+    if settings.voxtral_tts_api_key:
+        headers["authorization"] = f"Bearer {settings.voxtral_tts_api_key}"
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=1.0)) as client:
             response = await client.get(url, headers=headers)
@@ -491,7 +462,7 @@ def create_voxtral_tts_service(settings: Settings) -> VoxtralTTSService:
         ).decode("ascii")
     return VoxtralTTSService(
         base_url=settings.voxtral_tts_base_url,
-        api_key=settings.voxtral_tts_effective_api_key,
+        api_key=settings.voxtral_tts_api_key,
         model=settings.voxtral_tts_model,
         voice=settings.voxtral_tts_voice,
         voice_id=settings.voxtral_tts_voice_id,
@@ -499,7 +470,6 @@ def create_voxtral_tts_service(settings: Settings) -> VoxtralTTSService:
         instructions=settings.voxtral_tts_instructions,
         ref_audio_base64=ref_audio_base64,
         whisper_ref_audio_base64=whisper_ref_audio_base64,
-        ref_audio_format=settings.voxtral_tts_ref_audio_format,
         response_format=settings.voxtral_tts_response_format,
         stream=settings.voxtral_tts_stream,
         pcm_encoding=settings.voxtral_tts_pcm_encoding,

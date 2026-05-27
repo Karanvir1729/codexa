@@ -24,7 +24,6 @@ from app.local_voice_runtime import (
     resolve_stt_language,
     resolve_tts_language,
 )
-from app.voice_clone import VoiceCloneProfileStore, voice_clone_followup_response, voice_clone_intent
 from app.voxtral_tts import CoherentSentenceAggregator, VoxtralTTSService
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -67,46 +66,6 @@ def test_feedback_rebuilds_active_prompt(runtime):
 
     assert after.version > before
     assert "clarifying question" in after.learned_hints
-
-
-@pytest.mark.asyncio
-async def test_text_consent_enables_voice_clone_profile(tmp_path: Path):
-    settings = Settings(
-        database_path=str(tmp_path / "agent.sqlite3"),
-        voice_clone_storage_dir=str(tmp_path / "voice-clones"),
-        llm_provider="mock",
-    )
-    db = Database(settings.database_path)
-    agent = AgentService(db, settings, MockLLMClient(settings))
-
-    response = await agent.respond("You can clone my voice.", channel="test")
-    status = VoiceCloneProfileStore(settings).status()
-
-    assert response["message"].startswith("Voice cloning capture is on")
-    assert status["enabled"] is True
-    assert status["sample_count"] == 0
-
-
-@pytest.mark.asyncio
-async def test_voice_clone_followup_uses_fast_policy_branch(tmp_path: Path):
-    settings = Settings(
-        database_path=str(tmp_path / "agent.sqlite3"),
-        voice_clone_storage_dir=str(tmp_path / "voice-clones"),
-        llm_provider="mock",
-    )
-    agent = AgentService(Database(settings.database_path), settings, MockLLMClient(settings))
-
-    await agent.respond("You can clone my voice.", channel="test")
-    response = await agent.respond("Do you need any more data?", channel="test")
-
-    assert response["provider"] == "policy-rule"
-    assert response["message"] == "Yes. Keep talking naturally for a few more clear sentences."
-
-    response = await agent.respond("Can you use that voice sample to talk to me?", channel="test")
-
-    assert response["provider"] == "policy-rule"
-    assert "can't use them for live cloned speech yet" in response["message"]
-    assert "using your voice sample" not in response["message"].casefold()
 
 
 def test_cost_guard_blocks_when_local_cap_would_be_exceeded(tmp_path: Path):
@@ -201,7 +160,7 @@ def test_runtime_prompt_adds_conversational_voice_contract():
     assert "human agent" not in prompt
     assert "order ID" not in prompt
     assert "account email" not in prompt
-    assert "Do not claim you are using the user's voice sample" in prompt
+    assert "Voice cloning is not available" in prompt
 
 
 def test_fast_policy_response_handles_name_without_customer_service_hijacks():
@@ -217,12 +176,8 @@ def test_fast_policy_response_handles_voice_speed_and_oneplus_ambiguity():
     assert fast_policy_response("Talk very fast.") == "Got it, I'll talk very fast."
     assert fast_policy_response("Please slow down your voice.") == "Sure, I'll slow down."
     assert fast_policy_response("Can you use a spooky tone?") == "Got it, I'll use a spooky tone."
-    assert fast_policy_response("You can clone my voice.") == (
-        "Voice cloning capture is on. I'll save your voice samples."
-    )
-    assert fast_policy_response("Can you clone my voice?") == (
-        "Voice cloning capture is on. I'll save your voice samples."
-    )
+    assert fast_policy_response("You can clone my voice.") is None
+    assert fast_policy_response("Can you clone my voice?") is None
     assert fast_policy_response("What's OnePlus One?") == (
         "Do you mean the OnePlus phone or one plus one?"
     )
@@ -232,100 +187,6 @@ def test_fast_policy_response_handles_voice_speed_and_oneplus_ambiguity():
 def test_fast_policy_does_not_block_long_form_requests():
     assert fast_policy_response("Tell me a story in a spooky tone.") is None
     assert fast_policy_response("Explain that in more detail.") is None
-
-
-def test_voice_clone_profile_store_requires_consent_and_builds_reference(tmp_path: Path):
-    settings = Settings(
-        voice_clone_storage_dir=str(tmp_path / "voice-clones"),
-        voice_clone_profile_id="Meher test",
-        voice_clone_min_sample_seconds=1.0,
-        voice_clone_max_reference_seconds=5.0,
-    )
-    store = VoiceCloneProfileStore(settings)
-    audio = b"\x00\x01" * 16000 * 2
-
-    assert voice_clone_intent("you can clone my voice") == "enable"
-    assert voice_clone_intent("Can you clone my voice?") == "enable"
-    assert voice_clone_intent("Please clone my voice.") == "enable"
-    assert store.status()["enabled"] is False
-
-    store.start_utterance()
-    store.append_audio(audio, 16000, 1)
-    store.stop_utterance()
-    state = store.handle_transcript("You can clone my voice.")
-
-    assert state is not None
-    assert state["enabled"] is True
-    assert state["sample_count"] == 1
-    assert Path(state["reference_path"]).exists()
-
-    store.start_utterance()
-    store.append_audio(audio, 16000, 1)
-    store.stop_utterance()
-    state = store.handle_transcript("This is another voice sample.")
-
-    assert state is not None
-    assert state["sample_count"] == 2
-
-    state = store.handle_transcript("Delete my voice clone.")
-
-    assert state is not None
-    assert state["enabled"] is False
-    assert state["sample_count"] == 0
-
-
-def test_voice_clone_followups_are_fast_when_enabled():
-    status = {"enabled": True, "sample_count": 2}
-
-    assert voice_clone_followup_response("Do you need any more data?", status) == (
-        "Yes. Keep talking naturally for a few more clear sentences."
-    )
-    assert voice_clone_followup_response("Hallo?", status) == (
-        "I'm here. Voice cloning is still on; keep talking naturally."
-    )
-    assert voice_clone_followup_response("Can you use that voice sample?", status) == (
-        "I can save the samples, but this TTS backend can't use them for live cloned speech yet. "
-        "I'll keep using the current voice."
-    )
-    assert voice_clone_followup_response(
-        "Can you use that voice sample?",
-        status,
-        ref_audio_enabled=True,
-    ) == "I'll use the saved voice sample when speaking."
-    assert voice_clone_followup_response("That's it.", status) == (
-        "Got it. I've saved the samples so far."
-    )
-    assert voice_clone_followup_response("Do you need any more data?", {"enabled": False}) is None
-
-
-def test_clone_playback_ready_requires_supported_ref_audio_backend():
-    settings = Settings(
-        local_tts_provider="voxtral",
-        voice_clone_playback_enabled=True,
-        voxtral_tts_ref_audio_enabled=True,
-        voxtral_tts_base_url="https://api.mistral.ai/v1",
-    )
-
-    assert settings.cloned_voice_playback_ready is False
-
-    settings = Settings(
-        local_tts_provider="voxtral",
-        voice_clone_playback_enabled=True,
-        voxtral_tts_ref_audio_enabled=True,
-        voxtral_tts_base_url="https://api.mistral.ai/v1",
-        mistral_api_key="test-key",
-    )
-
-    assert settings.cloned_voice_playback_ready is True
-
-    settings = Settings(
-        local_tts_provider="voxtral",
-        voice_clone_playback_enabled=True,
-        voxtral_tts_ref_audio_enabled=True,
-        voxtral_tts_base_url="http://127.0.0.1:8002/v1",
-    )
-
-    assert settings.cloned_voice_playback_ready is False
 
 
 def test_voxtral_ref_audio_takes_precedence_and_whisper_is_stronger():
@@ -359,35 +220,6 @@ def test_voxtral_ref_audio_takes_precedence_and_whisper_is_stronger():
     assert payload["voice_id"] == "saved-voice"
     assert "whisper-like" in payload["instructions"]
     assert "same voice, pace, pitch" in payload["instructions"]
-
-
-def test_voxtral_uses_raw_ref_audio_for_hosted_mistral():
-    tts = VoxtralTTSService(
-        base_url="https://api.mistral.ai/v1",
-        voice=None,
-        ref_audio_base64="abc123",
-        ref_audio_enabled=True,
-    )
-
-    payload = tts._build_payload("Hello.")
-
-    assert payload["ref_audio"] == "abc123"
-    assert "voice" not in payload
-
-
-def test_voxtral_uses_mistral_api_key_fallback():
-    settings = Settings(
-        local_tts_provider="voxtral",
-        mistral_api_key="mistral-key",
-        voxtral_tts_api_key=None,
-    )
-
-    tts = VoxtralTTSService(
-        base_url=settings.voxtral_tts_base_url,
-        api_key=settings.voxtral_tts_effective_api_key,
-    )
-
-    assert tts._api_key == "mistral-key"
 
 
 @pytest.mark.asyncio

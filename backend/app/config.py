@@ -61,15 +61,6 @@ class Settings(BaseSettings):
     voice_flow_id: str = "active"
     voice_stt_correction_enabled: bool = False
     voice_emotion_codes_enabled: bool = True
-    voice_clone_enabled: bool = True
-    voice_clone_playback_enabled: bool = False
-    voice_clone_allow_self_hosted_ref_audio: bool = False
-    voice_clone_profile_id: str = "default"
-    voice_clone_storage_dir: str = "data/voice_clones"
-    voice_clone_min_sample_seconds: float = Field(default=1.5, ge=0.5)
-    voice_clone_max_sample_seconds: float = Field(default=12.0, ge=2.0)
-    voice_clone_max_reference_seconds: float = Field(default=18.0, ge=2.0)
-    voice_clone_max_samples: int = Field(default=30, ge=1)
     deepgram_api_key: str | None = None
     cartesia_api_key: str | None = None
     cartesia_voice_id: str = "71a7ad14-091c-4e8e-a314-022ece01c121"
@@ -138,7 +129,6 @@ class Settings(BaseSettings):
     fish_speech_repetition_penalty: float = Field(default=1.1, ge=0)
     fish_speech_temperature: float = Field(default=0.8, ge=0)
     fish_speech_timeout_seconds: float = Field(default=120, ge=1)
-    mistral_api_key: str | None = None
     voxtral_tts_base_url: str = "http://127.0.0.1:8002/v1"
     voxtral_tts_api_key: str | None = None
     voxtral_tts_model: str = "mistralai/Voxtral-4B-TTS-2603"
@@ -152,7 +142,6 @@ class Settings(BaseSettings):
     voxtral_tts_ref_audio_path: str | None = None
     voxtral_tts_whisper_ref_audio_path: str | None = None
     voxtral_tts_ref_audio_enabled: bool = False
-    voxtral_tts_ref_audio_format: Literal["auto", "data_uri", "base64"] = "auto"
     voxtral_tts_response_format: Literal["pcm", "wav"] = "wav"
     voxtral_tts_stream: bool = False
     voxtral_tts_pcm_encoding: Literal["int16", "float32"] = "int16"
@@ -225,30 +214,6 @@ class Settings(BaseSettings):
         if self.llm_provider == "nvidia":
             return self.nvidia_base_url
         return None
-
-    @property
-    def voxtral_tts_effective_api_key(self) -> str | None:
-        return self.voxtral_tts_api_key or self.mistral_api_key
-
-    @property
-    def voxtral_tts_is_hosted_mistral(self) -> bool:
-        return "api.mistral.ai" in self.voxtral_tts_base_url.casefold()
-
-    @property
-    def cloned_voice_playback_ready(self) -> bool:
-        if not (
-            self.voice_clone_enabled
-            and self.voice_clone_playback_enabled
-            and self.voxtral_tts_ref_audio_enabled
-        ):
-            return False
-        if self.local_tts_provider not in {"auto", "voxtral"}:
-            return False
-        if self.voxtral_tts_is_hosted_mistral and not self.voxtral_tts_effective_api_key:
-            return False
-        if not self.voxtral_tts_is_hosted_mistral and not self.voice_clone_allow_self_hosted_ref_audio:
-            return False
-        return True
 
     @property
     def active_api_key(self) -> str | None:
