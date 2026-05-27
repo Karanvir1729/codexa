@@ -13,6 +13,10 @@ export type Health = {
   llm_provider: string;
   model: string;
   voice_runtime: string;
+  voice_behavior_mode?: "assistant" | "flow";
+  voice_flow_id?: string;
+  voice_stt_correction_enabled?: boolean;
+  voice_emotion_codes_enabled?: boolean;
   local_stt_provider?: string;
   local_tts_provider?: string;
   prompt_version: number;
@@ -130,7 +134,10 @@ export type FlowSimulationResponse = {
 
 const configuredApiBase = import.meta.env.VITE_API_BASE?.trim() ?? "";
 const localDevApiBase =
-  import.meta.env.DEV && typeof window !== "undefined" && window.location.port === "5173"
+  import.meta.env.DEV &&
+  typeof window !== "undefined" &&
+  ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname) &&
+  window.location.port.startsWith("517")
     ? "http://localhost:8000"
     : "";
 

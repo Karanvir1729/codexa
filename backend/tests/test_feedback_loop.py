@@ -23,6 +23,7 @@ from app.local_voice_runtime import (
     resolve_stt_language,
     resolve_tts_language,
 )
+from app.voice_runtime_controls import correct_voice_transcript, voice_speed_intent
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
@@ -154,11 +155,24 @@ def test_fast_policy_response_handles_name_without_handoff():
 
 def test_fast_policy_response_handles_voice_speed_and_oneplus_ambiguity():
     assert fast_policy_response("Can you talk a bit faster?") == "Sure, I'll talk faster."
+    assert fast_policy_response("Talk very fast.") == "Got it, I'll talk very fast."
     assert fast_policy_response("Please slow down your voice.") == "Sure, I'll slow down."
     assert fast_policy_response("What's OnePlus One?") == (
         "Do you mean the OnePlus phone or one plus one?"
     )
     assert fast_policy_response("What's one plus one?") == "It's 2."
+
+
+def test_voice_transcript_correction_handles_observed_speed_mishears():
+    faster = correct_voice_transcript("Kids are faster.")
+    very_fast = correct_voice_transcript("You're not talking, UriFest.")
+
+    assert faster.corrected is True
+    assert faster.text == "Can you talk faster?"
+    assert voice_speed_intent(faster.text) == "faster"
+    assert very_fast.corrected is True
+    assert "very fast" in very_fast.text.lower()
+    assert voice_speed_intent(very_fast.text) == "very_fast"
 
 
 @pytest.mark.asyncio

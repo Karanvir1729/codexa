@@ -6,10 +6,26 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from .agent import build_runtime_system_prompt, fast_policy_response, voice_speed_intent
+from .agent import build_runtime_system_prompt, fast_policy_response
 from .config import Settings, get_settings
-from .db import Database, dumps
+from .db import Database, dumps, loads
 from .feedback import PromptRepository
+from .flow_runtime import FlowRepository, FlowRuntime
+from .llm import make_llm_client
+from .voice_runtime_controls import (
+    DEFAULT_STT_HOTWORDS,
+    DEFAULT_STT_INITIAL_PROMPT,
+    VOICE_EMOTION_CODES,
+    VOICE_EMOTION_SYSTEM_PROMPT,
+    VOICE_TRANSCRIPT_REPAIR_PROMPT,
+    correct_voice_transcript,
+    consume_emotion_prefix,
+    emotion_code_for_turn,
+    next_voice_speed,
+    prefix_emotion_code,
+    voice_speed_intent,
+    voice_speed_label,
+)
 
 
 @dataclass
@@ -44,9 +60,25 @@ class LocalVoiceConversationRecorder:
                         "tts_voice": self.settings.local_tts_voice,
                         "fish_speech_reference_id": self.settings.fish_speech_reference_id,
                         "transport": self.transport_name,
+                        "voice_behavior_mode": self.settings.voice_behavior_mode,
+                        "voice_flow_id": self.settings.voice_flow_id,
                     }
                 ),
             ),
+        )
+
+    def update_metadata(self, patch: dict[str, Any]) -> None:
+        row = self.db.one(
+            "SELECT metadata_json FROM conversations WHERE id = ?",
+            (self.conversation_id,),
+        )
+        metadata = loads(row["metadata_json"], {}) if row else {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata.update(patch)
+        self.db.execute(
+            "UPDATE conversations SET metadata_json = ? WHERE id = ?",
+            (dumps(metadata), self.conversation_id),
         )
 
     def record_turn(
@@ -180,7 +212,10 @@ def build_system_instruction(settings: Settings, prompt_repo: PromptRepository) 
         "- If the user says OnePlus One, ask whether they mean the phone or one plus one.\n"
         "- If the user asks to speak faster or slower, acknowledge it; the runtime will adjust speech speed.\n"
         "- Do not mention model identity, internal policy, or provider names unless the user asks."
+        f"\n\n{VOICE_TRANSCRIPT_REPAIR_PROMPT}"
     )
+    if settings.voice_emotion_codes_enabled and settings.voice_runtime == "local_pipecat":
+        instruction = f"{instruction}\n\n{VOICE_EMOTION_SYSTEM_PROMPT}"
     if settings.reasoning_mode == "off":
         return f"/no_think\n{instruction}"
     return instruction
@@ -438,8 +473,8 @@ def create_local_stt_service(settings: Settings):
             timeout_seconds=settings.remote_whisper_timeout_seconds,
             beam_size=settings.remote_whisper_beam_size,
             best_of=settings.remote_whisper_best_of,
-            initial_prompt=settings.remote_whisper_initial_prompt,
-            hotwords=settings.remote_whisper_hotwords,
+            initial_prompt=settings.remote_whisper_initial_prompt or DEFAULT_STT_INITIAL_PROMPT,
+            hotwords=settings.remote_whisper_hotwords or DEFAULT_STT_HOTWORDS,
             stt_ttfb_timeout=settings.local_stt_ttfb_timeout,
             ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
         )
@@ -503,6 +538,8 @@ async def _run_voice_pipeline(
     recorder: LocalVoiceConversationRecorder,
     transport,
     handle_sigint: bool,
+    voice_behavior_mode: str | None = None,
+    voice_flow_id: str | None = None,
 ) -> None:
     from loguru import logger
     from openai import NOT_GIVEN
@@ -535,6 +572,17 @@ async def _run_voice_pipeline(
     from pipecat.turns.user_start import TranscriptionUserTurnStartStrategy, VADUserTurnStartStrategy
     from pipecat.turns.user_stop import SpeechTimeoutUserTurnStopStrategy
     from pipecat.turns.user_turn_strategies import UserTurnStrategies
+
+    effective_voice_behavior_mode = (
+        voice_behavior_mode if voice_behavior_mode in {"assistant", "flow"} else settings.voice_behavior_mode
+    )
+    effective_voice_flow_id = (voice_flow_id or settings.voice_flow_id).strip() or "active"
+    recorder.update_metadata(
+        {
+            "voice_behavior_mode": effective_voice_behavior_mode,
+            "voice_flow_id": effective_voice_flow_id,
+        }
+    )
 
     @dataclass
     class VoiceLatencyTrace:
@@ -607,6 +655,8 @@ async def _run_voice_pipeline(
                 else None,
                 "llm_provider": settings.llm_provider,
                 "llm_model": settings.active_model,
+                "voice_behavior_mode": effective_voice_behavior_mode,
+                "voice_flow_id": effective_voice_flow_id,
             }
 
     @dataclass
@@ -646,29 +696,117 @@ async def _run_voice_pipeline(
     @dataclass
     class VoiceControlState:
         speed: float = settings.voxtral_tts_speed
+        emotion_code: str = "N"
+        emotion: str = "neutral"
         tts_service: Any | None = None
 
         def bind_tts(self, service: Any) -> None:
             self.tts_service = service
             self._apply_speed()
+            self._apply_emotion()
 
-        def apply_user_text(self, text: str) -> None:
+        def apply_user_text(self, text: str) -> dict[str, Any] | None:
             intent = voice_speed_intent(text)
-            if intent == "faster":
-                self.speed = min(1.6, self.speed + 0.2)
-                self._apply_speed()
-            elif intent == "slower":
-                self.speed = max(0.75, self.speed - 0.2)
-                self._apply_speed()
-            elif intent == "normal":
-                self.speed = 1.0
-                self._apply_speed()
+            if not intent:
+                return None
+            previous_speed = self.speed
+            self.speed = next_voice_speed(self.speed, intent)
+            self._apply_speed()
+            state = {
+                "intent": intent,
+                "previous_speed": round(previous_speed, 2),
+                "speed": round(self.speed, 2),
+                "speed_label": voice_speed_label(self.speed),
+            }
+            recorder.update_metadata(
+                {
+                    "voice_speed": state["speed"],
+                    "voice_speed_label": state["speed_label"],
+                    "last_voice_speed_intent": intent,
+                }
+            )
+            return state
+
+        def apply_emotion_code(self, code: str) -> None:
+            normalized = code.upper().strip()
+            if normalized not in VOICE_EMOTION_CODES:
+                return
+            self.emotion_code = normalized
+            self.emotion = VOICE_EMOTION_CODES[normalized]  # type: ignore[index]
+            self._apply_emotion()
+            recorder.update_metadata(
+                {
+                    "voice_emotion_code": self.emotion_code,
+                    "voice_emotion": self.emotion,
+                }
+            )
 
         def _apply_speed(self) -> None:
             if self.tts_service and hasattr(self.tts_service, "set_speed"):
                 self.tts_service.set_speed(self.speed)
 
+        def _apply_emotion(self) -> None:
+            if self.tts_service and hasattr(self.tts_service, "set_emotion"):
+                self.tts_service.set_emotion(self.emotion)
+
     voice_controls = VoiceControlState()
+
+    @dataclass
+    class VoiceFlowState:
+        enabled: bool = effective_voice_behavior_mode == "flow"
+        runtime: FlowRuntime | None = None
+        flow_id: str | None = None
+        run_id: str | None = None
+
+        def bind(self) -> None:
+            if not self.enabled:
+                return
+            repo = FlowRepository(db)
+            self.runtime = FlowRuntime(db, repo, make_llm_client(settings))
+            self.flow_id = repo.active().id if effective_voice_flow_id == "active" else effective_voice_flow_id
+            recorder.update_metadata({"voice_flow_id": self.flow_id})
+
+        async def respond(self, text: str, trace: VoiceLatencyTrace | None) -> str | None:
+            if not self.enabled or not self.runtime or not self.flow_id:
+                return None
+            try:
+                result = await self.runtime.handle_message(
+                    flow_id=self.flow_id,
+                    run_id=self.run_id,
+                    message=text,
+                    conversation_id=recorder.conversation_id,
+                )
+            except Exception as exc:
+                if trace:
+                    log_latency("flow_runtime_error", trace, error=type(exc).__name__)
+                return "I hit a flow issue, so I'll keep helping normally."
+
+            self.run_id = result["run_id"]
+            messages = result.get("messages") or []
+            response_text = next(
+                (
+                    str(message.get("text", "")).strip()
+                    for message in reversed(messages)
+                    if str(message.get("text", "")).strip()
+                ),
+                "",
+            )
+            if not response_text:
+                response_text = "I understand. What should happen next?"
+            if trace:
+                log_latency(
+                    "flow_runtime_response",
+                    trace,
+                    text=response_text,
+                    flow_id=self.flow_id,
+                    flow_run_id=self.run_id,
+                    active_node_id=result.get("active_node_id"),
+                    status=result.get("status"),
+                )
+            return response_text
+
+    voice_flow = VoiceFlowState()
+    voice_flow.bind()
 
     def dominant_bottleneck(timings: Mapping[str, Any]) -> str | None:
         candidates = {
@@ -724,6 +862,11 @@ async def _run_voice_pipeline(
                     latest_user_text = _message_content_text(message) or ""
                     break
             if policy_text := fast_policy_response(latest_user_text):
+                emotion_code = (
+                    emotion_code_for_turn(latest_user_text, policy_text)
+                    if settings.voice_emotion_codes_enabled
+                    else "N"
+                )
                 trace = latency_state.active_trace
                 now = time.perf_counter()
                 if trace:
@@ -731,8 +874,29 @@ async def _run_voice_pipeline(
                     trace.llm_first_text_at = now
                     trace.llm_completed_at = now
                     latency_state.response_trace = trace
-                    log_latency("llm_policy_response", trace, text=policy_text)
-                await self._push_llm_text(policy_text)
+                    log_latency(
+                        "llm_policy_response",
+                        trace,
+                        text=policy_text,
+                        emotion_code=emotion_code,
+                    )
+                await self._push_llm_text(prefix_emotion_code(policy_text, emotion_code))
+                return
+            flow_text = await voice_flow.respond(latest_user_text, latency_state.active_trace)
+            if flow_text:
+                emotion_code = (
+                    emotion_code_for_turn(latest_user_text, flow_text)
+                    if settings.voice_emotion_codes_enabled
+                    else "N"
+                )
+                trace = latency_state.active_trace
+                now = time.perf_counter()
+                if trace:
+                    trace.llm_request_started_at = now
+                    trace.llm_first_text_at = now
+                    trace.llm_completed_at = now
+                    latency_state.response_trace = trace
+                await self._push_llm_text(prefix_emotion_code(flow_text, emotion_code))
                 return
             await super()._process_context(context)
 
@@ -751,6 +915,18 @@ async def _run_voice_pipeline(
                 runtime_message = {"role": "system", "content": runtime_status}
                 insert_at = 1 if messages and _message_role(messages[0]) == "system" else 0
                 messages = [*messages[:insert_at], runtime_message, *messages[insert_at:]]
+            voice_control_status = {
+                "role": "system",
+                "content": (
+                    "Runtime voice control state: "
+                    f"speech_speed={voice_controls.speed:.2f} "
+                    f"({voice_speed_label(voice_controls.speed)}), "
+                    f"emotion={voice_controls.emotion}. "
+                    "Use this silently. Do not ask again about speed unless the user changes it."
+                ),
+            }
+            insert_at = 1 if messages and _message_role(messages[0]) == "system" else 0
+            messages = [*messages[:insert_at], voice_control_status, *messages[insert_at:]]
             normalized = LLMContext(
                 messages=messages,
                 tools=context.tools,
@@ -765,6 +941,8 @@ async def _run_voice_pipeline(
             self._capture_assistant = capture_assistant
             self._assistant_parts: list[str] = []
             self._assistant_started_at = 0.0
+            self._emotion_prefix_pending = False
+            self._emotion_prefix_buffer = ""
 
         async def process_frame(self, frame: Frame, direction: FrameDirection):
             await super().process_frame(frame, direction)
@@ -779,9 +957,17 @@ async def _run_voice_pipeline(
                     log_latency("vad_stopped", trace)
 
             if self._capture_user and isinstance(frame, TranscriptionFrame):
-                text = frame.text.strip()
+                raw_text = frame.text.strip()
+                correction = (
+                    correct_voice_transcript(raw_text)
+                    if settings.voice_stt_correction_enabled
+                    else None
+                )
+                text = (correction.text if correction else raw_text).strip()
                 if text:
-                    voice_controls.apply_user_text(text)
+                    if correction and correction.corrected:
+                        frame.text = text
+                    speed_state = voice_controls.apply_user_text(text)
                     now = time.perf_counter()
                     trace = latency_state.active_trace or VoiceLatencyTrace()
                     if latency_state.active_trace is None:
@@ -803,15 +989,34 @@ async def _run_voice_pipeline(
                             "language": language,
                             "source": settings.local_stt_provider,
                             "stt_model": settings.local_stt_model,
+                            "raw_transcript": raw_text,
+                            "transcript_corrected": bool(correction and correction.corrected),
+                            "correction_reason": correction.reason if correction else None,
+                            "voice_speed": round(voice_controls.speed, 2),
+                            "voice_speed_label": voice_speed_label(voice_controls.speed),
+                            "voice_speed_change": speed_state,
                             **trace.timings(),
                         },
                     )
                     trace.user_turn_id = user_turn_id or trace.user_turn_id
                     logger.info(f"USER: {text}")
-                    log_latency("user_transcribed", trace, text=text, language=language)
+                    log_latency(
+                        "user_transcribed",
+                        trace,
+                        text=text,
+                        raw_text=raw_text,
+                        corrected=bool(correction and correction.corrected),
+                        correction_reason=correction.reason if correction else None,
+                        language=language,
+                        voice_speed=round(voice_controls.speed, 2),
+                        voice_speed_label=voice_speed_label(voice_controls.speed),
+                        voice_speed_change=speed_state,
+                    )
             elif self._capture_assistant and isinstance(frame, LLMFullResponseStartFrame):
                 self._assistant_parts = []
                 self._assistant_started_at = time.perf_counter()
+                self._emotion_prefix_pending = settings.voice_emotion_codes_enabled
+                self._emotion_prefix_buffer = ""
                 trace = latency_state.response_trace or latency_state.active_trace
                 if trace:
                     if not trace.llm_request_started_at:
@@ -829,7 +1034,32 @@ async def _run_voice_pipeline(
                     trace.llm_first_text_at = time.perf_counter()
                     trace.tts_text_started_at = trace.llm_first_text_at
                     log_latency("llm_first_text", trace, text=frame.text)
-                self._assistant_parts.append(frame.text)
+                text_for_tts = frame.text
+                if self._emotion_prefix_pending:
+                    self._emotion_prefix_buffer += frame.text
+                    status, code, remainder = consume_emotion_prefix(self._emotion_prefix_buffer)
+                    if status == "pending":
+                        return
+                    self._emotion_prefix_pending = False
+                    self._emotion_prefix_buffer = ""
+                    if status == "matched" and code:
+                        voice_controls.apply_emotion_code(code)
+                        if trace:
+                            log_latency(
+                                "voice_emotion_changed",
+                                trace,
+                                emotion_code=code,
+                                emotion=voice_controls.emotion,
+                            )
+                        text_for_tts = remainder
+                    else:
+                        inferred_code = emotion_code_for_turn(trace.user_text if trace else "", remainder)
+                        voice_controls.apply_emotion_code(inferred_code)
+                        text_for_tts = remainder
+                    if not text_for_tts:
+                        return
+                    frame = TextFrame(text_for_tts)
+                self._assistant_parts.append(text_for_tts)
             elif self._capture_assistant and isinstance(frame, LLMFullResponseEndFrame):
                 text = "".join(self._assistant_parts).strip()
                 completed_at = time.perf_counter()
@@ -880,6 +1110,13 @@ async def _run_voice_pipeline(
                             metrics={
                                 "interaction_id": trace.interaction_id,
                                 "source": "local_pipecat",
+                                "voice_behavior_mode": effective_voice_behavior_mode,
+                                "voice_flow_id": voice_flow.flow_id,
+                                "voice_flow_run_id": voice_flow.run_id,
+                                "voice_speed": round(voice_controls.speed, 2),
+                                "voice_speed_label": voice_speed_label(voice_controls.speed),
+                                "voice_emotion_code": voice_controls.emotion_code,
+                                "voice_emotion": voice_controls.emotion,
                                 **trace.providers(),
                                 **trace.timings(),
                             },
@@ -1025,6 +1262,8 @@ async def run_local_pipecat_voice_agent(
         recorder=recorder,
         transport=transport,
         handle_sigint=True,
+        voice_behavior_mode=settings.voice_behavior_mode,
+        voice_flow_id=settings.voice_flow_id,
     )
 
 
@@ -1034,6 +1273,8 @@ async def run_browser_pipecat_voice_agent(
     db: Database | None = None,
     prompt_repo: PromptRepository | None = None,
     session_id: str | None = None,
+    voice_behavior_mode: str | None = None,
+    voice_flow_id: str | None = None,
 ) -> None:
     """Run a browser SmallWebRTC Pipecat voice session."""
 
@@ -1074,6 +1315,8 @@ async def run_browser_pipecat_voice_agent(
         recorder=recorder,
         transport=transport,
         handle_sigint=False,
+        voice_behavior_mode=voice_behavior_mode,
+        voice_flow_id=voice_flow_id,
     )
 
 

@@ -18,6 +18,7 @@ from pipecat.services.tts_service import TTSService, TextAggregationMode
 from pipecat.utils.tracing.service_decorators import traced_tts
 
 from .config import Settings
+from .voice_runtime_controls import VOICE_EMOTION_TTS_INSTRUCTIONS
 
 
 class VoxtralTTSService(TTSService):
@@ -58,6 +59,7 @@ class VoxtralTTSService(TTSService):
         self._voice = voice
         self._voice_id = voice_id
         self._language = language
+        self._base_instructions = instructions
         self._instructions = instructions
         self._ref_audio_base64 = ref_audio_base64
         self._response_format = response_format
@@ -71,6 +73,16 @@ class VoxtralTTSService(TTSService):
 
     def set_speed(self, speed: float) -> None:
         self._speed = max(0.5, min(2.0, speed))
+
+    def set_emotion(self, emotion: str) -> None:
+        emotion_instruction = VOICE_EMOTION_TTS_INSTRUCTIONS.get(emotion)
+        if not emotion_instruction:
+            self._instructions = self._base_instructions
+            return
+        base = (self._base_instructions or "").strip()
+        self._instructions = (
+            f"{base} Current turn style: {emotion_instruction}" if base else emotion_instruction
+        )
 
     @traced_tts
     async def run_tts(self, text: str, context_id: str) -> AsyncGenerator[Frame, None]:

@@ -4,6 +4,7 @@ import re
 import uuid
 from typing import Any
 
+from .voice_runtime_controls import voice_speed_intent, voice_speed_response
 from .config import Settings
 from .cost_guard import CostGuard
 from .db import Database, dumps, loads
@@ -47,27 +48,6 @@ def build_runtime_system_prompt(system_prompt: str) -> str:
     )
 
 
-def voice_speed_intent(text: str) -> str | None:
-    normalized = re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
-    if not normalized:
-        return None
-    voice_terms = {"talk", "speak", "speaking", "speech", "voice", "talking"}
-    words = set(normalized.split())
-    if not (words & voice_terms or "speed up" in normalized or "slow down" in normalized):
-        return None
-    if (
-        "normal speed" in normalized
-        or "regular speed" in normalized
-        or "default speed" in normalized
-    ):
-        return "normal"
-    if "faster" in words or "quicker" in words or "speed up" in normalized:
-        return "faster"
-    if "slower" in words or "slow down" in normalized:
-        return "slower"
-    return None
-
-
 def _number_value(token: str) -> int | None:
     if token.isdigit():
         return int(token)
@@ -97,11 +77,7 @@ def fast_policy_response(text: str) -> str | None:
     if response := simple_math_response(text):
         return response
     if speed_intent := voice_speed_intent(text):
-        if speed_intent == "faster":
-            return "Sure, I'll talk faster."
-        if speed_intent == "slower":
-            return "Sure, I'll slow down."
-        return "Sure, I'll use normal speed."
+        return voice_speed_response(speed_intent)
     if words & {"human", "operator", "representative", "handoff"} or "live agent" in normalized:
         return "A human agent can help; I can hand you off now."
     if "your name" in normalized or "who are you" in normalized:

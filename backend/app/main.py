@@ -179,6 +179,10 @@ async def health() -> dict[str, Any]:
         if settings.llm_provider == "vertex_nim"
         else None,
         "voice_runtime": settings.voice_runtime,
+        "voice_behavior_mode": settings.voice_behavior_mode,
+        "voice_flow_id": settings.voice_flow_id,
+        "voice_stt_correction_enabled": settings.voice_stt_correction_enabled,
+        "voice_emotion_codes_enabled": settings.voice_emotion_codes_enabled,
         "local_stt_provider": settings.local_stt_provider,
         "local_stt_model": settings.local_stt_model,
         "local_tts_provider": settings.local_tts_provider,
@@ -207,6 +211,10 @@ async def config() -> dict[str, Any]:
         if settings.llm_provider == "vertex_nim"
         else None,
         "voice_runtime": settings.voice_runtime,
+        "voice_behavior_mode": settings.voice_behavior_mode,
+        "voice_flow_id": settings.voice_flow_id,
+        "voice_stt_correction_enabled": settings.voice_stt_correction_enabled,
+        "voice_emotion_codes_enabled": settings.voice_emotion_codes_enabled,
         "local_stt_provider": settings.local_stt_provider,
         "local_stt_model": settings.local_stt_model,
         "local_tts_provider": settings.local_tts_provider,
@@ -276,7 +284,11 @@ async def browser_webrtc_offer(
         ) from exc
 
     request = SmallWebRTCRequest.from_dict(payload)
-    session_id = str(uuid.uuid4())
+    request_data = payload.get("requestData") if isinstance(payload.get("requestData"), dict) else {}
+    requested_mode = str(request_data.get("voice_behavior_mode") or settings.voice_behavior_mode)
+    voice_behavior_mode = requested_mode if requested_mode in {"assistant", "flow"} else settings.voice_behavior_mode
+    requested_flow_id = str(request_data.get("voice_flow_id") or settings.voice_flow_id)
+    session_id = str(request_data.get("conversation_id") or uuid.uuid4())
 
     async def webrtc_connection_callback(connection: SmallWebRTCConnection):
         task = asyncio.create_task(
@@ -286,6 +298,8 @@ async def browser_webrtc_offer(
                 db,
                 prompt_repo,
                 session_id,
+                voice_behavior_mode=voice_behavior_mode,
+                voice_flow_id=requested_flow_id,
             )
         )
         browser_voice_tasks.add(task)

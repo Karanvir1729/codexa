@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     pipecat_cloud_ws_url: str | None = None
     pipecat_cloud_service_host: str | None = None
     voice_runtime: Literal["text", "pipecat", "local_pipecat"] = "text"
+    voice_behavior_mode: Literal["assistant", "flow"] = "assistant"
+    voice_flow_id: str = "active"
+    voice_stt_correction_enabled: bool = True
+    voice_emotion_codes_enabled: bool = True
     deepgram_api_key: str | None = None
     cartesia_api_key: str | None = None
     cartesia_voice_id: str = "71a7ad14-091c-4e8e-a314-022ece01c121"

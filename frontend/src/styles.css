@@ -358,6 +358,32 @@ h2 {
   overflow: visible;
 }
 
+.voiceModeSwitch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 14px 18px 0;
+}
+
+.voiceModeSwitch button {
+  min-width: 0;
+  min-height: 38px;
+  border-radius: 8px;
+  border: 1px solid #26313a;
+  background: #0a0e12;
+  color: #a9b6bf;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.voiceModeSwitch button.active {
+  border-color: rgba(216, 251, 111, 0.6);
+  background: #172027;
+  color: #f3f6f8;
+}
+
 .kitStage {
   display: grid;
   justify-items: center;

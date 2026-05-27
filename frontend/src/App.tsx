@@ -214,6 +214,8 @@ export function App() {
   const [voiceClient, setVoiceClient] = useState<PipecatClient | null>(null);
   const [voiceState, setVoiceState] = useState<TransportState>("disconnected");
   const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
+  const [voiceMode, setVoiceMode] = useState<"assistant" | "flow">("assistant");
+  const [assistantEmotion, setAssistantEmotion] = useState("neutral");
   const [localAudioTrack, setLocalAudioTrack] = useState<MediaStreamTrack | null>(null);
   const [botAudioTrack, setBotAudioTrack] = useState<MediaStreamTrack | null>(null);
   const [micEnabled, setMicEnabled] = useState(false);
@@ -222,6 +224,7 @@ export function App() {
   const botAudioRef = useRef<HTMLAudioElement | null>(null);
   const voiceMediaManagerRef = useRef<BrowserAudioMediaManager | null>(null);
   const voiceStateRef = useRef<TransportState>("disconnected");
+  const voiceModeInitializedRef = useRef(false);
 
   async function refresh() {
     const [healthState, promptState, runs, costState, schedulerState] = await Promise.all([
@@ -241,6 +244,16 @@ export function App() {
   useEffect(() => {
     refresh().catch((error) => setNotice(error.message));
   }, []);
+
+  useEffect(() => {
+    if (
+      !voiceModeInitializedRef.current &&
+      (health?.voice_behavior_mode === "assistant" || health?.voice_behavior_mode === "flow")
+    ) {
+      voiceModeInitializedRef.current = true;
+      setVoiceMode(health.voice_behavior_mode);
+    }
+  }, [health?.voice_behavior_mode]);
 
   useEffect(() => {
     if (!window.RTCPeerConnection) {
@@ -314,6 +327,7 @@ export function App() {
           onBotOutput: (data: BotOutputData) => {
             const text = data.text?.trim();
             if (!text || !data.spoken) return;
+            setAssistantEmotion(inferEmotion(text));
             setTurns((current) =>
               appendTurn(current, { id: crypto.randomUUID(), role: "assistant", content: text })
             );
@@ -355,6 +369,8 @@ export function App() {
         await voiceClient.disconnect();
         return;
       }
+      const voiceConversationId = crypto.randomUUID();
+      setConversationId(voiceConversationId);
       await withTimeout(
         getWebRTCIceConfig()
           .catch(() => ({ iceServers: voiceIceServers }))
@@ -362,7 +378,12 @@ export function App() {
             voiceClient.connect({
               webrtcRequestParams: {
                 endpoint: apiUrl("/api/offer"),
-                requestData: { source: "browser_console" }
+                requestData: {
+                  source: "browser_console",
+                  conversation_id: voiceConversationId,
+                  voice_behavior_mode: voiceMode,
+                  voice_flow_id: health?.voice_flow_id ?? "active"
+                }
               },
               iceConfig
             })
@@ -593,14 +614,31 @@ export function App() {
                 </Badge>
               </div>
 
+              <div className="voiceModeSwitch" aria-label="Voice mode">
+                <button
+                  className={voiceMode === "assistant" ? "active" : ""}
+                  onClick={() => setVoiceMode("assistant")}
+                  disabled={voiceConnected}
+                >
+                  <MessageSquare size={15} /> Agent
+                </button>
+                <button
+                  className={voiceMode === "flow" ? "active" : ""}
+                  onClick={() => setVoiceMode("flow")}
+                  disabled={voiceConnected}
+                >
+                  <Workflow size={15} /> Flow
+                </button>
+              </div>
+
               <div className="kitStage">
                 <audio ref={botAudioRef} autoPlay />
                 <CircularWaveform
                   audioTrack={localAudioTrack}
-                  backgroundColor="#0a0e12"
+                  backgroundColor={emotionBackground(assistantEmotion)}
                   barWidth={4}
-                  color1="#d8fb6f"
-                  color2="#67e8f9"
+                  color1={emotionColors(assistantEmotion)[0]}
+                  color2={emotionColors(assistantEmotion)[1]}
                   isThinking={voiceBusy || botSpeaking}
                   numBars={42}
                   rotationEnabled={voiceConnected}
@@ -611,6 +649,7 @@ export function App() {
                   <Badge color="client" variant="outline" rounded="sm">{sttBadge}</Badge>
                   <Badge color="agent" variant="outline" rounded="sm">{ttsBadge}</Badge>
                   <Badge color="secondary" variant="outline" rounded="sm">SmallWebRTC</Badge>
+                  <Badge color="secondary" variant="outline" rounded="sm">{assistantEmotion}</Badge>
                 </div>
               </div>
 
@@ -700,4 +739,42 @@ function voiceProviderLabel(provider: string | undefined, kind: "STT" | "TTS") {
     auto: `Auto ${kind}`
   };
   return labels[provider] ?? `${provider} ${kind}`;
+}
+
+function inferEmotion(text: string) {
+  const normalized = text.toLowerCase();
+  if (normalized.includes("fast") || normalized.includes("faster")) return "energetic";
+  if (normalized.includes("sorry") || normalized.includes("make sure")) return "sympathetic";
+  if (normalized.includes("confirm") || normalized.includes("order id") || normalized.includes("account email")) {
+    return "careful";
+  }
+  if (normalized.includes("done") || normalized.includes("finished") || normalized.includes("saved")) {
+    return "confident";
+  }
+  if (normalized.includes("here") || normalized.includes("help")) return "friendly";
+  return "neutral";
+}
+
+function emotionColors(emotion: string): [string, string] {
+  const colors: Record<string, [string, string]> = {
+    energetic: ["#facc15", "#67e8f9"],
+    sympathetic: ["#fda4af", "#93c5fd"],
+    careful: ["#93c5fd", "#d8fb6f"],
+    confident: ["#d8fb6f", "#34d399"],
+    friendly: ["#d8fb6f", "#67e8f9"],
+    neutral: ["#d8fb6f", "#67e8f9"]
+  };
+  return colors[emotion] ?? colors.neutral;
+}
+
+function emotionBackground(emotion: string) {
+  const backgrounds: Record<string, string> = {
+    energetic: "#131107",
+    sympathetic: "#120d14",
+    careful: "#0a1017",
+    confident: "#0b130f",
+    friendly: "#0a0e12",
+    neutral: "#0a0e12"
+  };
+  return backgrounds[emotion] ?? backgrounds.neutral;
 }

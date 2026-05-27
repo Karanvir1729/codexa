@@ -1,0 +1,276 @@
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import Literal
+
+
+VoiceSpeedIntent = Literal["slower", "very_slow", "normal", "faster", "very_fast"]
+VoiceEmotionCode = Literal["N", "F", "C", "P", "S", "E"]
+
+
+DEFAULT_STT_INITIAL_PROMPT = (
+    "Transcribe short live voice-agent commands exactly. Common commands include: "
+    "Can you talk faster? Talk faster than that. Talk very fast. Very fast. "
+    "Talk slower. Use normal speed. Preserve PipeCAD, Pipecat, Codex, WebRTC, "
+    "Whisper, Voxtral, and Orchestrator."
+)
+
+DEFAULT_STT_HOTWORDS = (
+    "Can you talk faster, talk faster than that, talk very fast, very fast, "
+    "talk slower, normal speed, PipeCAD, Pipecat, Codex, WebRTC, Whisper, "
+    "Voxtral, Orchestrator"
+)
+
+VOICE_EMOTION_CODES: dict[VoiceEmotionCode, str] = {
+    "N": "neutral",
+    "F": "friendly",
+    "C": "careful",
+    "P": "confident",
+    "S": "sympathetic",
+    "E": "energetic",
+}
+
+VOICE_EMOTION_SYSTEM_PROMPT = (
+    "Realtime emotion contract:\n"
+    "- Prefix every live voice reply with exactly one short emotion code and a pipe: "
+    "N| neutral, F| friendly, C| careful, P| confident, S| sympathetic, E| energetic.\n"
+    "- The runtime strips the code before speech, so do not explain it.\n"
+    "- Use E for speed or urgency requests, S when the user sounds frustrated, "
+    "C for corrections/confirmations/safety, F for greetings, P for completed work, "
+    "and N otherwise."
+)
+
+VOICE_TRANSCRIPT_REPAIR_PROMPT = (
+    "STT repair hints:\n"
+    "- If the transcript says 'kids are faster', treat it as 'Can you talk faster?'.\n"
+    "- If the transcript says 'UriFest' or 'uri fest', treat it as 'very fast'.\n"
+    "- Do this silently and answer the intended command."
+)
+
+VOICE_EMOTION_TTS_INSTRUCTIONS = {
+    "neutral": "Neutral, clear, and concise.",
+    "friendly": "Friendly and warm, with natural pace.",
+    "careful": "Careful and clear, with precise articulation.",
+    "confident": "Confident and direct.",
+    "sympathetic": "Patient and sympathetic, without sounding slow.",
+    "energetic": "Brisk, upbeat, and fast while staying clear.",
+}
+
+
+@dataclass(frozen=True)
+class VoiceTranscriptCorrection:
+    text: str
+    corrected: bool = False
+    reason: str | None = None
+
+
+def normalize_for_intent(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
+
+
+def _compact(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", text.casefold())
+
+
+def correct_voice_transcript(text: str) -> VoiceTranscriptCorrection:
+    raw = text.strip()
+    if not raw:
+        return VoiceTranscriptCorrection(raw)
+
+    normalized = normalize_for_intent(raw)
+    compact = _compact(raw)
+
+    kids_faster_variants = {
+        "kids are faster",
+        "kid are faster",
+        "kids faster",
+        "kid faster",
+        "gets are faster",
+        "get are faster",
+    }
+    if normalized in kids_faster_variants:
+        return VoiceTranscriptCorrection(
+            "Can you talk faster?",
+            corrected=True,
+            reason="speed_command_kids_are_faster",
+        )
+
+    if compact in {"urifest", "yourefast", "yourfast"} or normalized in {
+        "uri fest",
+        "very fest",
+        "verry fast",
+        "urry fast",
+    }:
+        return VoiceTranscriptCorrection(
+            "Very fast.",
+            corrected=True,
+            reason="speed_command_urifest",
+        )
+
+    repaired = re.sub(
+        r"\b(?:uri\s*fest|urifest|very\s+fest|verry\s+fast|urry\s+fast)\b",
+        "very fast",
+        raw,
+        flags=re.IGNORECASE,
+    )
+    if repaired != raw:
+        repaired = re.sub(r"\s+", " ", repaired).strip()
+        return VoiceTranscriptCorrection(
+            repaired,
+            corrected=True,
+            reason="speed_command_inline_very_fast",
+        )
+
+    return VoiceTranscriptCorrection(raw)
+
+
+def voice_speed_intent(text: str) -> VoiceSpeedIntent | None:
+    corrected = correct_voice_transcript(text).text
+    normalized = normalize_for_intent(corrected)
+    if not normalized:
+        return None
+
+    words = set(normalized.split())
+    has_voice_context = bool(
+        words
+        & {
+            "talk",
+            "speak",
+            "speaking",
+            "speech",
+            "voice",
+            "talking",
+            "said",
+            "say",
+        }
+    )
+    speed_context = (
+        has_voice_context
+        or "speed up" in normalized
+        or "slow down" in normalized
+        or normalized in {"faster", "very fast", "fast", "slower", "slow"}
+    )
+    if not speed_context:
+        return None
+
+    if (
+        "normal speed" in normalized
+        or "regular speed" in normalized
+        or "default speed" in normalized
+        or "usual speed" in normalized
+    ):
+        return "normal"
+    if "very slow" in normalized or "much slower" in normalized or "super slow" in normalized:
+        return "very_slow"
+    if "slower" in words or "slow down" in normalized or normalized == "slow":
+        return "slower"
+    if (
+        "very fast" in normalized
+        or "really fast" in normalized
+        or "super fast" in normalized
+        or "much faster" in normalized
+    ):
+        return "very_fast"
+    if (
+        "faster" in words
+        or "quicker" in words
+        or "speed up" in normalized
+        or ("fast" in words and has_voice_context)
+    ):
+        return "faster"
+    return None
+
+
+def voice_speed_response(intent: VoiceSpeedIntent) -> str:
+    if intent == "very_fast":
+        return "Got it, I'll talk very fast."
+    if intent == "faster":
+        return "Sure, I'll talk faster."
+    if intent == "very_slow":
+        return "Got it, I'll talk much slower."
+    if intent == "slower":
+        return "Sure, I'll slow down."
+    return "Sure, I'll use normal speed."
+
+
+def next_voice_speed(current: float, intent: VoiceSpeedIntent) -> float:
+    if intent == "very_fast":
+        return 1.6
+    if intent == "faster":
+        return min(1.6, current + 0.2)
+    if intent == "very_slow":
+        return 0.75
+    if intent == "slower":
+        return max(0.75, current - 0.2)
+    return 1.0
+
+
+def voice_speed_label(speed: float) -> str:
+    if speed >= 1.5:
+        return "very_fast"
+    if speed > 1.05:
+        return "fast"
+    if speed <= 0.82:
+        return "very_slow"
+    if speed < 0.95:
+        return "slow"
+    return "normal"
+
+
+def emotion_code_for_turn(user_text: str, response_text: str) -> VoiceEmotionCode:
+    normalized_user = normalize_for_intent(user_text)
+    normalized_response = normalize_for_intent(response_text)
+    if voice_speed_intent(user_text):
+        return "E"
+    if any(
+        phrase in normalized_user
+        for phrase in [
+            "not talking",
+            "wrong",
+            "incorrect",
+            "bad",
+            "damn",
+            "what is going on",
+            "whats going on",
+        ]
+    ):
+        return "S"
+    if any(word in normalized_response for word in ["confirm", "order id", "account email"]):
+        return "C"
+    if any(word in normalized_response for word in ["done", "finished", "completed", "saved"]):
+        return "P"
+    if normalized_user in {"hi", "hello", "hey"} or "how are you" in normalized_user:
+        return "F"
+    return "N"
+
+
+def prefix_emotion_code(text: str, code: VoiceEmotionCode) -> str:
+    stripped = text.strip()
+    if not stripped:
+        return stripped
+    if re.match(r"^[NFCPSE]\s*\|", stripped, flags=re.IGNORECASE):
+        return stripped
+    return f"{code}|{stripped}"
+
+
+def consume_emotion_prefix(buffer: str) -> tuple[str, VoiceEmotionCode | None, str]:
+    """Return (status, code, text), where status is pending, matched, or none."""
+
+    if not buffer:
+        return "pending", None, ""
+
+    stripped = buffer.lstrip()
+    if not stripped:
+        return "pending", None, ""
+
+    match = re.match(r"^([NFCPSE])\s*\|\s*(.*)$", stripped, flags=re.IGNORECASE | re.DOTALL)
+    if match:
+        code = match.group(1).upper().replace(" ", "")
+        if code in VOICE_EMOTION_CODES:
+            return "matched", code, match.group(2)
+
+    if len(stripped) <= 3 and re.fullmatch(r"[A-Za-z]?\s*\|?", stripped):
+        return "pending", None, ""
+
+    return "none", None, buffer
