@@ -170,9 +170,13 @@ def build_system_instruction(settings: Settings, prompt_repo: PromptRepository) 
         "Live voice constraints:\n"
         "- Answer immediately in one short sentence by default.\n"
         "- Speak English only unless the latest user utterance explicitly asks for another language.\n"
+        "- If the user speaks Hindi, Urdu, or Hinglish, answer in that language only for that turn.\n"
         "- Use plain ASCII English when the TTS voice is English.\n"
-        "- Keep normal spoken replies under 35 words; use two sentences only when necessary.\n"
+        "- Keep normal spoken replies under 18 words; use two sentences only when necessary.\n"
+        "- You are latency-aware: if runtime telemetry says the previous turn was slow, shorten the next reply.\n"
+        "- Control voice behavior through the spoken content: concise wording for speed, calm wording for tone, and the user's language for language.\n"
         "- If the user asks for a long story or explanation, ask how long they want it before continuing.\n"
+        "- If asked about latency, identify the slow stage from runtime telemetry when it is available.\n"
         "- Do not mention model identity, internal policy, or provider names unless the user asks."
     )
     if settings.reasoning_mode == "off":
@@ -430,6 +434,10 @@ def create_local_stt_service(settings: Settings):
             no_speech_prob=settings.local_stt_no_speech_prob,
             sample_rate=settings.local_audio_input_sample_rate,
             timeout_seconds=settings.remote_whisper_timeout_seconds,
+            beam_size=settings.remote_whisper_beam_size,
+            best_of=settings.remote_whisper_best_of,
+            initial_prompt=settings.remote_whisper_initial_prompt,
+            hotwords=settings.remote_whisper_hotwords,
             stt_ttfb_timeout=settings.local_stt_ttfb_timeout,
             ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
         )
@@ -604,8 +612,52 @@ async def _run_voice_pipeline(
         active_trace: VoiceLatencyTrace | None = None
         response_trace: VoiceLatencyTrace | None = None
         assistant_speaking: bool = False
+        last_timings: dict[str, Any] = field(default_factory=dict)
+        last_bottleneck: str | None = None
+
+        def runtime_system_message(self) -> str | None:
+            if not self.last_timings:
+                return None
+            first_response = self.last_timings.get("first_response_ms")
+            total = self.last_timings.get("total_interaction_ms")
+            target = settings.latency_target_ms
+            breached = isinstance(first_response, int | float) and first_response > target
+            return (
+                "Runtime voice telemetry for the previous turn: "
+                f"first_response_ms={first_response}, total_interaction_ms={total}, "
+                f"dominant_bottleneck={self.last_bottleneck or 'unknown'}, target_ms={target}. "
+                "Use this silently to adapt. If latency is above target, answer in under 12 words, "
+                "avoid lists, avoid long explanations, and prefer one spoken sentence. "
+                "Do not mention telemetry unless the user asks about latency."
+                if breached
+                else (
+                    "Runtime voice telemetry for the previous turn: "
+                    f"first_response_ms={first_response}, total_interaction_ms={total}, "
+                    f"dominant_bottleneck={self.last_bottleneck or 'unknown'}, target_ms={target}. "
+                    "Use this silently to keep the next spoken reply concise and natural. "
+                    "Do not mention telemetry unless the user asks about latency."
+                )
+            )
 
     latency_state = VoiceLatencyState()
+
+    def dominant_bottleneck(timings: Mapping[str, Any]) -> str | None:
+        candidates = {
+            "stt": timings.get("stt_after_speech_end_ms"),
+            "turn_finalization": timings.get("turn_finalization_ms"),
+            "llm_ttfb": timings.get("llm_ttfb_ms"),
+            "llm_total": timings.get("llm_total_ms"),
+            "tts_ttfb": timings.get("tts_ttfb_from_first_text_ms"),
+            "tts_total": timings.get("tts_total_ms"),
+        }
+        numeric = {
+            name: float(value)
+            for name, value in candidates.items()
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        }
+        if not numeric:
+            return None
+        return max(numeric, key=numeric.get)
 
     def log_latency(event: str, trace: VoiceLatencyTrace, **extra: Any) -> None:
         payload = {
@@ -666,6 +718,10 @@ async def _run_voice_pipeline(
                 max_messages=settings.voice_llm_context_messages,
                 max_chars=settings.voice_llm_context_max_chars,
             )
+            if runtime_status := latency_state.runtime_system_message():
+                runtime_message = {"role": "system", "content": runtime_status}
+                insert_at = 1 if messages and _message_role(messages[0]) == "system" else 0
+                messages = [*messages[:insert_at], runtime_message, *messages[insert_at:]]
             normalized = LLMContext(
                 messages=messages,
                 tools=context.tools,
@@ -807,6 +863,8 @@ async def _run_voice_pipeline(
                         providers=trace.providers(),
                         timings=trace.timings(),
                     )
+                    latency_state.last_timings = trace.timings()
+                    latency_state.last_bottleneck = dominant_bottleneck(latency_state.last_timings)
                     log_latency("interaction_completed", trace, latency_trace_id=trace_id)
                     latency_state.response_trace = None
                 latency_state.assistant_speaking = False

@@ -38,6 +38,7 @@ class VoxtralTTSService(TTSService):
         ref_audio_base64: str | None = None,
         response_format: str = "wav",
         stream: bool = False,
+        pcm_encoding: str = "int16",
         initial_codec_chunk_frames: int | None = None,
         timeout_seconds: float = 120,
         sample_rate: int | None = None,
@@ -60,6 +61,7 @@ class VoxtralTTSService(TTSService):
         self._ref_audio_base64 = ref_audio_base64
         self._response_format = response_format
         self._stream = stream
+        self._pcm_encoding = pcm_encoding
         self._initial_codec_chunk_frames = initial_codec_chunk_frames
         self._timeout = httpx.Timeout(timeout_seconds, connect=10)
         self._target_sample_rate = sample_rate or self.NATIVE_SAMPLE_RATE
@@ -129,6 +131,24 @@ class VoxtralTTSService(TTSService):
                             )
                         return
 
+                    if self._stream and (
+                        "audio/pcm" in content_type or self._response_format == "pcm"
+                    ):
+                        async for chunk in response.aiter_bytes():
+                            if not chunk:
+                                continue
+                            audio = await self._decode_audio_bytes(chunk, "pcm")
+                            if not ttfb_stopped:
+                                await self.stop_ttfb_metrics()
+                                ttfb_stopped = True
+                            yield TTSAudioRawFrame(
+                                audio=audio,
+                                sample_rate=self._output_sample_rate(),
+                                num_channels=1,
+                                context_id=context_id,
+                            )
+                        return
+
                     body = await response.aread()
                     audio = await self._decode_response_audio(body, content_type)
                     if not ttfb_stopped:
@@ -180,6 +200,12 @@ class VoxtralTTSService(TTSService):
 
     async def _decode_audio_bytes(self, content: bytes, response_format: str) -> bytes:
         if response_format == "pcm":
+            if self._pcm_encoding == "int16":
+                return await self._resampler.resample(
+                    content,
+                    self.NATIVE_SAMPLE_RATE,
+                    self._output_sample_rate(),
+                )
             return await self._resampler.resample(
                 _float32_to_int16(content),
                 self.NATIVE_SAMPLE_RATE,
@@ -294,6 +320,7 @@ def create_voxtral_tts_service(settings: Settings) -> VoxtralTTSService:
         ref_audio_base64=ref_audio_base64,
         response_format=settings.voxtral_tts_response_format,
         stream=settings.voxtral_tts_stream,
+        pcm_encoding=settings.voxtral_tts_pcm_encoding,
         initial_codec_chunk_frames=settings.voxtral_tts_initial_codec_chunk_frames,
         timeout_seconds=settings.voxtral_tts_timeout_seconds,
         sample_rate=settings.local_audio_output_sample_rate,

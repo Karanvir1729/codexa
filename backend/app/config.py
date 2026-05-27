@@ -85,6 +85,19 @@ class Settings(BaseSettings):
     local_whisper_compute_type: str = "auto"
     remote_whisper_base_url: str = "http://127.0.0.1:7001"
     remote_whisper_timeout_seconds: float = Field(default=8, ge=0.1)
+    remote_whisper_beam_size: int = Field(default=3, ge=1, le=8)
+    remote_whisper_best_of: int = Field(default=3, ge=1, le=8)
+    remote_whisper_initial_prompt: str | None = (
+        "This is a live voice agent conversation. Transcribe English, Hindi, Urdu, and "
+        "Hinglish accurately. Preserve technical terms and names such as Pipecat, PipeCAD, "
+        "Cekura, NVIDIA NIM, Nemotron, Mistral, Voxtral, Twilio, WebRTC, Vercel, "
+        "Cloudflare, Google Cloud, Vertex AI, Whisper, STT, and TTS."
+    )
+    remote_whisper_hotwords: str | None = (
+        "Pipecat, PipeCAD, Cekura, Daily, NVIDIA, NIM, Nemotron, Mistral, Voxtral, "
+        "Whisper, Faster Whisper, Twilio, WebRTC, Vercel, Cloudflare, Google Cloud, "
+        "GCP, Vertex AI, GPU, TPU, LLM, STT, TTS, Hindi, Urdu, Hinglish"
+    )
     local_whisperx_device: Literal["auto", "cpu", "cuda"] = "auto"
     local_whisperx_compute_type: str = "auto"
     local_whisperx_batch_size: int = Field(default=1, ge=1)
@@ -127,10 +140,14 @@ class Settings(BaseSettings):
     voxtral_tts_voice: str | None = "neutral_female"
     voxtral_tts_voice_id: str | None = None
     voxtral_tts_language: str | None = "Auto"
-    voxtral_tts_instructions: str | None = None
+    voxtral_tts_instructions: str | None = (
+        "Speak naturally, warmly, and quickly. Match the user's language when possible. "
+        "Keep emotional tone calm and helpful unless the text clearly asks for a different tone."
+    )
     voxtral_tts_ref_audio_path: str | None = None
     voxtral_tts_response_format: Literal["pcm", "wav"] = "wav"
     voxtral_tts_stream: bool = False
+    voxtral_tts_pcm_encoding: Literal["int16", "float32"] = "int16"
     voxtral_tts_initial_codec_chunk_frames: int | None = Field(default=None, ge=1)
     voxtral_tts_timeout_seconds: float = Field(default=120, ge=1)
     local_vad_confidence: float = Field(default=0.6, ge=0, le=1)

@@ -15,15 +15,17 @@ FlowGraph = dict[str, Any]
 
 FLOW_NODE_TYPES = [
     "start",
-    "say",
-    "listen",
-    "intent_router",
+    "dialogue",
+    "collect",
+    "confirm",
     "condition",
-    "llm_step",
-    "tool",
+    "api",
     "codex_task",
+    "knowledge_base",
+    "sms",
+    "email",
+    "transfer_call",
     "set_state",
-    "guardrail",
     "wait",
     "fallback",
     "handoff",
@@ -34,481 +36,342 @@ VOICE_PRESETS = ["neutral", "calm", "confident", "friendly", "concise", "careful
 LATENCY_PROFILES = ["instant", "fast", "balanced", "quality", "async"]
 
 
+def _voice(tone: str = "calm", speed: float = 1.0, allow_barge_in: bool = True) -> dict[str, Any]:
+    return {
+        "voiceId": "af_heart",
+        "tone": tone,
+        "speed": speed,
+        "language": "en",
+        "allowBargeIn": allow_barge_in,
+    }
+
+
+def _latency(profile: str = "fast", target_ms: int = 800) -> dict[str, Any]:
+    return {"profile": profile, "targetMs": target_ms}
+
+
+def _node(
+    node_id: str,
+    node_type: str,
+    label: str,
+    x: int,
+    y: int,
+    *,
+    purpose: str,
+    prompt: str = "",
+    script: str = "",
+    outputs: list[str] | None = None,
+    category: str = "in-call",
+    tone: str = "calm",
+    latency_profile: str = "fast",
+    target_ms: int = 800,
+    fields: list[dict[str, Any]] | None = None,
+    endpoint: str | None = None,
+    integration: dict[str, Any] | None = None,
+    auto_advance: bool = False,
+) -> dict[str, Any]:
+    return {
+        "id": node_id,
+        "type": "flowNode",
+        "position": {"x": x, "y": y},
+        "data": {
+            "label": label,
+            "nodeType": node_type,
+            "category": category,
+            "purpose": purpose,
+            "prompt": prompt,
+            "script": script or prompt,
+            "outputs": outputs or ["Continue"],
+            "fields": fields or [],
+            "endpoint": endpoint,
+            "integration": integration or {},
+            "autoAdvance": auto_advance,
+            "voice": _voice(tone=tone),
+            "latency": _latency(latency_profile, target_ms),
+            "interrupt": {
+                "enabled": node_type not in {"start", "end"},
+                "stopSpeaking": True,
+                "routes": [{"intent": "correction_or_cancel", "target": "clarify_requirements"}],
+            },
+            "fallback": {"unclear": "clarify_requirements", "failed": "process_failed"},
+        },
+    }
+
+
+def _edge(
+    edge_id: str,
+    source: str,
+    target: str,
+    label: str,
+    keywords: list[str] | None = None,
+    style: str = "normal",
+) -> dict[str, Any]:
+    return {
+        "id": edge_id,
+        "source": source,
+        "target": target,
+        "label": label,
+        "data": {"keywords": keywords or [], "style": style},
+    }
+
+
 DEFAULT_FLOW_GRAPH: FlowGraph = {
     "nodes": [
-        {
-            "id": "start",
-            "type": "flowNode",
-            "position": {"x": -760, "y": -40},
-            "data": {
-                "label": "Start",
-                "nodeType": "start",
-                "purpose": "Initialize an always-on voice session and enter the planned flow.",
-                "prompt": "",
-                "voice": {
-                    "voiceId": "af_heart",
-                    "tone": "calm",
-                    "speed": 1,
-                    "language": "en",
-                    "allowBargeIn": True,
-                },
-                "latency": {"profile": "instant", "targetMs": 150},
-                "listen": {"silenceTimeoutMs": 700, "retryLimit": 2, "expected": []},
-                "interrupt": {
-                    "enabled": True,
-                    "stopSpeaking": True,
-                    "routes": [{"intent": "any", "target": "interrupt_router"}],
-                },
-                "fallback": {"noInput": "repair", "lowConfidence": "repair", "toolError": "repair"},
+        _node(
+            "start",
+            "start",
+            "Start",
+            -720,
+            0,
+            category="pre-call",
+            purpose="Entry point for the live voice session; audio is already always-on.",
+            outputs=["Begin"],
+            latency_profile="instant",
+            target_ms=120,
+        ),
+        _node(
+            "opening",
+            "dialogue",
+            "Opening Sentence",
+            -460,
+            0,
+            purpose="Introduce the Codex Orchestrator and set the coding-on-the-go context.",
+            script=(
+                "Hey there, this is Agent Name with Codex Orchestrator. "
+                "What task can I help you get done today?"
+            ),
+            outputs=["Continue"],
+            tone="friendly",
+            latency_profile="instant",
+            target_ms=250,
+            auto_advance=True,
+        ),
+        _node(
+            "collect_task_details",
+            "collect",
+            "Collect Task Details",
+            -150,
+            0,
+            purpose="Collect the coding task, repo scope, files, constraints, and desired outcome.",
+            script=(
+                "Got it. Can you give me the full details? The more specific you are, "
+                "the better results I can get for you."
+            ),
+            outputs=["Task details collected", "Needs clarification"],
+            fields=[
+                {"name": "task_description", "type": "text", "required": True},
+                {"name": "repo_scope", "type": "text", "required": False},
+                {"name": "success_criteria", "type": "text", "required": False},
+            ],
+            tone="calm",
+            target_ms=700,
+        ),
+        _node(
+            "clarify_requirements",
+            "dialogue",
+            "Clarify Requirements",
+            170,
+            190,
+            purpose="Ask a focused follow-up when requirements are ambiguous or the caller interrupts.",
+            script=(
+                "I want to make sure I get this right. Can you tell me a bit more "
+                "about what you're looking for?"
+            ),
+            outputs=["Requirements clarified"],
+            tone="careful",
+            target_ms=700,
+        ),
+        _node(
+            "confirm_task",
+            "confirm",
+            "Confirm Task Understanding",
+            490,
+            0,
+            purpose="Restate the interpreted task and wait for confirmation or correction.",
+            script=(
+                "Alright, so just to confirm, you need me to handle Task Description. "
+                "Does that sound right?"
+            ),
+            outputs=["Task confirmed", "Caller corrects task"],
+            tone="careful",
+            latency_profile="instant",
+            target_ms=300,
+            fields=[{"name": "confirmed", "type": "boolean", "required": True}],
+        ),
+        _node(
+            "preflight_guardrails",
+            "condition",
+            "Preflight Safety Check",
+            810,
+            0,
+            purpose="Decide whether Codex can start autonomously or needs explicit approval.",
+            prompt="Check for destructive actions, deploys, commits, secrets, or unknown repo scope.",
+            outputs=["Safe to run", "Needs approval"],
+            latency_profile="instant",
+            target_ms=120,
+            integration={"blockedActions": ["destructive_shell", "deploy", "commit_without_review"]},
+        ),
+        _node(
+            "approval_dialogue",
+            "confirm",
+            "Confirm Codex Approval",
+            1110,
+            -170,
+            purpose="Ask for explicit approval before Codex writes, commits, deploys, or runs risky commands.",
+            script="This may change files or run commands. Should I proceed with Codex Orchestrator?",
+            outputs=["Approved", "Denied"],
+            tone="careful",
+            latency_profile="instant",
+            target_ms=250,
+        ),
+        _node(
+            "process_with_codex",
+            "codex_task",
+            "Process Task with Codex",
+            1110,
+            0,
+            purpose="Create and monitor the Codex Orchestrator job for the confirmed task.",
+            script="I'll send this to Codex Orchestrator and keep tracking it live.",
+            outputs=["Task processed successfully", "Processing failed", "Needs more info"],
+            latency_profile="async",
+            target_ms=1200,
+            integration={
+                "orchestrator": "codex",
+                "taskType": "edit_or_inspect",
+                "approvalMode": "ask_before_write",
             },
-        },
-        {
-            "id": "greeting",
-            "type": "flowNode",
-            "position": {"x": -520, "y": -40},
-            "data": {
-                "label": "Greeting",
-                "nodeType": "say",
-                "purpose": "Start naturally and make it clear the agent is ready.",
-                "prompt": "I'm here. Tell me what you want to do.",
-                "voice": {
-                    "voiceId": "af_heart",
-                    "tone": "friendly",
-                    "speed": 1.04,
-                    "language": "en",
-                    "allowBargeIn": True,
-                },
-                "latency": {"profile": "instant", "targetMs": 250},
-                "listen": {"silenceTimeoutMs": 700, "retryLimit": 2, "expected": []},
-                "interrupt": {
-                    "enabled": True,
-                    "stopSpeaking": True,
-                    "routes": [{"intent": "any", "target": "interrupt_router"}],
-                },
-                "fallback": {"noInput": "repair", "lowConfidence": "repair", "toolError": "repair"},
-            },
-        },
-        {
-            "id": "understand_request",
-            "type": "flowNode",
-            "position": {"x": -260, "y": -40},
-            "data": {
-                "label": "Understand Request",
-                "nodeType": "listen",
-                "purpose": "Capture the user's goal while the audio session remains live.",
-                "prompt": "What should I help with?",
-                "voice": {
-                    "voiceId": "af_heart",
-                    "tone": "calm",
-                    "speed": 1,
-                    "language": "en",
-                    "allowBargeIn": True,
-                },
-                "latency": {"profile": "fast", "targetMs": 700},
-                "listen": {
-                    "silenceTimeoutMs": 700,
-                    "retryLimit": 2,
-                    "expected": ["account help", "refund", "code task", "human handoff"],
-                    "slots": [],
-                },
-                "interrupt": {
-                    "enabled": True,
-                    "stopSpeaking": True,
-                    "routes": [{"intent": "any", "target": "interrupt_router"}],
-                },
-                "fallback": {"noInput": "repair", "lowConfidence": "repair", "toolError": "repair"},
-            },
-        },
-        {
-            "id": "route_intent",
-            "type": "flowNode",
-            "position": {"x": 10, "y": -40},
-            "data": {
-                "label": "Intent Router",
-                "nodeType": "intent_router",
-                "purpose": "Route the user into a controlled domain path.",
-                "prompt": "Classify the user's intent into one of the outgoing edges.",
-                "voice": {
-                    "voiceId": "af_heart",
-                    "tone": "concise",
-                    "speed": 1,
-                    "language": "en",
-                    "allowBargeIn": True,
-                },
-                "latency": {"profile": "instant", "targetMs": 120},
-                "listen": {"silenceTimeoutMs": 700, "retryLimit": 2, "expected": []},
-                "interrupt": {
-                    "enabled": True,
-                    "stopSpeaking": True,
-                    "routes": [{"intent": "any", "target": "interrupt_router"}],
-                },
-                "fallback": {"noInput": "repair", "lowConfidence": "repair", "toolError": "repair"},
-            },
-        },
-        {
-            "id": "customer_intake",
-            "type": "flowNode",
-            "position": {"x": 300, "y": -220},
-            "data": {
-                "label": "Customer Intake",
-                "nodeType": "llm_step",
-                "purpose": "Ask for the missing account, order, or refund detail without claiming completion.",
-                "prompt": (
-                    "You are in a customer-support intake node. Ask exactly one concise "
-                    "question for the missing account email, phone number, order ID, or reason."
-                ),
-                "voice": {
-                    "voiceId": "af_heart",
-                    "tone": "careful",
-                    "speed": 1,
-                    "language": "en",
-                    "allowBargeIn": True,
-                },
-                "latency": {"profile": "fast", "targetMs": 900},
-                "llm": {"temperature": 0, "maxTokens": 40, "mode": "constrained"},
-                "listen": {
-                    "silenceTimeoutMs": 900,
-                    "retryLimit": 2,
-                    "expected": ["email", "phone", "order ID", "reason"],
-                    "slots": [
-                        {"name": "account_email", "type": "email", "required": False},
-                        {"name": "order_id", "type": "text", "required": False},
-                        {"name": "reason", "type": "text", "required": False},
-                    ],
-                },
-                "interrupt": {
-                    "enabled": True,
-                    "stopSpeaking": True,
-                    "routes": [{"intent": "any", "target": "interrupt_router"}],
-                },
-                "fallback": {"noInput": "repair", "lowConfidence": "repair", "toolError": "repair"},
-            },
-        },
-        {
-            "id": "codex_request",
-            "type": "flowNode",
-            "position": {"x": 300, "y": 10},
-            "data": {
-                "label": "Codex Request",
-                "nodeType": "listen",
-                "purpose": "Collect the coding task before invoking Codex Orchestrator.",
-                "prompt": "What should Codex work on, and which repo or files are in scope?",
-                "voice": {
-                    "voiceId": "af_heart",
-                    "tone": "confident",
-                    "speed": 1.03,
-                    "language": "en",
-                    "allowBargeIn": True,
-                },
-                "latency": {"profile": "fast", "targetMs": 800},
-                "listen": {
-                    "silenceTimeoutMs": 900,
-                    "retryLimit": 2,
-                    "expected": ["inspect code", "edit files", "run tests", "deploy"],
-                    "slots": [{"name": "codex_task", "type": "text", "required": True}],
-                },
-                "interrupt": {
-                    "enabled": True,
-                    "stopSpeaking": True,
-                    "routes": [{"intent": "any", "target": "interrupt_router"}],
-                },
-                "fallback": {"noInput": "repair", "lowConfidence": "repair", "toolError": "repair"},
-            },
-        },
-        {
-            "id": "codex_confirm",
-            "type": "flowNode",
-            "position": {"x": 580, "y": 10},
-            "data": {
-                "label": "Codex Approval",
-                "nodeType": "guardrail",
-                "purpose": "Require explicit approval before writes, commits, deploys, or risky commands.",
-                "prompt": "I can send that to Codex Orchestrator. Should I proceed?",
-                "voice": {
-                    "voiceId": "af_heart",
-                    "tone": "careful",
-                    "speed": 0.98,
-                    "language": "en",
-                    "allowBargeIn": True,
-                },
-                "latency": {"profile": "instant", "targetMs": 250},
-                "listen": {"silenceTimeoutMs": 900, "retryLimit": 2, "expected": ["yes", "no"]},
-                "guardrail": {
-                    "approvalMode": "ask_before_write",
-                    "requiresExplicitYes": True,
-                    "blockedActions": ["destructive_shell", "deploy", "commit_without_review"],
-                },
-                "interrupt": {
-                    "enabled": True,
-                    "stopSpeaking": True,
-                    "routes": [{"intent": "any", "target": "interrupt_router"}],
-                },
-                "fallback": {"noInput": "repair", "lowConfidence": "repair", "toolError": "repair"},
-            },
-        },
-        {
-            "id": "run_codex",
-            "type": "flowNode",
-            "position": {"x": 860, "y": 10},
-            "data": {
-                "label": "Run Codex Task",
-                "nodeType": "codex_task",
-                "purpose": "Create an async job for Codex Orchestrator and speak progress.",
-                "prompt": "I'll hand this to Codex Orchestrator and keep you updated.",
-                "voice": {
-                    "voiceId": "af_heart",
-                    "tone": "confident",
-                    "speed": 1.02,
-                    "language": "en",
-                    "allowBargeIn": True,
-                },
-                "latency": {"profile": "async", "targetMs": 1200},
-                "codex": {
-                    "taskType": "edit_or_inspect",
-                    "approvalMode": "ask_before_write",
-                    "allowedPaths": [],
-                    "progressSpeech": [
-                        "I'm checking the repo now.",
-                        "I found the relevant files.",
-                        "I'm running verification.",
-                    ],
-                },
-                "interrupt": {
-                    "enabled": True,
-                    "stopSpeaking": True,
-                    "routes": [{"intent": "cancel", "target": "cancel_task"}],
-                },
-                "fallback": {"noInput": "repair", "lowConfidence": "repair", "toolError": "repair"},
-            },
-        },
-        {
-            "id": "interrupt_router",
-            "type": "flowNode",
-            "position": {"x": 300, "y": 250},
-            "data": {
-                "label": "Interrupt Router",
-                "nodeType": "intent_router",
-                "purpose": "Handle barge-in while preserving the graph state.",
-                "prompt": "Classify interruptions into cancel, correction, question, switch topic, or resume.",
-                "voice": {
-                    "voiceId": "af_heart",
-                    "tone": "calm",
-                    "speed": 1.06,
-                    "language": "en",
-                    "allowBargeIn": True,
-                },
-                "latency": {"profile": "instant", "targetMs": 180},
-                "listen": {
-                    "silenceTimeoutMs": 500,
-                    "retryLimit": 1,
-                    "expected": ["cancel", "correction", "question", "switch topic", "resume"],
-                },
-                "interrupt": {
-                    "enabled": True,
-                    "stopSpeaking": True,
-                    "routes": [{"intent": "any", "target": "interrupt_router"}],
-                },
-                "fallback": {"noInput": "repair", "lowConfidence": "repair", "toolError": "repair"},
-            },
-        },
-        {
-            "id": "answer_inline",
-            "type": "flowNode",
-            "position": {"x": 580, "y": 210},
-            "data": {
-                "label": "Answer Inline",
-                "nodeType": "llm_step",
-                "purpose": "Answer a short interruption question and return to the prior flow when possible.",
-                "prompt": "Answer the interruption in one short sentence, then offer to continue.",
-                "voice": {
-                    "voiceId": "af_heart",
-                    "tone": "calm",
-                    "speed": 1.05,
-                    "language": "en",
-                    "allowBargeIn": True,
-                },
-                "latency": {"profile": "fast", "targetMs": 850},
-                "llm": {"temperature": 0, "maxTokens": 42, "mode": "constrained"},
-                "interrupt": {
-                    "enabled": True,
-                    "stopSpeaking": True,
-                    "routes": [{"intent": "any", "target": "interrupt_router"}],
-                },
-                "fallback": {"noInput": "repair", "lowConfidence": "repair", "toolError": "repair"},
-            },
-        },
-        {
-            "id": "cancel_task",
-            "type": "flowNode",
-            "position": {"x": 580, "y": 360},
-            "data": {
-                "label": "Cancel Current Task",
-                "nodeType": "say",
-                "purpose": "Stop the current task and ask what to do next.",
-                "prompt": "Stopped. What should I do instead?",
-                "voice": {
-                    "voiceId": "af_heart",
-                    "tone": "calm",
-                    "speed": 1,
-                    "language": "en",
-                    "allowBargeIn": True,
-                },
-                "latency": {"profile": "instant", "targetMs": 200},
-                "interrupt": {
-                    "enabled": True,
-                    "stopSpeaking": True,
-                    "routes": [{"intent": "any", "target": "interrupt_router"}],
-                },
-                "fallback": {"noInput": "repair", "lowConfidence": "repair", "toolError": "repair"},
-            },
-        },
-        {
-            "id": "repair",
-            "type": "flowNode",
-            "position": {"x": 20, "y": 260},
-            "data": {
-                "label": "Repair",
-                "nodeType": "fallback",
-                "purpose": "Recover from silence, unclear speech, tool failure, or low confidence.",
-                "prompt": "I missed that. Say it another way, or tell me if you want to switch tasks.",
-                "voice": {
-                    "voiceId": "af_heart",
-                    "tone": "careful",
-                    "speed": 0.98,
-                    "language": "en",
-                    "allowBargeIn": True,
-                },
-                "latency": {"profile": "instant", "targetMs": 220},
-                "listen": {"silenceTimeoutMs": 700, "retryLimit": 2, "expected": []},
-                "interrupt": {
-                    "enabled": True,
-                    "stopSpeaking": True,
-                    "routes": [{"intent": "any", "target": "interrupt_router"}],
-                },
-                "fallback": {"noInput": "handoff", "lowConfidence": "handoff", "toolError": "handoff"},
-            },
-        },
-        {
-            "id": "handoff",
-            "type": "flowNode",
-            "position": {"x": 300, "y": -430},
-            "data": {
-                "label": "Human Handoff",
-                "nodeType": "handoff",
-                "purpose": "Transfer the session with transcript and active slots.",
-                "prompt": "A human agent can help. I can hand you off now.",
-                "voice": {
-                    "voiceId": "af_heart",
-                    "tone": "careful",
-                    "speed": 1,
-                    "language": "en",
-                    "allowBargeIn": True,
-                },
-                "latency": {"profile": "balanced", "targetMs": 1000},
-                "handoff": {"channel": "operator", "includeSummary": True},
-                "interrupt": {"enabled": False, "stopSpeaking": True, "routes": []},
-                "fallback": {"noInput": "end", "lowConfidence": "end", "toolError": "end"},
-            },
-        },
-        {
-            "id": "end",
-            "type": "flowNode",
-            "position": {"x": 1140, "y": 10},
-            "data": {
-                "label": "End",
-                "nodeType": "end",
-                "purpose": "Close the flow and store final transcript, slots, and eval trace.",
-                "prompt": "Done. I saved the session notes.",
-                "voice": {
-                    "voiceId": "af_heart",
-                    "tone": "neutral",
-                    "speed": 1,
-                    "language": "en",
-                    "allowBargeIn": False,
-                },
-                "latency": {"profile": "instant", "targetMs": 200},
-                "interrupt": {"enabled": False, "stopSpeaking": True, "routes": []},
-                "fallback": {"noInput": "end", "lowConfidence": "end", "toolError": "end"},
-            },
-        },
+        ),
+        _node(
+            "monitor_progress",
+            "wait",
+            "Monitor Codex Progress",
+            1430,
+            0,
+            purpose="Follow the running Codex job and speak concise progress updates.",
+            script="Codex is working on it. I'll call out anything that needs your decision.",
+            outputs=["Complete", "Needs user input", "Failed"],
+            latency_profile="async",
+            target_ms=1000,
+        ),
+        _node(
+            "deliver_result",
+            "dialogue",
+            "Deliver Result",
+            1740,
+            0,
+            purpose="Summarize what Codex did, what changed, and what still needs review.",
+            script="Codex finished. Here's what changed and what I verified.",
+            outputs=["Continue coding", "Task complete"],
+            tone="confident",
+            target_ms=800,
+        ),
+        _node(
+            "process_failed",
+            "fallback",
+            "Process Failed",
+            1430,
+            210,
+            purpose="Recover from Codex/API failures with a clear retry or handoff path.",
+            script="Codex hit an issue. I can retry with different instructions or hand this off.",
+            outputs=["Retry", "Transfer call"],
+            tone="careful",
+            latency_profile="instant",
+            target_ms=250,
+        ),
+        _node(
+            "transfer_call",
+            "transfer_call",
+            "Transfer Call",
+            1740,
+            210,
+            purpose="Transfer to a human/operator with transcript, slots, and Codex job context.",
+            script="I can transfer this with the task summary and current Codex state.",
+            outputs=["Transferred"],
+            tone="careful",
+            latency_profile="balanced",
+            target_ms=900,
+        ),
+        _node(
+            "end",
+            "end",
+            "End",
+            2040,
+            0,
+            purpose="Close the workflow and persist the transcript, task details, and execution trace.",
+            script="Done. I saved the task summary and run history.",
+            outputs=["Complete"],
+            tone="neutral",
+            latency_profile="instant",
+            target_ms=200,
+        ),
     ],
     "edges": [
-        {"id": "start-greeting", "source": "start", "target": "greeting", "label": "enter"},
-        {"id": "greeting-understand", "source": "greeting", "target": "understand_request", "label": "listen"},
-        {"id": "understand-route", "source": "understand_request", "target": "route_intent", "label": "classify"},
-        {
-            "id": "route-customer",
-            "source": "route_intent",
-            "target": "customer_intake",
-            "label": "account / refund / order",
-            "data": {"keywords": ["account", "refund", "cancel", "order", "billing"]},
-        },
-        {
-            "id": "route-codex",
-            "source": "route_intent",
-            "target": "codex_request",
-            "label": "code / repo / build",
-            "data": {"keywords": ["code", "repo", "build", "bug", "test", "deploy", "codex"]},
-        },
-        {
-            "id": "route-human",
-            "source": "route_intent",
-            "target": "handoff",
-            "label": "human",
-            "data": {"keywords": ["human", "operator", "representative", "agent"]},
-        },
-        {"id": "route-repair", "source": "route_intent", "target": "repair", "label": "unclear"},
-        {"id": "customer-repair", "source": "customer_intake", "target": "repair", "label": "still missing"},
-        {"id": "customer-end", "source": "customer_intake", "target": "end", "label": "details captured"},
-        {"id": "codex-request-confirm", "source": "codex_request", "target": "codex_confirm", "label": "task captured"},
-        {
-            "id": "codex-confirm-run",
-            "source": "codex_confirm",
-            "target": "run_codex",
-            "label": "yes",
-            "data": {"keywords": ["yes", "proceed", "start", "go"]},
-        },
-        {
-            "id": "codex-confirm-cancel",
-            "source": "codex_confirm",
-            "target": "cancel_task",
-            "label": "no",
-            "data": {"keywords": ["no", "stop", "cancel"]},
-        },
-        {"id": "run-codex-end", "source": "run_codex", "target": "end", "label": "job queued"},
-        {
-            "id": "interrupt-cancel",
-            "source": "interrupt_router",
-            "target": "cancel_task",
-            "label": "cancel / stop",
-            "data": {"keywords": ["stop", "cancel", "nevermind", "never mind"]},
-        },
-        {
-            "id": "interrupt-question",
-            "source": "interrupt_router",
-            "target": "answer_inline",
-            "label": "question",
-            "data": {"keywords": ["what", "why", "how", "when", "where", "?"]},
-        },
-        {
-            "id": "interrupt-switch",
-            "source": "interrupt_router",
-            "target": "understand_request",
-            "label": "switch topic",
-            "data": {"keywords": ["instead", "actually", "switch", "change"]},
-        },
-        {"id": "answer-inline-understand", "source": "answer_inline", "target": "understand_request", "label": "continue"},
-        {"id": "cancel-understand", "source": "cancel_task", "target": "understand_request", "label": "restart"},
-        {"id": "repair-route", "source": "repair", "target": "route_intent", "label": "retry"},
-        {"id": "handoff-end", "source": "handoff", "target": "end", "label": "transferred"},
+        _edge("start-opening", "start", "opening", "Start"),
+        _edge("opening-collect", "opening", "collect_task_details", "Continue"),
+        _edge(
+            "collect-confirm",
+            "collect_task_details",
+            "confirm_task",
+            "Task details collected",
+            ["details", "scope", "repo", "files"],
+        ),
+        _edge(
+            "collect-clarify",
+            "collect_task_details",
+            "clarify_requirements",
+            "Needs clarification",
+            ["unclear", "not sure", "clarify", "maybe"],
+        ),
+        _edge("clarify-confirm", "clarify_requirements", "confirm_task", "Requirements clarified"),
+        _edge(
+            "confirm-preflight",
+            "confirm_task",
+            "preflight_guardrails",
+            "Task confirmed",
+            ["yes", "correct", "right", "confirmed", "go ahead"],
+        ),
+        _edge(
+            "confirm-correction",
+            "confirm_task",
+            "collect_task_details",
+            "Caller corrects task",
+            ["no", "actually", "change", "wrong", "not exactly"],
+        ),
+        _edge("preflight-run", "preflight_guardrails", "process_with_codex", "Safe to run"),
+        _edge("preflight-approval", "preflight_guardrails", "approval_dialogue", "Needs approval"),
+        _edge(
+            "approval-run",
+            "approval_dialogue",
+            "process_with_codex",
+            "Approved",
+            ["yes", "approved", "proceed", "go"],
+        ),
+        _edge(
+            "approval-denied",
+            "approval_dialogue",
+            "collect_task_details",
+            "Denied",
+            ["no", "stop", "cancel"],
+        ),
+        _edge("codex-monitor", "process_with_codex", "monitor_progress", "Task processed successfully"),
+        _edge("codex-failed", "process_with_codex", "process_failed", "Processing failed"),
+        _edge("codex-more-info", "process_with_codex", "clarify_requirements", "Needs more info"),
+        _edge("monitor-deliver", "monitor_progress", "deliver_result", "Complete"),
+        _edge("monitor-input", "monitor_progress", "clarify_requirements", "Needs user input"),
+        _edge("monitor-failed", "monitor_progress", "process_failed", "Failed"),
+        _edge("deliver-continue", "deliver_result", "collect_task_details", "Continue coding"),
+        _edge("deliver-end", "deliver_result", "end", "Task complete"),
+        _edge("failure-retry", "process_failed", "process_with_codex", "Retry"),
+        _edge("failure-transfer", "process_failed", "transfer_call", "Transfer call"),
+        _edge("transfer-end", "transfer_call", "end", "Transferred"),
     ],
-    "viewport": {"x": 760, "y": 340, "zoom": 0.72},
+    "viewport": {"x": -45, "y": 170, "zoom": 0.42},
     "metadata": {
-        "schemaVersion": 1,
+        "schemaVersion": 3,
         "defaultVoice": "af_heart",
         "defaultLatencyProfile": "fast",
         "alwaysListening": True,
-        "runtime": "pipecat-compatible-flow",
+        "runtime": "codex-orchestrator-agent-flow",
     },
 }
 
@@ -639,10 +502,22 @@ def validate_flow_graph(graph: FlowGraph) -> dict[str, Any]:
             errors.append(f"{node_id} uses unsupported node type '{node_type}'.")
         if node_type != "start" and not str(data.get("label") or "").strip():
             warnings.append(f"{node_id} should have a readable label.")
-        if node_type in {"say", "listen", "llm_step", "guardrail", "fallback", "handoff", "end"}:
+        if node_type in {
+            "dialogue",
+            "collect",
+            "confirm",
+            "api",
+            "codex_task",
+            "wait",
+            "fallback",
+            "handoff",
+            "transfer_call",
+            "end",
+        }:
             if not str(data.get("prompt") or "").strip():
-                warnings.append(f"{node_id} should have a prompt or spoken script.")
-        if node_type not in {"start", "handoff", "end"}:
+                if not str(data.get("script") or "").strip():
+                    warnings.append(f"{node_id} should have a prompt or spoken script.")
+        if node_type not in {"start", "handoff", "transfer_call", "end"}:
             interrupt = data.get("interrupt") if isinstance(data.get("interrupt"), dict) else {}
             if not interrupt.get("enabled"):
                 warnings.append(f"{node_id} has no interruption path.")
@@ -709,8 +584,36 @@ class FlowRepository:
         self.ensure_default_flow()
 
     def ensure_default_flow(self) -> None:
-        row = self.db.one("SELECT id FROM flow_definitions LIMIT 1")
+        row = self.db.one(
+            """
+            SELECT id, graph_json
+            FROM flow_definitions
+            WHERE id = 'default-voice-flow'
+            """
+        )
         if row:
+            graph = loads(row["graph_json"], {})
+            metadata = graph.get("metadata") if isinstance(graph, dict) else {}
+            if isinstance(metadata, dict) and metadata.get("schemaVersion") == 3:
+                return
+            graph = default_flow_graph()
+            validation = validate_flow_graph(graph)
+            self.db.execute(
+                """
+                UPDATE flow_definitions
+                SET name = ?, description = ?, status = 'published', version = version + 1,
+                    graph_json = ?, published_graph_json = ?, validation_json = ?,
+                    updated_at = CURRENT_TIMESTAMP, published_at = CURRENT_TIMESTAMP
+                WHERE id = 'default-voice-flow'
+                """,
+                (
+                    "Codex Orchestrator Agent Flow",
+                    "Agentic live-call workflow for collecting a coding task and running Codex Orchestrator.",
+                    dumps(graph),
+                    dumps(graph),
+                    dumps(validation),
+                ),
+            )
             return
         graph = default_flow_graph()
         validation = validate_flow_graph(graph)
@@ -725,8 +628,8 @@ class FlowRepository:
             """,
             (
                 flow_id,
-                "Realtime Voice Agent Flow",
-                "Always-on voice flow with interruption routing and Codex Orchestrator handoff.",
+                "Codex Orchestrator Agent Flow",
+                "Agentic live-call workflow for collecting a coding task and running Codex Orchestrator.",
                 dumps(graph),
                 dumps(graph),
                 dumps(validation),
@@ -923,20 +826,25 @@ class FlowRuntime:
                 return await self._enter_until_waiting(run_id, graph, interrupt_target, text)
 
         node_type = _node_type(active_node)
-        if node_type == "listen":
+        if node_type == "collect":
             self._merge_slots(run_id, self._extract_slots(text, active_node))
-            target = _first_outgoing_target(graph, str(active_node["id"]))
+            target = self._route_collect(graph, str(active_node["id"]), text)
             if target:
                 return await self._enter_until_waiting(run_id, graph, target, text)
             return self._response(self._get_run(run_id), flow, active_node, [], None)
-        if node_type == "intent_router":
+        if node_type in {"confirm", "wait"}:
             target = self._route_by_keywords(graph, str(active_node["id"]), text)
             return await self._enter_until_waiting(run_id, graph, target, text)
-        if node_type == "guardrail":
+        if node_type == "condition":
+            target = self._route_condition(graph, str(active_node["id"]), text, loads(run["slots_json"], {}))
+            return await self._enter_until_waiting(run_id, graph, target, text)
+        if node_type == "dialogue":
+            self._merge_slots(run_id, self._extract_slots(text, active_node))
             target = self._route_by_keywords(graph, str(active_node["id"]), text)
             return await self._enter_until_waiting(run_id, graph, target, text)
-        if node_type in {"llm_step", "fallback"}:
-            return await self._enter_until_waiting(run_id, graph, str(active_node["id"]), text)
+        if node_type == "fallback":
+            target = self._route_by_keywords(graph, str(active_node["id"]), text)
+            return await self._enter_until_waiting(run_id, graph, target, text)
 
         target = _first_outgoing_target(graph, str(active_node["id"])) or str(active_node["id"])
         return await self._enter_until_waiting(run_id, graph, target, text)
@@ -978,61 +886,51 @@ class FlowRuntime:
                 current_id = target
                 continue
 
-            if node_type == "say":
-                text = str(data.get("prompt") or "")
+            if node_type == "dialogue":
+                text = self._render_script(data, self._get_slots(run_id))
                 messages.append(self._assistant_message(current_id, text))
                 self._append_transcript(run_id, "assistant", text)
                 target = _first_outgoing_target(graph, current_id)
-                if not target:
+                if not target or not data.get("autoAdvance"):
                     break
                 user_text = None
                 current_id = target
                 continue
 
-            if node_type == "listen":
+            if node_type == "collect":
                 if user_text:
                     self._merge_slots(run_id, self._extract_slots(user_text, node))
-                    target = _first_outgoing_target(graph, current_id)
+                    target = self._route_collect(graph, current_id, user_text)
                     if target:
                         current_id = target
                         continue
                 else:
-                    text = str(data.get("prompt") or "What should I listen for?")
+                    text = self._render_script(data, self._get_slots(run_id))
                     messages.append(self._assistant_message(current_id, text))
                     self._append_transcript(run_id, "assistant", text)
                 break
 
-            if node_type == "intent_router":
-                target = self._route_by_keywords(graph, current_id, user_text or "")
-                current_id = target
-                continue
-
-            if node_type == "guardrail":
-                text = str(data.get("prompt") or "Should I proceed?")
+            if node_type == "confirm":
+                text = self._render_script(data, self._get_slots(run_id))
                 messages.append(self._assistant_message(current_id, text))
                 self._append_transcript(run_id, "assistant", text)
                 break
 
-            if node_type == "llm_step":
-                text, latency_ms = await self._generate_node_response(node, user_text or "")
-                messages.append(self._assistant_message(current_id, text, latency_ms))
-                self._append_transcript(run_id, "assistant", text, latency_ms=latency_ms)
-                target = _first_outgoing_target(graph, current_id)
-                if not target:
-                    break
+            if node_type == "condition":
+                target = self._route_condition(graph, current_id, user_text or "", self._get_slots(run_id))
                 current_id = target
                 continue
 
-            if node_type == "codex_task":
-                text = str(data.get("prompt") or "I queued the Codex Orchestrator task.")
-                messages.append(self._assistant_message(current_id, text, 0))
+            if node_type == "api":
+                text = self._render_script(data, self._get_slots(run_id)) or "Calling the configured API."
+                messages.append(self._assistant_message(current_id, text))
                 self._append_transcript(run_id, "assistant", text)
                 self._record_event(
                     run_id,
                     flow.id,
                     current_id,
-                    "codex_orchestrator_job_created",
-                    payload={"simulated": True, "codex": data.get("codex") or {}},
+                    "api_call_created",
+                    payload={"simulated": True, "endpoint": data.get("endpoint")},
                 )
                 target = _first_outgoing_target(graph, current_id)
                 if not target:
@@ -1040,21 +938,54 @@ class FlowRuntime:
                 current_id = target
                 continue
 
-            if node_type == "handoff":
-                text = str(data.get("prompt") or "A human agent can help.")
+            if node_type == "codex_task":
+                text = self._render_script(data, self._get_slots(run_id)) or (
+                    "I queued the Codex Orchestrator task."
+                )
+                messages.append(self._assistant_message(current_id, text, 0))
+                self._append_transcript(run_id, "assistant", text)
+                self._record_event(
+                    run_id,
+                    flow.id,
+                    current_id,
+                    "codex_orchestrator_job_created",
+                    payload={
+                        "simulated": True,
+                        "integration": data.get("integration") or data.get("codex") or {},
+                        "slots": self._get_slots(run_id),
+                    },
+                )
+                target = _first_outgoing_target(graph, current_id)
+                if not target:
+                    break
+                current_id = target
+                continue
+
+            if node_type == "wait":
+                text = self._render_script(data, self._get_slots(run_id)) or "Waiting for the running process."
+                messages.append(self._assistant_message(current_id, text))
+                self._append_transcript(run_id, "assistant", text)
+                break
+
+            if node_type in {"handoff", "transfer_call"}:
+                text = self._render_script(data, self._get_slots(run_id)) or "A human agent can help."
                 messages.append(self._assistant_message(current_id, text))
                 self._append_transcript(run_id, "assistant", text)
                 self._record_event(run_id, flow.id, current_id, "handoff_requested")
+                target = _first_outgoing_target(graph, current_id)
+                if target:
+                    current_id = target
+                    continue
                 break
 
             if node_type == "end":
-                text = str(data.get("prompt") or "Done.")
+                text = self._render_script(data, self._get_slots(run_id)) or "Done."
                 messages.append(self._assistant_message(current_id, text))
                 self._append_transcript(run_id, "assistant", text)
                 self._mark_completed(run_id)
                 break
 
-            text = str(data.get("prompt") or "I need one more detail.")
+            text = self._render_script(data, self._get_slots(run_id)) or "I need one more detail."
             messages.append(self._assistant_message(current_id, text))
             self._append_transcript(run_id, "assistant", text)
             break
@@ -1119,6 +1050,93 @@ class FlowRuntime:
                 return str(edge.get("target"))
         return str(fallback)
 
+    def _route_collect(self, graph: FlowGraph, node_id: str, text: str) -> str:
+        edges = _outgoing_edges(graph, node_id)
+        if not edges:
+            return node_id
+        normalized = text.casefold()
+        needs_clarification = (
+            len(re.findall(r"\w+", text)) < 7
+            or any(
+                phrase in normalized
+                for phrase in [
+                    "not sure",
+                    "maybe",
+                    "something",
+                    "whatever",
+                    "you decide",
+                    "clarify",
+                    "don't know",
+                    "do not know",
+                ]
+            )
+        )
+        preferred_label = "Needs clarification" if needs_clarification else "Task details collected"
+        for edge in edges:
+            if str(edge.get("label") or "").casefold() == preferred_label.casefold():
+                return str(edge.get("target"))
+        return str(edges[min(1, len(edges) - 1)].get("target") if needs_clarification else edges[0].get("target"))
+
+    def _route_condition(
+        self,
+        graph: FlowGraph,
+        node_id: str,
+        text: str,
+        slots: dict[str, Any],
+    ) -> str:
+        edges = _outgoing_edges(graph, node_id)
+        if not edges:
+            return node_id
+
+        normalized = " ".join(
+            [
+                text,
+                str(slots.get("task_description") or ""),
+                str(slots.get("repo_scope") or ""),
+                str(slots.get("success_criteria") or ""),
+            ]
+        ).casefold()
+        risky_terms = [
+            "deploy",
+            "production",
+            "prod",
+            "delete",
+            "drop table",
+            "rm -rf",
+            "secret",
+            "credential",
+            "api key",
+            "commit",
+            "push",
+            "merge",
+            "payment",
+            "billing",
+        ]
+        preferred_label = "Needs approval" if any(term in normalized for term in risky_terms) else "Safe to run"
+        for edge in edges:
+            if str(edge.get("label") or "").casefold() == preferred_label.casefold():
+                return str(edge.get("target"))
+        return str(edges[0].get("target"))
+
+    def _get_slots(self, run_id: str) -> dict[str, Any]:
+        return loads(self._get_run(run_id)["slots_json"], {})
+
+    def _render_script(self, data: dict[str, Any], slots: dict[str, Any]) -> str:
+        template = str(data.get("script") or data.get("prompt") or "").strip()
+        if not template:
+            return ""
+        rendered = template
+        for key, value in slots.items():
+            if value is None:
+                continue
+            value_text = str(value)
+            rendered = rendered.replace(f"{{{key}}}", value_text)
+            rendered = rendered.replace(f"${{{key}}}", value_text)
+            rendered = rendered.replace(key.replace("_", " ").title(), value_text)
+        if "Task Description" in rendered and slots.get("task_description"):
+            rendered = rendered.replace("Task Description", str(slots["task_description"]))
+        return rendered
+
     def _interrupt_target(self, node: dict[str, Any]) -> str | None:
         data = _node_data(node)
         interrupt = data.get("interrupt") if isinstance(data.get("interrupt"), dict) else {}
@@ -1142,6 +1160,12 @@ class FlowRuntime:
     def _extract_slots(self, text: str, node: dict[str, Any]) -> dict[str, Any]:
         data = _node_data(node)
         slots: dict[str, Any] = {}
+        fields = data.get("fields") if isinstance(data.get("fields"), list) else []
+        field_names = {
+            str(field.get("name"))
+            for field in fields
+            if isinstance(field, dict) and field.get("name")
+        }
         listen = data.get("listen") if isinstance(data.get("listen"), dict) else {}
         configured_slots = listen.get("slots") if isinstance(listen.get("slots"), list) else []
         slot_names = {
@@ -1149,6 +1173,7 @@ class FlowRuntime:
             for slot in configured_slots
             if isinstance(slot, dict) and slot.get("name")
         }
+        slot_names |= field_names
         email_match = re.search(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", text)
         if email_match and ("account_email" in slot_names or "account" in text.casefold()):
             slots["account_email"] = email_match.group(0)
@@ -1159,7 +1184,21 @@ class FlowRuntime:
             and ("order_id" in slot_names or "order" in text.casefold())
         ):
             slots["order_id"] = order_match.group(1).upper()
-        if _node_type(node) == "listen":
+        if _node_type(node) in {"collect", "dialogue", "listen"}:
+            if "task_description" in slot_names and text:
+                slots["task_description"] = text
+            if "repo_scope" in slot_names:
+                repo_match = re.search(
+                    r"\b(?:repo|repository|project|file|folder|path)\s+([^\n,.]+)",
+                    text,
+                    re.I,
+                )
+                if repo_match:
+                    slots["repo_scope"] = repo_match.group(1).strip()
+            if "success_criteria" in slot_names and any(
+                phrase in text.casefold() for phrase in ["success", "done when", "should pass", "verified"]
+            ):
+                slots["success_criteria"] = text
             for slot in configured_slots:
                 if isinstance(slot, dict) and slot.get("type") == "text" and slot.get("required"):
                     slots[str(slot.get("name"))] = text

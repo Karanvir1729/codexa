@@ -19,6 +19,10 @@ class RemoteWhisperOptions:
     no_speech_prob: float | None
     sample_rate: int
     timeout_seconds: float
+    beam_size: int
+    best_of: int
+    initial_prompt: str | None
+    hotwords: str | None
 
 
 class RemoteWhisperSTTService(SegmentedSTTService):
@@ -33,6 +37,10 @@ class RemoteWhisperSTTService(SegmentedSTTService):
         no_speech_prob: float | None,
         sample_rate: int,
         timeout_seconds: float,
+        beam_size: int,
+        best_of: int,
+        initial_prompt: str | None,
+        hotwords: str | None,
         stt_ttfb_timeout: float,
         ttfs_p99_latency: float,
     ) -> None:
@@ -43,6 +51,10 @@ class RemoteWhisperSTTService(SegmentedSTTService):
             no_speech_prob=no_speech_prob,
             sample_rate=sample_rate,
             timeout_seconds=timeout_seconds,
+            beam_size=beam_size,
+            best_of=best_of,
+            initial_prompt=initial_prompt,
+            hotwords=hotwords,
         )
         super().__init__(
             sample_rate=sample_rate,
@@ -93,6 +105,12 @@ class RemoteWhisperSTTService(SegmentedSTTService):
             params["language"] = self.options.language
         if self.options.no_speech_prob is not None:
             params["no_speech_prob"] = self.options.no_speech_prob
+        params["beam_size"] = self.options.beam_size
+        params["best_of"] = self.options.best_of
+        if self.options.initial_prompt:
+            params["initial_prompt"] = self.options.initial_prompt
+        if self.options.hotwords:
+            params["hotwords"] = self.options.hotwords
 
         timeout = httpx.Timeout(self.options.timeout_seconds)
         async with httpx.AsyncClient(timeout=timeout) as client:

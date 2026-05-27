@@ -1058,3 +1058,779 @@ pre {
     max-width: 100%;
   }
 }
+
+/* Flow Studio v2: behavior graph canvas */
+.flowStudio {
+  display: grid;
+  grid-template-rows: auto minmax(640px, calc(100vh - 320px)) auto;
+  gap: 16px;
+  min-height: calc(100vh - 56px);
+}
+
+.flowTopbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.flowTopbar h1 {
+  font-size: clamp(26px, 3.6vw, 44px);
+  line-height: 1;
+}
+
+.flowSubtitle {
+  max-width: 920px;
+  margin-top: 10px;
+  color: #9aa7b1;
+  line-height: 1.45;
+}
+
+.flowActions,
+.flowSimControls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.flowActions button,
+.flowTestBench button,
+.canvasToolbar button,
+.miniIconButton {
+  min-height: 38px;
+  border-radius: 8px;
+  background: #d8fb6f;
+  color: #10140c;
+  padding: 0 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.flowWorkspace {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) 340px;
+  gap: 12px;
+}
+
+.flowPalette,
+.flowInspector,
+.flowTestBench {
+  min-width: 0;
+  border: 1px solid #202830;
+  border-radius: 8px;
+  background: #0e1318;
+  overflow: hidden;
+}
+
+.flowPalette {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto minmax(0, 1fr);
+}
+
+.studioPanelHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  min-height: 56px;
+  padding: 14px;
+  border-bottom: 1px solid #202830;
+}
+
+.studioPanelHead.compact {
+  border-top: 1px solid #202830;
+}
+
+.studioPanelHead strong,
+.studioPanelHead span {
+  display: block;
+}
+
+.studioPanelHead span {
+  overflow: hidden;
+  color: #8d9aa5;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.miniIconButton {
+  width: 34px;
+  min-height: 34px;
+  padding: 0;
+}
+
+.traceList {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  overflow: auto;
+  padding: 12px;
+}
+
+.traceTurn {
+  border-left: 2px solid #2f8cff;
+  background: #11171d;
+  padding: 8px 10px;
+}
+
+.traceTurn.user {
+  border-left-color: #d8fb6f;
+}
+
+.traceTurn span {
+  display: block;
+  margin-bottom: 4px;
+  color: #8996a1;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.traceTurn p {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #dce6ed;
+  font-size: 12px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.flowCanvas {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid #202830;
+  border-radius: 8px;
+  cursor: grab;
+  background-color: #090d11;
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(120, 136, 150, 0.34) 1px, transparent 0),
+    linear-gradient(180deg, rgba(47, 140, 255, 0.05), transparent 35%);
+  background-size: 24px 24px, auto;
+}
+
+.flowCanvas.isPanning {
+  cursor: grabbing;
+}
+
+.flowWorld {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+
+.flowEdges,
+.flowNodesLayer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.flowEdges {
+  pointer-events: none;
+}
+
+.flowEdges path {
+  fill: none;
+  stroke: #2f8cff;
+  stroke-linecap: round;
+  stroke-width: 3;
+  opacity: 0.84;
+}
+
+.flowEdges .activeEdge path {
+  stroke: #d8fb6f;
+  filter: drop-shadow(0 0 10px rgba(216, 251, 111, 0.34));
+}
+
+.flowEdges text {
+  fill: #91a0aa;
+  paint-order: stroke;
+  stroke: #090d11;
+  stroke-width: 5;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.flowNodesLayer {
+  pointer-events: none;
+}
+
+.flowNodeCard {
+  position: absolute;
+  width: 252px;
+  min-height: 154px;
+  border: 2px solid #2f8cff;
+  border-radius: 8px;
+  background: #121212;
+  color: #f1f5f8;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.34);
+  pointer-events: auto;
+  user-select: none;
+}
+
+.flowNodeCard.logic,
+.flowNodeCard.condition {
+  border-color: #f5b400;
+}
+
+.flowNodeCard.action,
+.flowNodeCard.codex_task,
+.flowNodeCard.api {
+  border-color: #49d36d;
+}
+
+.flowNodeCard.repair,
+.flowNodeCard.fallback {
+  border-color: #ff4d65;
+}
+
+.flowNodeCard.pre-call,
+.flowNodeCard.start {
+  border-color: #9aa7b1;
+  background: #17191c;
+}
+
+.flowNodeCard.end {
+  border-color: #8a939b;
+  background: #17191c;
+}
+
+.flowNodeCard.selected {
+  outline: 1px solid rgba(47, 140, 255, 0.44);
+  outline-offset: 4px;
+}
+
+.flowNodeCard.activeRuntimeNode {
+  border-color: #d8fb6f;
+  box-shadow: 0 0 0 3px rgba(216, 251, 111, 0.16), 0 22px 70px rgba(0, 0, 0, 0.42);
+}
+
+.nodeInputHandle {
+  position: absolute;
+  left: -14px;
+  top: 58px;
+  width: 0;
+  height: 0;
+  border-top: 10px solid transparent;
+  border-bottom: 10px solid transparent;
+  border-left: 0;
+  border-right: 15px solid #8b95a0;
+}
+
+.nodeIcon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin: 18px auto 10px;
+  border-radius: 999px;
+  background: #2f8cff;
+  color: white;
+}
+
+.flowNodeCard.logic .nodeIcon,
+.flowNodeCard.condition .nodeIcon {
+  background: #f5b400;
+  color: #151005;
+}
+
+.flowNodeCard.action .nodeIcon,
+.flowNodeCard.codex_task .nodeIcon,
+.flowNodeCard.api .nodeIcon {
+  background: #49d36d;
+  color: #07120a;
+}
+
+.flowNodeCard.repair .nodeIcon,
+.flowNodeCard.fallback .nodeIcon {
+  background: #ff4d65;
+}
+
+.nodeMain {
+  display: grid;
+  justify-items: center;
+  min-height: 42px;
+  padding: 0 14px 12px;
+  text-align: center;
+}
+
+.nodeMain strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.nodeMain span {
+  margin-top: 4px;
+  color: #8d9aa5;
+  font-size: 11px;
+}
+
+.nodeRouteRows {
+  display: grid;
+  border-top: 1px solid #2a2f35;
+}
+
+.nodeRouteRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 31px;
+  border-bottom: 1px solid #2a2f35;
+  background: #232323;
+  padding: 0 34px 0 10px;
+}
+
+.nodeRouteRow:last-child {
+  border-bottom: 0;
+}
+
+.nodeRouteRow span {
+  overflow: hidden;
+  color: #e8edf1;
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nodeRouteRow i {
+  position: absolute;
+  right: -9px;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #2f8cff;
+}
+
+.selectedPreview {
+  position: absolute;
+  z-index: 5;
+  width: 360px;
+  border: 1px solid #2a3037;
+  border-radius: 8px;
+  background: #111417;
+  box-shadow: 0 18px 70px rgba(0, 0, 0, 0.45);
+  padding: 10px;
+}
+
+.selectedPreview h2 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.selectedPreview > div {
+  border: 1px solid #293139;
+  border-radius: 8px;
+  background: #14181c;
+  padding: 10px;
+}
+
+.selectedPreview span {
+  display: block;
+  margin-bottom: 6px;
+  color: #a1adb7;
+  font-size: 12px;
+}
+
+.selectedPreview p {
+  color: #eff4f7;
+  font-size: 12px;
+  line-height: 1.42;
+}
+
+.selectedPreview footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.selectedPreview small {
+  border-radius: 999px;
+  background: #202832;
+  color: #c8d2da;
+  padding: 4px 8px;
+}
+
+.canvasToolbar {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  translate: -50% 0;
+}
+
+.canvasToolbar button {
+  min-width: 42px;
+  background: #202327;
+  color: #f2f6f9;
+}
+
+.canvasToolbar button:first-child {
+  min-width: 118px;
+}
+
+.canvasToolbar span {
+  min-width: 48px;
+  border-radius: 8px;
+  background: #151a20;
+  color: #aab7c0;
+  padding: 10px 8px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.nodePicker {
+  position: absolute;
+  left: 50%;
+  bottom: 72px;
+  z-index: 12;
+  width: min(560px, calc(100% - 32px));
+  max-height: min(560px, calc(100% - 100px));
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  border: 1px solid #2b333b;
+  border-radius: 8px;
+  background: #111417;
+  box-shadow: 0 24px 90px rgba(0, 0, 0, 0.52);
+  translate: -50% 0;
+}
+
+.nodePickerSearch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 0 12px;
+  border-bottom: 1px solid #252d34;
+}
+
+.nodePickerSearch input {
+  width: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: #f2f6f9;
+}
+
+.nodePickerSearch button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: #20262d;
+  color: #d9e2e8;
+}
+
+.nodePickerTabs {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1px;
+  padding: 8px;
+  border-bottom: 1px solid #252d34;
+}
+
+.nodePickerTabs button {
+  min-height: 38px;
+  border-radius: 8px;
+  background: transparent;
+  color: #a4b0ba;
+}
+
+.nodePickerTabs button.active {
+  background: #292b2e;
+  color: #f6f8fa;
+}
+
+.nodePickerList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  overflow: auto;
+  padding: 12px;
+}
+
+.nodePickerList button {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 62px;
+  border: 1px solid #2a3037;
+  border-radius: 8px;
+  background: #15191e;
+  color: #edf3f6;
+  padding: 10px;
+  text-align: left;
+}
+
+.nodePickerList span,
+.nodePickerList strong,
+.nodePickerList small {
+  display: block;
+  min-width: 0;
+}
+
+.nodePickerList small {
+  overflow: hidden;
+  margin-top: 4px;
+  color: #8f9da7;
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flowInspector {
+  overflow: auto;
+}
+
+.emptyInspector {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  padding: 24px;
+  color: #91a0aa;
+  text-align: center;
+}
+
+.inspectorScroll {
+  display: grid;
+}
+
+.inspectorField {
+  display: grid;
+  gap: 7px;
+  padding: 12px 14px;
+}
+
+.inspectorField span,
+.inspectorGroup h3 {
+  color: #91a0aa;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.inspectorField input,
+.inspectorField select,
+.inspectorField textarea,
+.inspectorGroup textarea,
+.flowSimControls > input {
+  width: 100%;
+  border: 1px solid #26313a;
+  border-radius: 8px;
+  outline: none;
+  background: #0a0e12;
+  color: #f3f6f8;
+  padding: 10px 11px;
+}
+
+.inspectorField textarea,
+.inspectorGroup textarea {
+  resize: vertical;
+  min-height: 70px;
+  font-family: inherit;
+  line-height: 1.45;
+}
+
+.inspectorField input:focus,
+.inspectorField select:focus,
+.inspectorField textarea:focus,
+.inspectorGroup textarea:focus,
+.flowSimControls input:focus {
+  border-color: #d8fb6f;
+}
+
+.inspectorGroup {
+  display: grid;
+  gap: 2px;
+  padding: 12px 0;
+  border-top: 1px solid #202830;
+}
+
+.inspectorGroup h3 {
+  margin: 0;
+  padding: 0 14px 6px;
+}
+
+.inlineCheck {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 14px;
+  color: #dbe7ee;
+  font-size: 13px;
+}
+
+.edgeEditor {
+  display: grid;
+  gap: 8px;
+  padding: 0 14px 12px;
+}
+
+.edgeEditorRow {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) 42px;
+  gap: 6px;
+}
+
+.edgeEditorRow input,
+.edgeEditorRow select {
+  min-width: 0;
+  border: 1px solid #26313a;
+  border-radius: 8px;
+  background: #0a0e12;
+  color: #f3f6f8;
+  padding: 8px;
+}
+
+.edgeEditorRow button {
+  min-height: 36px;
+  border-radius: 8px;
+  background: #172027;
+  color: #dbe7ee;
+  padding: 0 10px;
+}
+
+.validationList {
+  display: grid;
+  gap: 8px;
+  overflow: auto;
+  padding: 14px;
+}
+
+.validationOk,
+.validationBad {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #d8fb6f;
+}
+
+.validationBad {
+  color: #ffb0b0;
+}
+
+.validationError,
+.validationWarning {
+  border-radius: 8px;
+  margin: 0;
+  padding: 9px 10px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.validationError {
+  background: rgba(255, 115, 115, 0.12);
+  color: #ffb0b0;
+}
+
+.validationWarning {
+  background: rgba(251, 191, 36, 0.12);
+  color: #f9d97a;
+}
+
+.flowTestBench {
+  display: grid;
+  grid-template-rows: auto minmax(130px, 1fr) auto;
+}
+
+.flowTranscript {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 14px;
+}
+
+.flowTurn {
+  flex: 0 0 min(360px, 82vw);
+}
+
+.flowTurn span {
+  display: block;
+  margin-bottom: 5px;
+  color: #91a0aa;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.flowTurn p {
+  border-radius: 8px;
+  background: #172027;
+  color: #dbe7ee;
+  padding: 11px 12px;
+  line-height: 1.4;
+}
+
+.flowTurn.assistant p {
+  background: #d8fb6f;
+  color: #11160c;
+}
+
+.flowTurn small {
+  display: block;
+  margin-top: 5px;
+  color: #91a0aa;
+}
+
+.flowSimControls {
+  border-top: 1px solid #202830;
+  padding: 14px;
+}
+
+.flowSimControls label {
+  flex: 0 0 auto;
+  color: #dbe7ee;
+  font-size: 13px;
+}
+
+.flowSimControls > input {
+  min-height: 40px;
+}
+
+@media (max-width: 1180px) {
+  .flowWorkspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .flowPalette,
+  .flowInspector {
+    min-height: 260px;
+  }
+
+  .flowCanvas {
+    min-height: 680px;
+  }
+}
+
+@media (max-width: 720px) {
+  .flowTopbar,
+  .flowActions,
+  .flowSimControls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .nodePickerTabs {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .nodePickerList {
+    grid-template-columns: 1fr;
+  }
+}

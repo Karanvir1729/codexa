@@ -341,7 +341,8 @@ def test_local_voice_system_instruction_respects_no_think(tmp_path: Path):
     instruction = build_system_instruction(settings, repo)
 
     assert instruction.startswith("/no_think\n")
-    assert "under 35 words" in instruction
+    assert "under 18 words" in instruction
+    assert "runtime telemetry" in instruction
 
 
 def test_default_flow_bootstraps_with_interruptible_codex_path(tmp_path: Path):
@@ -354,7 +355,17 @@ def test_default_flow_bootstraps_with_interruptible_codex_path(tmp_path: Path):
 
     assert flow.status == "published"
     assert validation["ok"] is True
-    assert {"start", "listen", "intent_router", "codex_task", "guardrail", "fallback"} <= node_types
+    assert {
+        "start",
+        "dialogue",
+        "collect",
+        "confirm",
+        "condition",
+        "codex_task",
+        "wait",
+        "fallback",
+        "transfer_call",
+    } <= node_types
 
 
 @pytest.mark.asyncio
@@ -377,8 +388,13 @@ async def test_flow_runtime_routes_code_request_through_codex_guardrail(tmp_path
         message="yes proceed",
     )
 
-    assert started["messages"][0]["text"] == "I'm here. Tell me what you want to do."
-    assert routed["active_node_id"] == "codex_confirm"
+    assert started["active_node_id"] == "collect_task_details"
+    assert any("Codex Orchestrator" in message["text"] for message in started["messages"])
+    assert routed["active_node_id"] == "confirm_task"
+    assert routed["slots"]["task_description"] == (
+        "I need Codex to inspect this repo and fix the failing tests."
+    )
+    assert approved["active_node_id"] == "monitor_progress"
     assert any("Codex Orchestrator" in message["text"] for message in approved["messages"])
 
 
@@ -398,8 +414,8 @@ async def test_flow_runtime_interrupt_routes_to_cancel(tmp_path: Path):
         force_interrupt=True,
     )
 
-    assert interrupted["active_node_id"] == "understand_request"
-    assert any("Stopped." in message["text"] for message in interrupted["messages"])
+    assert interrupted["active_node_id"] == "clarify_requirements"
+    assert any("make sure I get this right" in message["text"] for message in interrupted["messages"])
 
 
 @pytest.mark.asyncio

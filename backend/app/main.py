@@ -522,6 +522,25 @@ async def latency_summary(limit: int = 100, conversation_id: str | None = None) 
             "max_ms": max(values) if values else None,
         }
 
+    bottleneck_counts: dict[str, int] = {}
+    for timings in timing_rows:
+        candidates = {
+            "stt": timings.get("stt_after_speech_end_ms"),
+            "turn_finalization": timings.get("turn_finalization_ms"),
+            "llm_ttfb": timings.get("llm_ttfb_ms"),
+            "llm_total": timings.get("llm_total_ms"),
+            "tts_ttfb": timings.get("tts_ttfb_from_first_text_ms"),
+            "tts_total": timings.get("tts_total_ms"),
+        }
+        numeric = {
+            name: float(value)
+            for name, value in candidates.items()
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        }
+        if numeric:
+            bottleneck = max(numeric, key=numeric.get)
+            bottleneck_counts[bottleneck] = bottleneck_counts.get(bottleneck, 0) + 1
+
     target = settings.latency_target_ms
     first_audio_values = [
         timings.get("speech_end_to_first_audio_ms")
@@ -542,6 +561,12 @@ async def latency_summary(limit: int = 100, conversation_id: str | None = None) 
             "voxtral_tts_model": settings.voxtral_tts_model
             if settings.local_tts_provider == "voxtral"
             else None,
+            "voxtral_tts_response_format": settings.voxtral_tts_response_format
+            if settings.local_tts_provider == "voxtral"
+            else None,
+            "voxtral_tts_stream": settings.voxtral_tts_stream
+            if settings.local_tts_provider == "voxtral"
+            else None,
             "llm_provider": settings.llm_provider,
             "llm_model": settings.active_model,
             "vertex_nim_region": settings.vertex_nim_region
@@ -552,6 +577,7 @@ async def latency_summary(limit: int = 100, conversation_id: str | None = None) 
             else None,
         },
         "providers_latest": provider_rows[0] if provider_rows else {},
+        "bottleneck_counts": bottleneck_counts,
         "metrics": metrics,
     }
 
