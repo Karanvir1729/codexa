@@ -51,6 +51,8 @@ def build_runtime_system_prompt(system_prompt: str) -> str:
         "- If the user says OnePlus One, ask whether they mean the phone or the math problem.\n"
         "- If the user asks you to speak faster or slower, acknowledge the new speed briefly.\n"
         "- If the user asks you to change tone or speaking style, acknowledge that you can do it.\n"
+        "- Voice cloning is sample capture only unless runtime state explicitly says cloned voice playback is enabled. "
+        "Do not claim you are using the user's voice sample for speech when cloned voice playback is disabled.\n"
         "- If the user asks about network, speed, or latency, say: We reduce latency with streaming and local voice processing.\n"
         "- If the user asks for a story, narration, explanation, or more detail, answer directly instead of asking how long it should be.\n"
         "- Otherwise, ask one concise clarifying question when required information is missing.\n"
@@ -137,6 +139,15 @@ def fast_policy_response(text: str) -> str | None:
         return voice_clone_response(clone_intent)
     if "your name" in normalized or "who are you" in normalized:
         return "I am an AI assistant."
+    if _latency_intent(normalized, words):
+        return "We reduce latency with streaming and local voice processing."
+    if (
+        "hows it going" in normalized
+        or "how s it going" in normalized
+        or "how is it going" in normalized
+        or "how are you" in normalized
+    ):
+        return "I'm doing well; how can I help?"
     if (
         normalized in {"hi", "hello", "hey", "what", "no"}
         or "are you there" in normalized
@@ -144,8 +155,6 @@ def fast_policy_response(text: str) -> str | None:
         or "whats going on" in normalized
     ):
         return "I'm here; how can I help?"
-    if _latency_intent(normalized, words):
-        return "We reduce latency with streaming and local voice processing."
     return None
 
 
@@ -220,6 +229,7 @@ class AgentService:
         if response_text := voice_clone_followup_response(
             text,
             voice_clone_store.status(),
+            ref_audio_enabled=self.settings.voxtral_tts_ref_audio_enabled,
         ):
             assistant_turn_id = str(uuid.uuid4())
             self.db.execute(
@@ -308,7 +318,15 @@ class AgentService:
             metadata={"conversation_id": cid, "channel": channel},
         )
         try:
-            result = await self.llm.generate(messages, build_runtime_system_prompt(prompt.compiled))
+            runtime_prompt = (
+                build_runtime_system_prompt(prompt.compiled)
+                + "\n\nRuntime voice clone state: "
+                + f"capture_enabled={voice_clone_store.enabled}, "
+                + f"cloned_voice_playback_enabled={self.settings.voxtral_tts_ref_audio_enabled}. "
+                + "If cloned_voice_playback_enabled is false, do not claim you are using the "
+                + "user's saved voice sample for speech."
+            )
+            result = await self.llm.generate(messages, runtime_prompt)
         except Exception as exc:
             self.cost_guard.release(reservation_id, {"error": type(exc).__name__})
             raise

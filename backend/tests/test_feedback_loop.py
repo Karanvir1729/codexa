@@ -102,6 +102,12 @@ async def test_voice_clone_followup_uses_fast_policy_branch(tmp_path: Path):
     assert response["provider"] == "policy-rule"
     assert response["message"] == "Yes. Keep talking naturally for a few more clear sentences."
 
+    response = await agent.respond("Can you use that voice sample to talk to me?", channel="test")
+
+    assert response["provider"] == "policy-rule"
+    assert "can't use them for live cloned speech yet" in response["message"]
+    assert "using your voice sample" not in response["message"].casefold()
+
 
 def test_cost_guard_blocks_when_local_cap_would_be_exceeded(tmp_path: Path):
     settings = Settings(
@@ -195,11 +201,13 @@ def test_runtime_prompt_adds_conversational_voice_contract():
     assert "human agent" not in prompt
     assert "order ID" not in prompt
     assert "account email" not in prompt
+    assert "Do not claim you are using the user's voice sample" in prompt
 
 
 def test_fast_policy_response_handles_name_without_customer_service_hijacks():
     assert fast_policy_response("What's your name?") == "I am an AI assistant."
     assert fast_policy_response("Hello? Are you there?") == "I'm here; how can I help?"
+    assert fast_policy_response("Hey, how's it going?") == "I'm doing well; how can I help?"
     assert fast_policy_response("I need help with my account.") is None
     assert fast_policy_response("Can I talk to a human agent?") is None
 
@@ -274,6 +282,18 @@ def test_voice_clone_followups_are_fast_when_enabled():
     )
     assert voice_clone_followup_response("Hallo?", status) == (
         "I'm here. Voice cloning is still on; keep talking naturally."
+    )
+    assert voice_clone_followup_response("Can you use that voice sample?", status) == (
+        "I can save the samples, but this TTS backend can't use them for live cloned speech yet. "
+        "I'll keep using the current voice."
+    )
+    assert voice_clone_followup_response(
+        "Can you use that voice sample?",
+        status,
+        ref_audio_enabled=True,
+    ) == "I'll use the saved voice sample when speaking."
+    assert voice_clone_followup_response("That's it.", status) == (
+        "Got it. I've saved the samples so far."
     )
     assert voice_clone_followup_response("Do you need any more data?", {"enabled": False}) is None
 

@@ -72,13 +72,44 @@ def voice_clone_response(intent: VoiceCloneIntent) -> str:
     return "I deleted the stored voice clone."
 
 
-def voice_clone_followup_response(text: str, status: dict[str, Any]) -> str | None:
+def voice_clone_followup_response(
+    text: str,
+    status: dict[str, Any],
+    *,
+    ref_audio_enabled: bool = False,
+) -> str | None:
     if not status.get("enabled"):
         return None
     normalized = re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
     if not normalized:
         return None
     sample_count = int(status.get("sample_count") or 0)
+    if any(
+        phrase in normalized
+        for phrase in [
+            "use that voice sample",
+            "use the voice sample",
+            "use my voice sample",
+            "use that voice",
+            "use my voice",
+            "talk to me in my voice",
+            "talk in my voice",
+            "speak in my voice",
+            "sound exactly like",
+            "sound like me",
+            "sounds the same",
+            "are you using my voice",
+            "using my voice",
+        ]
+    ):
+        if ref_audio_enabled:
+            return "I'll use the saved voice sample when speaking."
+        return (
+            "I can save the samples, but this TTS backend can't use them for live cloned speech yet. "
+            "I'll keep using the current voice."
+        )
+    if normalized in {"that s it", "thats it", "that is it", "i m done", "im done"}:
+        return "Got it. I've saved the samples so far."
     if (
         normalized in {"hi", "hello", "hey", "hallo"}
         or "are you there" in normalized
@@ -97,8 +128,11 @@ def voice_clone_followup_response(text: str, status: dict[str, Any]) -> str | No
             "how much data",
             "is that enough data",
             "is this enough data",
+            "collect the voice samples",
+            "collect voice samples",
             "i can keep talking",
             "keep talking",
+            "this is how you talk",
             "voice turns out",
             "voice is perfect",
             "voice perfect",

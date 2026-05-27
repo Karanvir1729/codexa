@@ -948,6 +948,7 @@ async def _run_voice_pipeline(
             if clone_followup_text := voice_clone_followup_response(
                 latest_user_text,
                 voice_clone_store.status(),
+                ref_audio_enabled=settings.voxtral_tts_ref_audio_enabled,
             ):
                 emotion_code = (
                     response_emotion_code(latest_user_text, clone_followup_text)
@@ -1032,8 +1033,11 @@ async def _run_voice_pipeline(
                     f"({voice_speed_label(voice_controls.speed)}), "
                     f"emotion={voice_controls.emotion}, "
                     f"user_tone_override={voice_controls.user_tone_override or 'none'}, "
-                    f"voice_clone_enabled={voice_clone_store.enabled}. "
+                    f"voice_clone_enabled={voice_clone_store.enabled}, "
+                    f"voice_clone_ref_audio_enabled={settings.voxtral_tts_ref_audio_enabled}. "
                     "Use this silently. Preserve an explicit user tone until the user changes it. "
+                    "If voice_clone_ref_audio_enabled is false, never claim you are using the user's "
+                    "voice sample for speech; say capture is saved but live cloned playback is unavailable. "
                     "Do not ask again about speed, tone, or voice clone status unless the user changes it."
                 ),
             }
