@@ -156,7 +156,7 @@ class Settings(BaseSettings):
     local_user_turn_stop_timeout: float = Field(default=0.4, ge=0.1)
 
     latency_target_ms: int = Field(default=1200, ge=100)
-    eval_suite_path: str = "backend/evals/customer_intake.yml"
+    eval_suite_path: str = "backend/evals/conversational_voice.yml"
     eval_schedule_seconds: int = Field(default=0, ge=0)
     eval_schedule_apply_feedback: bool = True
 

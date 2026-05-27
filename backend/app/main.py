@@ -44,7 +44,7 @@ class FeedbackRequest(BaseModel):
 
 
 class EvalRunRequest(BaseModel):
-    suite_path: str = "backend/evals/customer_intake.yml"
+    suite_path: str = "backend/evals/conversational_voice.yml"
     apply_feedback: bool = True
 
 

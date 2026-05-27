@@ -176,7 +176,7 @@ async def main() -> int:
     parser.add_argument("--api-key", default=os.getenv("OPENAI_API_KEY") or os.getenv("NVIDIA_API_KEY") or os.getenv("LOCAL_LLM_API_KEY") or "dummy")
     parser.add_argument("--model", default=os.getenv("OPENAI_MODEL") or os.getenv("NVIDIA_MODEL") or os.getenv("LOCAL_LLM_MODEL") or "unknown")
     parser.add_argument("--vertex-endpoint-url", default=os.getenv("VERTEX_NIM_ENDPOINT_URL"))
-    parser.add_argument("--prompt", default="What account email should I use?")
+    parser.add_argument("--prompt", default="Give me a brief latency-test response.")
     parser.add_argument("--trials", type=int, default=5)
     parser.add_argument("--timeout", type=float, default=30)
     args = parser.parse_args()

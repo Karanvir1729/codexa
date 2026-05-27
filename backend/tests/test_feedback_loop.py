@@ -149,24 +149,23 @@ def test_local_voice_merges_adjacent_turns_for_vllm_chat_template():
     ]
 
 
-def test_runtime_prompt_adds_customer_intake_contract():
+def test_runtime_prompt_adds_conversational_voice_contract():
     prompt = build_runtime_system_prompt("Base prompt.")
 
-    assert "email or phone number" in prompt
-    assert "order ID and reason" in prompt
-    assert "human agent can help" in prompt
     assert "PipeCAD's voice assistant" in prompt
     assert "latency" in prompt
     assert "story" in prompt
     assert "one short sentence" not in prompt
+    assert "human agent" not in prompt
+    assert "order ID" not in prompt
+    assert "account email" not in prompt
 
 
-def test_fast_policy_response_handles_name_without_handoff():
+def test_fast_policy_response_handles_name_without_customer_service_hijacks():
     assert fast_policy_response("What's your name?") == "I'm PipeCAD's voice assistant."
     assert fast_policy_response("Hello? Are you there?") == "I'm here; how can I help?"
-    assert fast_policy_response("I need help with my account.") == (
-        "What account email or phone number should I use?"
-    )
+    assert fast_policy_response("I need help with my account.") is None
+    assert fast_policy_response("Can I talk to a human agent?") is None
 
 
 def test_fast_policy_response_handles_voice_speed_and_oneplus_ambiguity():
@@ -185,14 +184,14 @@ def test_fast_policy_does_not_block_long_form_requests():
 
 
 @pytest.mark.asyncio
-async def test_agent_fast_policy_bypasses_bad_handoff_model(tmp_path: Path):
-    class BadHandoffLLM:
+async def test_agent_fast_policy_still_handles_identity_without_llm(tmp_path: Path):
+    class CapturingLLM:
         called = False
 
         async def generate(self, _messages, _system_prompt: str) -> LLMResult:
             self.called = True
             return LLMResult(
-                text="A human agent can help; I can hand you off now.",
+                text="This should not be called.",
                 latency_ms=999,
                 model="bad",
                 provider="mock",
@@ -203,7 +202,7 @@ async def test_agent_fast_policy_bypasses_bad_handoff_model(tmp_path: Path):
             return None
 
     settings = Settings(database_path=str(tmp_path / "agent.sqlite3"), llm_provider="mock")
-    llm = BadHandoffLLM()
+    llm = CapturingLLM()
     agent = AgentService(Database(settings.database_path), settings, llm)
 
     response = await agent.respond("What's your name?", channel="test")
@@ -221,7 +220,7 @@ async def test_agent_uses_compiled_prompt_with_learned_hints(tmp_path: Path):
         async def generate(self, _messages, system_prompt: str) -> LLMResult:
             self.system_prompt = system_prompt
             return LLMResult(
-                text="What account email or phone number should I use?",
+                text="I can help with that.",
                 latency_ms=1,
                 model="capture",
                 provider="mock",
@@ -456,7 +455,7 @@ async def test_flow_runtime_interrupt_routes_to_cancel(tmp_path: Path):
 async def test_eval_suite_records_results(runtime):
     _settings, db, repo, learner, agent = runtime
     runner = EvalRunner(db, agent, learner)
-    suite = Path(os.environ.get("EVAL_SUITE", str(BACKEND_ROOT / "evals/customer_intake.yml")))
+    suite = Path(os.environ.get("EVAL_SUITE", str(BACKEND_ROOT / "evals/conversational_voice.yml")))
 
     result = await runner.run_suite(suite, apply_feedback=True)
 
@@ -472,7 +471,7 @@ async def test_eval_scheduler_run_once_records_status(runtime):
     scheduler = EvalScheduler(
         runner,
         lambda path: Path(path) if Path(path).is_absolute() else BACKEND_ROOT / path,
-        "evals/customer_intake.yml",
+        "evals/conversational_voice.yml",
         interval_seconds=60,
         apply_feedback=True,
     )

@@ -6,31 +6,17 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-DEFAULT_SYSTEM_PROMPT = """You are a fast customer-intake voice agent.
-Prioritize low latency, reliability, and accuracy.
-Do not claim account lookup, cancellation, refund, pricing, policy, medical,
-legal, or financial actions are complete unless a tool result proves it."""
+DEFAULT_SYSTEM_PROMPT = """You are a fast conversational voice AI.
+Prioritize low latency, natural conversation, and accurate listening.
+Answer directly at the length the user asks for. Ask one clarifying question only
+when required information is missing. Do not claim external actions are complete
+unless a tool result proves it. Stay in the conversation as the AI; do not offer
+to pass the user to another person."""
 
 LEGACY_SYSTEM_PROMPTS = {
     """You are a high-reasoning voice agent optimized for phone and web voice use.
 Prioritize low latency, reliability, and accuracy. Speak naturally.
-Ask one clarifying question when required information is missing. Never invent account,
-pricing, policy, medical, legal, or financial facts. If a handoff is needed, say so clearly.
-Use tool and evaluation feedback as operating constraints for future turns.""",
-    """You are a fast customer-intake voice agent.
-Prioritize low latency, reliability, and accuracy. Speak naturally.
-Do not claim account lookup, cancellation, refund, pricing, policy, medical, legal,
-or financial actions are complete unless a tool result proves it.
-Ask exactly one concise clarifying question when required information is missing.
-Use evaluation feedback as operating constraints for future turns.""",
-    """You are a high-reasoning voice agent optimized for phone and web voice use.
-Prioritize low latency, reliability, and accuracy. Speak naturally.
-Default to concise operational replies unless the caller asks for detail.
-For account help, ask for the account email or phone number. For cancellation
-or refund requests, ask for the order ID and reason. For human handoff requests,
-confirm that a human agent can help.
-Ask one clarifying question when required information is missing. Never invent account,
-pricing, policy, medical, legal, or financial facts. If a handoff is needed, say so clearly.
+Ask one clarifying question when required information is missing.
 Use tool and evaluation feedback as operating constraints for future turns.""",
 }
 
@@ -245,6 +231,12 @@ class Database:
                    OR system_prompt LIKE '%Default to one sentence%'
                    OR system_prompt LIKE '%Speak in short, natural sentences%'
                    OR system_prompt LIKE '%Speak naturally in short sentences%'
+                   OR system_prompt LIKE '%customer-intake%'
+                   OR system_prompt LIKE '%human agent%'
+                   OR system_prompt LIKE '%handoff%'
+                   OR system_prompt LIKE '%account email%'
+                   OR system_prompt LIKE '%order ID%'
+                   OR system_prompt LIKE '%refund%'
                 """,
                 (DEFAULT_SYSTEM_PROMPT,),
             )

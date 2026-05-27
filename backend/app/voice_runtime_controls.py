@@ -151,7 +151,7 @@ def emotion_code_for_turn(user_text: str, response_text: str) -> VoiceEmotionCod
         ]
     ):
         return "S"
-    if any(word in normalized_response for word in ["confirm", "order id", "account email"]):
+    if any(word in normalized_response for word in ["confirm", "correct", "careful"]):
         return "C"
     if any(word in normalized_response for word in ["done", "finished", "completed", "saved"]):
         return "P"

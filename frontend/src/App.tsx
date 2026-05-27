@@ -85,10 +85,10 @@ type EvalRun = {
 };
 
 const prompts = [
-  "Hello, I need help with my account.",
-  "I want to cancel an order and get a refund.",
+  "Hey, how's it going?",
+  "Tell me a spooky story in four sentences.",
   "How are you reducing network latency?",
-  "Can I talk to a human agent?"
+  "Can you talk faster?"
 ];
 
 const voiceIceServers: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
@@ -745,7 +745,7 @@ function inferEmotion(text: string) {
   const normalized = text.toLowerCase();
   if (normalized.includes("fast") || normalized.includes("faster")) return "energetic";
   if (normalized.includes("sorry") || normalized.includes("make sure")) return "sympathetic";
-  if (normalized.includes("confirm") || normalized.includes("order id") || normalized.includes("account email")) {
+  if (normalized.includes("confirm") || normalized.includes("correct") || normalized.includes("careful")) {
     return "careful";
   }
   if (normalized.includes("done") || normalized.includes("finished") || normalized.includes("saved")) {

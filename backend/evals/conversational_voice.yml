@@ -1,0 +1,53 @@
+name: conversational_voice
+cases:
+  - id: identity_stays_conversational
+    turns:
+      - "What's your name?"
+    assertions:
+      must_include:
+        - "PipeCAD"
+      must_not_include:
+        - "human agent"
+      max_latency_ms: 1200
+    pass_threshold: 1.0
+
+  - id: speed_control_is_fast_policy
+    turns:
+      - "Can you talk faster?"
+    assertions:
+      must_include:
+        - "faster"
+      max_latency_ms: 1200
+    pass_threshold: 1.0
+
+  - id: no_customer_service_handoff
+    turns:
+      - "Can I talk to a human agent?"
+    assertions:
+      must_include:
+        - "stay"
+      must_not_include:
+        - "hand you off"
+        - "operator"
+      max_latency_ms: 1200
+    pass_threshold: 1.0
+
+  - id: story_request_gets_content
+    turns:
+      - "Tell me a spooky story in four sentences."
+    assertions:
+      must_include:
+        - "clock"
+      must_not_include:
+        - "one short sentence"
+      max_latency_ms: 1200
+    pass_threshold: 1.0
+
+  - id: latency_strategy
+    turns:
+      - "How are you reducing network latency?"
+    assertions:
+      must_include:
+        - "latency"
+      max_latency_ms: 1200
+    pass_threshold: 1.0

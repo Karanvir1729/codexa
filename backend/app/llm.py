@@ -53,12 +53,15 @@ class MockLLMClient:
         normalized = user_text.lower()
         if "latency" in normalized or "network" in normalized:
             return "I will keep responses brief, monitor turn latency, and route voice traffic through the lowest-latency configured transport."
-        if "account" in normalized or "email" in normalized:
-            return "I can help with that. What account email or phone number should I use to look it up?"
-        if "cancel" in normalized or "refund" in normalized:
-            return "I can start that request. I need the order ID and the reason before I take action."
-        if "human" in normalized or "agent" in normalized or "representative" in normalized:
-            return "I can hand this to a human operator now and include the conversation summary."
+        if "human" in normalized and "agent" in normalized:
+            return "I will stay with you as the conversational AI."
+        if "story" in normalized:
+            return (
+                "The old clock in the hallway began ticking after midnight. "
+                "Each tick made the house colder and the shadows longer. "
+                "When Mira opened the clock face, she heard her own voice whisper from inside. "
+                "By morning, the clock was silent, and Mira's room was empty."
+            )
         if "hello" in normalized or "hi" in normalized:
             return "Hi, I am ready. What would you like to handle first?"
         if "learned:" in system_prompt.lower():

@@ -35,18 +35,14 @@ def build_runtime_system_prompt(system_prompt: str) -> str:
         "- Your name is PipeCAD's voice assistant; if asked your name or who you are, say: I'm PipeCAD's voice assistant.\n"
         "- Default to English. If the latest user message asks for English, reply in English only.\n"
         "- Do not switch to Hindi, Urdu, or another language unless the latest user message explicitly asks for that language.\n"
-        "- If the user explicitly asks for a human, live agent, operator, representative, or handoff, say: A human agent can help; I can hand you off now.\n"
-        "- Never offer a human handoff for greetings, confusion, account help, or name questions.\n"
-        "- Do not infer handoff unless the latest user message contains a clear handoff word.\n"
-        "- If the user mentions cancel, refund, or order, ask: What order ID and reason should I use before taking action?\n"
-        "- If the user mentions account, ask: What account email or phone number should I use?\n"
+        "- Stay in the conversation as the AI; do not offer to pass the user to another person.\n"
         "- If the user greets you, asks if you are there, or asks what is going on, say that you are here and ask how you can help.\n"
         "- If the user says OnePlus One, ask whether they mean the phone or the math problem.\n"
         "- If the user asks you to speak faster or slower, acknowledge the new speed briefly.\n"
         "- If the user asks about network, speed, or latency, say: We reduce latency with streaming and local voice processing.\n"
         "- If the user asks for a story, narration, explanation, or more detail, answer directly instead of asking how long it should be.\n"
         "- Otherwise, ask one concise clarifying question when required information is missing.\n"
-        "Do not say found, cancelled, refunded, completed, or done unless a tool result proves it."
+        "Do not claim an external action is complete unless a tool result proves it."
     )
 
 
@@ -71,17 +67,58 @@ def simple_math_response(text: str) -> str | None:
     return f"It's {left + right}."
 
 
+def _has_long_form_intent(normalized: str, words: set[str]) -> bool:
+    if words & {
+        "story",
+        "stories",
+        "explain",
+        "explanation",
+        "detail",
+        "details",
+        "describe",
+        "narrate",
+    }:
+        return True
+    return any(
+        phrase in normalized
+        for phrase in [
+            "tell me about",
+            "tell me more",
+            "keep talking",
+            "talk for longer",
+            "go on",
+            "what else",
+        ]
+    )
+
+
+def _latency_intent(normalized: str, words: set[str]) -> bool:
+    if "latency" in words or "lag" in words:
+        return True
+    return any(
+        phrase in normalized
+        for phrase in [
+            "network latency",
+            "response latency",
+            "why are you slow",
+            "why is this slow",
+            "slow response",
+        ]
+    )
+
+
 def fast_policy_response(text: str) -> str | None:
     normalized = re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
     words = set(normalized.split())
     if not normalized:
         return None
+    has_long_form_intent = _has_long_form_intent(normalized, words)
+    if has_long_form_intent:
+        return None
     if response := simple_math_response(text):
         return response
     if speed_intent := voice_speed_intent(text):
         return voice_speed_response(speed_intent)
-    if words & {"human", "operator", "representative", "handoff"} or "live agent" in normalized:
-        return "A human agent can help; I can hand you off now."
     if "your name" in normalized or "who are you" in normalized:
         return "I'm PipeCAD's voice assistant."
     if (
@@ -91,11 +128,7 @@ def fast_policy_response(text: str) -> str | None:
         or "whats going on" in normalized
     ):
         return "I'm here; how can I help?"
-    if words & {"cancel", "refund", "order"}:
-        return "What order ID and reason should I use before taking action?"
-    if "account" in words:
-        return "What account email or phone number should I use?"
-    if words & {"latency", "speed"} or "network latency" in normalized:
+    if _latency_intent(normalized, words):
         return "We reduce latency with streaming and local voice processing."
     return None
 

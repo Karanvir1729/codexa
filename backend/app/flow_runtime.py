@@ -271,9 +271,9 @@ DEFAULT_FLOW_GRAPH: FlowGraph = {
             "Process Failed",
             1430,
             210,
-            purpose="Recover from Codex/API failures with a clear retry or handoff path.",
-            script="Codex hit an issue. I can retry with different instructions or hand this off.",
-            outputs=["Retry", "Transfer call"],
+            purpose="Recover from Codex/API failures with a clear retry path.",
+            script="Codex hit an issue. I can retry with different instructions or summarize the current state.",
+            outputs=["Retry", "Summarize"],
             tone="careful",
             latency_profile="instant",
             target_ms=250,
@@ -284,9 +284,9 @@ DEFAULT_FLOW_GRAPH: FlowGraph = {
             "Transfer Call",
             1740,
             210,
-            purpose="Transfer to a human/operator with transcript, slots, and Codex job context.",
-            script="I can transfer this with the task summary and current Codex state.",
-            outputs=["Transferred"],
+            purpose="Summarize the transcript, slots, and Codex job context without leaving the conversation.",
+            script="Here is the task summary and current Codex state.",
+            outputs=["Summarized"],
             tone="careful",
             latency_profile="balanced",
             target_ms=900,
@@ -362,8 +362,8 @@ DEFAULT_FLOW_GRAPH: FlowGraph = {
         _edge("deliver-continue", "deliver_result", "collect_task_details", "Continue coding"),
         _edge("deliver-end", "deliver_result", "end", "Task complete"),
         _edge("failure-retry", "process_failed", "process_with_codex", "Retry"),
-        _edge("failure-transfer", "process_failed", "transfer_call", "Transfer call"),
-        _edge("transfer-end", "transfer_call", "end", "Transferred"),
+        _edge("failure-transfer", "process_failed", "transfer_call", "Summarize"),
+        _edge("transfer-end", "transfer_call", "end", "Summarized"),
     ],
     "viewport": {"x": -45, "y": 170, "zoom": 0.42},
     "metadata": {
@@ -968,10 +968,10 @@ class FlowRuntime:
                 break
 
             if node_type in {"handoff", "transfer_call"}:
-                text = self._render_script(data, self._get_slots(run_id)) or "A human agent can help."
+                text = self._render_script(data, self._get_slots(run_id)) or "I can summarize the current context."
                 messages.append(self._assistant_message(current_id, text))
                 self._append_transcript(run_id, "assistant", text)
-                self._record_event(run_id, flow.id, current_id, "handoff_requested")
+                self._record_event(run_id, flow.id, current_id, "context_summary_requested")
                 target = _first_outgoing_target(graph, current_id)
                 if target:
                     current_id = target
@@ -1020,18 +1020,10 @@ class FlowRuntime:
 
     def _should_use_fast_template(self, node_id: str, user_text: str) -> bool:
         normalized = user_text.casefold()
-        return node_id == "customer_intake" and any(
-            keyword in normalized for keyword in ["account", "refund", "cancel", "order"]
-        )
+        return node_id == "codex_scope" and any(keyword in normalized for keyword in ["code", "repo", "codex"])
 
     def _fast_template_response(self, user_text: str) -> str:
         normalized = user_text.casefold()
-        if "refund" in normalized or "cancel" in normalized or "order" in normalized:
-            return "What order ID and reason should I use before taking action?"
-        if "account" in normalized or "billing" in normalized:
-            return "What account email or phone number should I use?"
-        if "human" in normalized or "operator" in normalized:
-            return "A human agent can help; I can hand you off now."
         if "code" in normalized or "repo" in normalized or "codex" in normalized:
             return "Which repo or files should Codex inspect first?"
         return "I understand. What detail should I use for the next step?"

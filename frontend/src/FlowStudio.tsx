@@ -205,12 +205,12 @@ const palette: PaletteItem[] = [
   },
   {
     type: "transfer_call",
-    label: "Transfer Call",
+    label: "Summarize Context",
     group: "Actions",
-    description: "Transfer with transcript, slots, and Codex state.",
+    description: "Summarize transcript, slots, and Codex state.",
     icon: PhoneForwarded,
     category: "action",
-    outputs: ["Transferred"]
+    outputs: ["Summarized"]
   },
   {
     type: "wait",
@@ -228,7 +228,7 @@ const palette: PaletteItem[] = [
     description: "Repair unclear input, tool failures, and bad states.",
     icon: TriangleAlert,
     category: "repair",
-    outputs: ["Retry", "Transfer call"]
+    outputs: ["Retry", "Summarize"]
   },
   {
     type: "end",
@@ -1353,7 +1353,7 @@ function defaultScript(nodeType: string) {
   if (nodeType === "api") return "I'll call the configured API and use the result in the next step.";
   if (nodeType === "codex_task") return "I'll send this to Codex Orchestrator and keep tracking it live.";
   if (nodeType === "wait") return "Codex is working on it. I'll call out anything that needs your decision.";
-  if (nodeType === "transfer_call") return "I can transfer this with the task summary and current Codex state.";
+  if (nodeType === "transfer_call") return "Here is the task summary and current Codex state.";
   if (nodeType === "fallback") return "I hit an issue. I can retry with different instructions or hand this off.";
   if (nodeType === "end") return "Done. I saved the task summary and run history.";
   return "Reply naturally inside this node's scope.";

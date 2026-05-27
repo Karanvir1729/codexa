@@ -206,7 +206,7 @@ export function runEval() {
     results: Array<{ case_id: string; score: number; passed: boolean; latency_ms: number }>;
   }>("/api/evals/run", {
     method: "POST",
-    body: JSON.stringify({ suite_path: "backend/evals/customer_intake.yml", apply_feedback: true })
+    body: JSON.stringify({ suite_path: "backend/evals/conversational_voice.yml", apply_feedback: true })
   });
 }
 

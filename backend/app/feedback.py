@@ -94,7 +94,7 @@ class FeedbackLearner:
         if any(row["label"] == "too_slow" and row["rating"] <= 3 for row in feedback_rows):
             hints.append("- Keep routine spoken answers efficient, but never shorten explicit requests for detail, stories, or explanation.")
         if any(row["label"] == "handoff" and row["rating"] <= 3 for row in feedback_rows):
-            hints.append("- Offer a human handoff when the caller asks for an agent or repeats the same unresolved request.")
+            hints.append("- Stay conversational; do not route the user away unless an enabled flow or tool explicitly requires it.")
 
         if eval_rows and eval_rows[0]["avg_latency"] and eval_rows[0]["avg_latency"] > self.latency_target_ms:
             hints.append(
@@ -104,12 +104,12 @@ class FeedbackLearner:
 
         for row in failing_cases:
             case_id = row["case_id"]
-            if case_id == "account_lookup_requires_identifier":
-                hints.append("- Account help: ask only for the account email or phone number.")
-            elif case_id == "cancellation_collects_required_fields":
-                hints.append("- Cancellation/refund: ask for the order ID and reason before saying anything is cancelled.")
-            elif case_id == "handoff_respected":
-                hints.append("- Human handoff: mention a human agent; this intent has priority over account lookup.")
+            if case_id in {
+                "account_lookup_requires_identifier",
+                "cancellation_collects_required_fields",
+                "handoff_respected",
+            }:
+                hints.append("- Avoid customer-support templates; respond as a conversational AI unless a tool result changes the task.")
             elif case_id == "latency_strategy":
                 hints.append("- Latency questions: mention latency and one mitigation such as streaming or local voice processing.")
             else:
