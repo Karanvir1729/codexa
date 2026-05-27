@@ -694,6 +694,7 @@ async def _run_voice_pipeline(
         speed: float = settings.voxtral_tts_speed
         emotion_code: str = "N"
         emotion: str = "neutral"
+        user_tone_override: str | None = None
         tts_service: Any | None = None
 
         def bind_tts(self, service: Any) -> None:
@@ -724,6 +725,7 @@ async def _run_voice_pipeline(
                     }
                 )
             if tone_intent:
+                self.user_tone_override = tone_intent
                 self.apply_tone(tone_intent)
                 state.update(
                     {
@@ -737,6 +739,7 @@ async def _run_voice_pipeline(
                     "voice_speed": state["speed"],
                     "voice_speed_label": state["speed_label"],
                     "voice_tone": state["tone"],
+                    "voice_user_tone_override": self.user_tone_override,
                     "last_voice_speed_intent": state.get("speed_intent"),
                     "last_voice_tone_intent": state.get("tone_intent"),
                 }
@@ -751,13 +754,14 @@ async def _run_voice_pipeline(
                 self.speed = max(0.5, min(2.0, float(speed)))
                 self._apply_speed()
             tone = voice.get("tone")
-            if isinstance(tone, str) and tone.strip():
+            if isinstance(tone, str) and tone.strip() and not self.user_tone_override:
                 self.apply_tone(tone)
             recorder.update_metadata(
                 {
                     "voice_speed": round(self.speed, 2),
                     "voice_speed_label": voice_speed_label(self.speed),
                     "voice_tone": self.emotion,
+                    "voice_user_tone_override": self.user_tone_override,
                     "voice_flow_node_tone": tone if isinstance(tone, str) else None,
                 }
             )
