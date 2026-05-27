@@ -298,6 +298,36 @@ def test_voice_clone_followups_are_fast_when_enabled():
     assert voice_clone_followup_response("Do you need any more data?", {"enabled": False}) is None
 
 
+def test_clone_playback_ready_requires_supported_ref_audio_backend():
+    settings = Settings(
+        local_tts_provider="voxtral",
+        voice_clone_playback_enabled=True,
+        voxtral_tts_ref_audio_enabled=True,
+        voxtral_tts_base_url="https://api.mistral.ai/v1",
+    )
+
+    assert settings.cloned_voice_playback_ready is False
+
+    settings = Settings(
+        local_tts_provider="voxtral",
+        voice_clone_playback_enabled=True,
+        voxtral_tts_ref_audio_enabled=True,
+        voxtral_tts_base_url="https://api.mistral.ai/v1",
+        mistral_api_key="test-key",
+    )
+
+    assert settings.cloned_voice_playback_ready is True
+
+    settings = Settings(
+        local_tts_provider="voxtral",
+        voice_clone_playback_enabled=True,
+        voxtral_tts_ref_audio_enabled=True,
+        voxtral_tts_base_url="http://127.0.0.1:8002/v1",
+    )
+
+    assert settings.cloned_voice_playback_ready is False
+
+
 def test_voxtral_ref_audio_takes_precedence_and_whisper_is_stronger():
     tts = VoxtralTTSService(
         base_url="http://tts.example/v1",
@@ -329,6 +359,35 @@ def test_voxtral_ref_audio_takes_precedence_and_whisper_is_stronger():
     assert payload["voice_id"] == "saved-voice"
     assert "whisper-like" in payload["instructions"]
     assert "same voice, pace, pitch" in payload["instructions"]
+
+
+def test_voxtral_uses_raw_ref_audio_for_hosted_mistral():
+    tts = VoxtralTTSService(
+        base_url="https://api.mistral.ai/v1",
+        voice=None,
+        ref_audio_base64="abc123",
+        ref_audio_enabled=True,
+    )
+
+    payload = tts._build_payload("Hello.")
+
+    assert payload["ref_audio"] == "abc123"
+    assert "voice" not in payload
+
+
+def test_voxtral_uses_mistral_api_key_fallback():
+    settings = Settings(
+        local_tts_provider="voxtral",
+        mistral_api_key="mistral-key",
+        voxtral_tts_api_key=None,
+    )
+
+    tts = VoxtralTTSService(
+        base_url=settings.voxtral_tts_base_url,
+        api_key=settings.voxtral_tts_effective_api_key,
+    )
+
+    assert tts._api_key == "mistral-key"
 
 
 @pytest.mark.asyncio

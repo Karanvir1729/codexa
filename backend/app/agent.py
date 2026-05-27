@@ -222,7 +222,7 @@ class AgentService:
         if response_text := voice_clone_followup_response(
             text,
             voice_clone_store.status(),
-            ref_audio_enabled=self.settings.voxtral_tts_ref_audio_enabled,
+            ref_audio_enabled=self.settings.cloned_voice_playback_ready,
         ):
             assistant_turn_id = str(uuid.uuid4())
             self.db.execute(
@@ -315,7 +315,7 @@ class AgentService:
                 build_runtime_system_prompt(prompt.compiled)
                 + "\n\nRuntime voice clone state: "
                 + f"capture_enabled={voice_clone_store.enabled}, "
-                + f"cloned_voice_playback_enabled={self.settings.voxtral_tts_ref_audio_enabled}. "
+                + f"cloned_voice_playback_enabled={self.settings.cloned_voice_playback_ready}. "
                 + "If cloned_voice_playback_enabled is false, do not claim you are using the "
                 + "user's saved voice sample for speech."
             )

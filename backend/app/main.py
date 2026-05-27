@@ -184,6 +184,7 @@ async def health() -> dict[str, Any]:
         "voice_flow_id": settings.voice_flow_id,
         "voice_emotion_codes_enabled": settings.voice_emotion_codes_enabled,
         "voice_clone_enabled": settings.voice_clone_enabled,
+        "voice_clone_playback_enabled": settings.cloned_voice_playback_ready,
         "voice_clone_profile_id": settings.voice_clone_profile_id,
         "local_stt_provider": settings.local_stt_provider,
         "local_stt_model": settings.local_stt_model,
@@ -221,6 +222,7 @@ async def config() -> dict[str, Any]:
         "voice_flow_id": settings.voice_flow_id,
         "voice_emotion_codes_enabled": settings.voice_emotion_codes_enabled,
         "voice_clone_enabled": settings.voice_clone_enabled,
+        "voice_clone_playback_enabled": settings.cloned_voice_playback_ready,
         "voice_clone_profile_id": settings.voice_clone_profile_id,
         "local_stt_provider": settings.local_stt_provider,
         "local_stt_model": settings.local_stt_model,
@@ -591,6 +593,7 @@ async def latency_summary(limit: int = 100, conversation_id: str | None = None) 
             "tts_voice": settings.local_tts_voice,
             "tts_text_aggregation_mode": settings.local_tts_text_aggregation_mode,
             "voice_clone_enabled": settings.voice_clone_enabled,
+            "voice_clone_playback_enabled": settings.cloned_voice_playback_ready,
             "voice_clone_profile_id": settings.voice_clone_profile_id,
             "voxtral_tts_model": settings.voxtral_tts_model
             if settings.local_tts_provider == "voxtral"
