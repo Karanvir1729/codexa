@@ -152,7 +152,7 @@ def test_local_voice_merges_adjacent_turns_for_vllm_chat_template():
 def test_runtime_prompt_adds_conversational_voice_contract():
     prompt = build_runtime_system_prompt("Base prompt.")
 
-    assert "PipeCAD's voice assistant" in prompt
+    assert "I am an AI assistant." in prompt
     assert "latency" in prompt
     assert "story" in prompt
     assert "one short sentence" not in prompt
@@ -162,7 +162,7 @@ def test_runtime_prompt_adds_conversational_voice_contract():
 
 
 def test_fast_policy_response_handles_name_without_customer_service_hijacks():
-    assert fast_policy_response("What's your name?") == "I'm PipeCAD's voice assistant."
+    assert fast_policy_response("What's your name?") == "I am an AI assistant."
     assert fast_policy_response("Hello? Are you there?") == "I'm here; how can I help?"
     assert fast_policy_response("I need help with my account.") is None
     assert fast_policy_response("Can I talk to a human agent?") is None
@@ -207,7 +207,7 @@ async def test_agent_fast_policy_still_handles_identity_without_llm(tmp_path: Pa
 
     response = await agent.respond("What's your name?", channel="test")
 
-    assert response["message"] == "I'm PipeCAD's voice assistant."
+    assert response["message"] == "I am an AI assistant."
     assert response["provider"] == "policy-rule"
     assert llm.called is False
 

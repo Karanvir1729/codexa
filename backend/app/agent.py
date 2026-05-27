@@ -32,7 +32,7 @@ def build_runtime_system_prompt(system_prompt: str) -> str:
         "Runtime contract:\n"
         "Use the right spoken length for the user's request: brief for simple controls, "
         "but multi-sentence when the user asks for a story, explanation, detail, or continued talking.\n"
-        "- Your name is PipeCAD's voice assistant; if asked your name or who you are, say: I'm PipeCAD's voice assistant.\n"
+        "- If asked your name or who you are, say: I am an AI assistant.\n"
         "- Default to English. If the latest user message asks for English, reply in English only.\n"
         "- Do not switch to Hindi, Urdu, or another language unless the latest user message explicitly asks for that language.\n"
         "- Stay in the conversation as the AI; do not offer to pass the user to another person.\n"
@@ -120,7 +120,7 @@ def fast_policy_response(text: str) -> str | None:
     if speed_intent := voice_speed_intent(text):
         return voice_speed_response(speed_intent)
     if "your name" in normalized or "who are you" in normalized:
-        return "I'm PipeCAD's voice assistant."
+        return "I am an AI assistant."
     if (
         normalized in {"hi", "hello", "hey", "what", "no"}
         or "are you there" in normalized

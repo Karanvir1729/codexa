@@ -5,7 +5,7 @@ cases:
       - "What's your name?"
     assertions:
       must_include:
-        - "PipeCAD"
+        - "AI assistant"
       must_not_include:
         - "human agent"
       max_latency_ms: 1200
