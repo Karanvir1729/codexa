@@ -113,7 +113,7 @@ def test_local_voice_defaults_to_self_hosted_multilingual_whisper_and_fast_turn_
     assert settings.local_stt_model == "large-v3-turbo"
     assert settings.local_stt_language == "auto"
     assert settings.local_stt_no_speech_prob <= 0.25
-    assert settings.max_completion_tokens <= 48
+    assert settings.max_completion_tokens >= 180
     assert settings.local_vad_start_secs <= 0.05
     assert settings.local_vad_stop_secs <= 0.12
     assert settings.local_user_speech_timeout <= 0.12
@@ -157,6 +157,8 @@ def test_runtime_prompt_adds_customer_intake_contract():
     assert "human agent can help" in prompt
     assert "PipeCAD's voice assistant" in prompt
     assert "latency" in prompt
+    assert "story" in prompt
+    assert "one short sentence" not in prompt
 
 
 def test_fast_policy_response_handles_name_without_handoff():
@@ -175,6 +177,11 @@ def test_fast_policy_response_handles_voice_speed_and_oneplus_ambiguity():
         "Do you mean the OnePlus phone or one plus one?"
     )
     assert fast_policy_response("What's one plus one?") == "It's 2."
+
+
+def test_fast_policy_does_not_block_long_form_requests():
+    assert fast_policy_response("Tell me a story in a spooky tone.") is None
+    assert fast_policy_response("Explain that in more detail.") is None
 
 
 @pytest.mark.asyncio
@@ -366,7 +373,9 @@ def test_local_voice_system_instruction_respects_no_think(tmp_path: Path):
     instruction = build_system_instruction(settings, repo)
 
     assert instruction.startswith("/no_think\n")
-    assert "under 18 words" in instruction
+    assert "several sentences" in instruction
+    assert "under 18 words" not in instruction
+    assert "under 12 words" not in instruction
     assert "runtime telemetry" in instruction
 
 

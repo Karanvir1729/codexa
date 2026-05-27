@@ -47,7 +47,7 @@ async def openai_trial(
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": "/no_think\nAnswer in one short sentence."},
+            {"role": "system", "content": "/no_think\nAnswer with a brief latency-test response."},
             {"role": "user", "content": prompt},
         ],
         "temperature": 0,
@@ -117,7 +117,7 @@ async def vertex_trial(
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": "/no_think\nAnswer in one short sentence."},
+            {"role": "system", "content": "/no_think\nAnswer with a brief latency-test response."},
             {"role": "user", "content": prompt},
         ],
         "temperature": 0,

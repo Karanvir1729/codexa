@@ -1356,7 +1356,7 @@ function defaultScript(nodeType: string) {
   if (nodeType === "transfer_call") return "I can transfer this with the task summary and current Codex state.";
   if (nodeType === "fallback") return "I hit an issue. I can retry with different instructions or hand this off.";
   if (nodeType === "end") return "Done. I saved the task summary and run history.";
-  return "Reply in one short sentence inside this node's scope.";
+  return "Reply naturally inside this node's scope.";
 }
 
 function titleFromType(nodeType: string) {

@@ -193,6 +193,7 @@ async def health() -> dict[str, Any]:
         else None,
         "prompt_version": prompt.version,
         "reasoning_mode": settings.reasoning_mode,
+        "max_completion_tokens": settings.max_completion_tokens,
         "cost_guard": cost_guard.snapshot().to_dict(),
     }
 
@@ -221,6 +222,7 @@ async def config() -> dict[str, Any]:
         "voxtral_tts_model": settings.voxtral_tts_model
         if settings.local_tts_provider == "voxtral"
         else None,
+        "max_completion_tokens": settings.max_completion_tokens,
         "twilio_ready": bool(settings.twilio_account_sid and settings.twilio_auth_token),
         "pipecat_cloud_ready": bool(settings.pipecat_cloud_ws_url and settings.pipecat_cloud_service_host),
         "cost_guard": cost_guard.snapshot().to_dict(),

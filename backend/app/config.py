@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     reasoning_mode: Literal["on", "off"] = "on"
     llm_temperature: float = 0.0
     llm_top_p: float = 0.95
-    max_completion_tokens: int = 24
+    max_completion_tokens: int = Field(default=180, ge=16)
     llm_timeout_seconds: float = 60
     llm_warmup_enabled: bool = True
     voice_llm_context_messages: int = Field(default=8, ge=2)

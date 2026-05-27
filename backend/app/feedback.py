@@ -92,12 +92,15 @@ class FeedbackLearner:
         if any(row["label"] in {"incorrect", "missing_detail"} and row["rating"] <= 3 for row in feedback_rows):
             hints.append("- When information is missing or uncertain, ask exactly one clarifying question before answering.")
         if any(row["label"] == "too_slow" and row["rating"] <= 3 for row in feedback_rows):
-            hints.append("- Keep normal spoken answers under two sentences unless the caller asks for detail.")
+            hints.append("- Keep routine spoken answers efficient, but never shorten explicit requests for detail, stories, or explanation.")
         if any(row["label"] == "handoff" and row["rating"] <= 3 for row in feedback_rows):
             hints.append("- Offer a human handoff when the caller asks for an agent or repeats the same unresolved request.")
 
         if eval_rows and eval_rows[0]["avg_latency"] and eval_rows[0]["avg_latency"] > self.latency_target_ms:
-            hints.append(f"- Target first response latency below {self.latency_target_ms} ms with the shortest matching answer.")
+            hints.append(
+                f"- Target first response latency below {self.latency_target_ms} ms by removing filler, "
+                "not by truncating requested detail."
+            )
 
         for row in failing_cases:
             case_id = row["case_id"]

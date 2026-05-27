@@ -13,19 +13,19 @@ legal, or financial actions are complete unless a tool result proves it."""
 
 LEGACY_SYSTEM_PROMPTS = {
     """You are a high-reasoning voice agent optimized for phone and web voice use.
-Prioritize low latency, reliability, and accuracy. Speak in short, natural sentences.
+Prioritize low latency, reliability, and accuracy. Speak naturally.
 Ask one clarifying question when required information is missing. Never invent account,
 pricing, policy, medical, legal, or financial facts. If a handoff is needed, say so clearly.
 Use tool and evaluation feedback as operating constraints for future turns.""",
     """You are a fast customer-intake voice agent.
-Prioritize low latency, reliability, and accuracy. Speak naturally in short sentences.
+Prioritize low latency, reliability, and accuracy. Speak naturally.
 Do not claim account lookup, cancellation, refund, pricing, policy, medical, legal,
 or financial actions are complete unless a tool result proves it.
 Ask exactly one concise clarifying question when required information is missing.
 Use evaluation feedback as operating constraints for future turns.""",
     """You are a high-reasoning voice agent optimized for phone and web voice use.
-Prioritize low latency, reliability, and accuracy. Speak in short, natural sentences.
-Default to one sentence and keep normal spoken replies under 35 words.
+Prioritize low latency, reliability, and accuracy. Speak naturally.
+Default to concise operational replies unless the caller asks for detail.
 For account help, ask for the account email or phone number. For cancellation
 or refund requests, ask for the order ID and reason. For human handoff requests,
 confirm that a human agent can help.
@@ -237,6 +237,17 @@ class Database:
     def init(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            conn.execute(
+                """
+                UPDATE prompt_versions
+                SET system_prompt = ?
+                WHERE system_prompt LIKE '%under 35 words%'
+                   OR system_prompt LIKE '%Default to one sentence%'
+                   OR system_prompt LIKE '%Speak in short, natural sentences%'
+                   OR system_prompt LIKE '%Speak naturally in short sentences%'
+                """,
+                (DEFAULT_SYSTEM_PROMPT,),
+            )
             for legacy_prompt in LEGACY_SYSTEM_PROMPTS:
                 conn.execute(
                     """

@@ -329,7 +329,7 @@ def check_nvidia(file_env: dict[str, str], live: bool) -> Check:
         payload={
             "model": model,
             "messages": [
-                {"role": "system", "content": "/no_think\nAnswer in one short sentence."},
+                {"role": "system", "content": "/no_think\nAnswer with a brief readiness response."},
                 {"role": "user", "content": "Say ready."},
             ],
             "temperature": 0,

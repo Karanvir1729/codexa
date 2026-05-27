@@ -196,14 +196,13 @@ def build_system_instruction(settings: Settings, prompt_repo: PromptRepository) 
     instruction = (
         f"{instruction}\n\n"
         "Live voice constraints:\n"
-        "- Answer immediately in one short sentence by default.\n"
+        "- Answer immediately; keep simple controls brief, but allow natural multi-sentence replies when requested.\n"
         "- Speak English only unless the latest user utterance explicitly asks for another language.\n"
         "- If the user speaks Hindi, Urdu, or Hinglish, answer in that language only for that turn.\n"
         "- Use plain ASCII English when the TTS voice is English.\n"
-        "- Keep normal spoken replies under 18 words; use two sentences only when necessary.\n"
-        "- You are latency-aware: if runtime telemetry says the previous turn was slow, shorten the next reply.\n"
+        "- If the user asks for a story, narration, explanation, detail, or to keep talking, give a complete spoken answer with several sentences.\n"
+        "- You are latency-aware: if runtime telemetry says the previous turn was slow, remove filler but do not truncate explicit long-form requests.\n"
         "- Control voice behavior through the spoken content: concise wording for speed, calm wording for tone, and the user's language for language.\n"
-        "- If the user asks for a long story or explanation, ask how long they want it before continuing.\n"
         "- If asked about latency, identify the slow stage from runtime telemetry when it is available.\n"
         "- If the user says OnePlus One, ask whether they mean the phone or one plus one.\n"
         "- If the user asks to speak faster or slower, acknowledge it; the runtime will adjust speech speed.\n"
@@ -673,8 +672,8 @@ async def _run_voice_pipeline(
                 "Runtime voice telemetry for the previous turn: "
                 f"first_response_ms={first_response}, total_interaction_ms={total}, "
                 f"dominant_bottleneck={self.last_bottleneck or 'unknown'}, target_ms={target}. "
-                "Use this silently to adapt. If latency is above target, answer in under 12 words, "
-                "avoid lists, avoid long explanations, and prefer one spoken sentence. "
+                "Use this silently to adapt. If latency is above target, remove filler and avoid unnecessary lists, "
+                "but still honor explicit requests for stories, explanations, detail, or continued talking. "
                 "Do not mention telemetry unless the user asks about latency."
                 if breached
                 else (

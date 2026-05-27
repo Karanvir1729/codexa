@@ -994,7 +994,7 @@ class FlowRuntime:
 
     async def _generate_node_response(self, node: dict[str, Any], user_text: str) -> tuple[str, int]:
         data = _node_data(node)
-        prompt = str(data.get("prompt") or "Answer in one short sentence.")
+        prompt = str(data.get("prompt") or "Answer naturally inside this flow node.")
         llm_config = data.get("llm") if isinstance(data.get("llm"), dict) else {}
         if self._should_use_fast_template(str(node.get("id")), user_text):
             return self._fast_template_response(user_text), 0
@@ -1012,8 +1012,8 @@ class FlowRuntime:
             f"{prompt}\n\n"
             "Runtime contract:\n"
             "- You are inside one flowchart node, not the whole conversation.\n"
-            "- Keep the spoken reply short enough for real-time TTS.\n"
-            "- Ask at most one question.\n"
+            "- Use the right spoken length for this node: brief for simple routing, longer when the user asks for explanation, story, or detail.\n"
+            "- Ask at most one question unless the node explicitly collects multiple fields.\n"
             "- Do not claim an external action is done unless a tool result proves it.\n"
             f"- Node LLM mode: {llm_config.get('mode', 'constrained')}."
         )
