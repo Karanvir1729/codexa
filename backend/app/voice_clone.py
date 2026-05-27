@@ -44,8 +44,17 @@ def voice_clone_intent(text: str) -> VoiceCloneIntent | None:
     if any(
         phrase in normalized
         for phrase in [
+            "can you clone my voice",
+            "could you clone my voice",
+            "will you clone my voice",
+            "clone my voice",
             "you can clone my voice",
+            "yes clone my voice",
+            "please clone my voice",
+            "you may clone my voice",
             "i consent to voice cloning",
+            "i give consent to voice cloning",
+            "i give you consent to clone my voice",
             "start cloning my voice",
             "start saving my voice",
             "use my voice as the voice prompt",

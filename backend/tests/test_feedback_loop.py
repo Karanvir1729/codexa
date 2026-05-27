@@ -196,6 +196,9 @@ def test_fast_policy_response_handles_voice_speed_and_oneplus_ambiguity():
     assert fast_policy_response("You can clone my voice.") == (
         "Voice cloning is on. I'll save your voice samples and use them as my voice prompt."
     )
+    assert fast_policy_response("Can you clone my voice?") == (
+        "Voice cloning is on. I'll save your voice samples and use them as my voice prompt."
+    )
     assert fast_policy_response("What's OnePlus One?") == (
         "Do you mean the OnePlus phone or one plus one?"
     )
@@ -218,6 +221,8 @@ def test_voice_clone_profile_store_requires_consent_and_builds_reference(tmp_pat
     audio = b"\x00\x01" * 16000 * 2
 
     assert voice_clone_intent("you can clone my voice") == "enable"
+    assert voice_clone_intent("Can you clone my voice?") == "enable"
+    assert voice_clone_intent("Please clone my voice.") == "enable"
     assert store.status()["enabled"] is False
 
     store.start_utterance()
