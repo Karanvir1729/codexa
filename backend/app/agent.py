@@ -4,7 +4,7 @@ import re
 import uuid
 from typing import Any
 
-from .voice_clone import voice_clone_intent, voice_clone_response
+from .voice_clone import VoiceCloneProfileStore, voice_clone_intent, voice_clone_response
 from .voice_runtime_controls import (
     voice_speed_intent,
     voice_speed_response,
@@ -212,6 +212,9 @@ class AgentService:
         prompt = self.prompts.active()
         messages = self.history(cid)
         if response_text := fast_policy_response(text):
+            clone_state = None
+            if voice_clone_intent(text):
+                clone_state = VoiceCloneProfileStore(self.settings).handle_transcript(text)
             assistant_turn_id = str(uuid.uuid4())
             self.db.execute(
                 """
@@ -233,6 +236,7 @@ class AgentService:
                             "provider": "policy-rule",
                             "latency_target_ms": self.settings.latency_target_ms,
                             "estimated_cost_usd": 0,
+                            "voice_clone": clone_state,
                         }
                     ),
                 ),

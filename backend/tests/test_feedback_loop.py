@@ -69,6 +69,24 @@ def test_feedback_rebuilds_active_prompt(runtime):
     assert "clarifying question" in after.learned_hints
 
 
+@pytest.mark.asyncio
+async def test_text_consent_enables_voice_clone_profile(tmp_path: Path):
+    settings = Settings(
+        database_path=str(tmp_path / "agent.sqlite3"),
+        voice_clone_storage_dir=str(tmp_path / "voice-clones"),
+        llm_provider="mock",
+    )
+    db = Database(settings.database_path)
+    agent = AgentService(db, settings, MockLLMClient(settings))
+
+    response = await agent.respond("You can clone my voice.", channel="test")
+    status = VoiceCloneProfileStore(settings).status()
+
+    assert response["message"].startswith("Voice cloning is on")
+    assert status["enabled"] is True
+    assert status["sample_count"] == 0
+
+
 def test_cost_guard_blocks_when_local_cap_would_be_exceeded(tmp_path: Path):
     settings = Settings(
         database_path=str(tmp_path / "agent.sqlite3"),
