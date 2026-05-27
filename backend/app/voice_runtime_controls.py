@@ -8,19 +8,6 @@ VoiceSpeedIntent = Literal["slower", "very_slow", "normal", "faster", "very_fast
 VoiceEmotionCode = Literal["N", "F", "C", "P", "S", "E"]
 
 
-DEFAULT_STT_INITIAL_PROMPT = (
-    "Transcribe live voice-agent speech exactly. Preserve the user's wording, "
-    "punctuation, product names, acronyms, and code terms. Use English unless "
-    "the speaker clearly uses another language. Preserve PipeCAD, Pipecat, "
-    "Codex, WebRTC, Whisper, Voxtral, Orchestrator, GitHub, repository, deploy, "
-    "flowchart, and voice agent."
-)
-
-DEFAULT_STT_HOTWORDS = (
-    "PipeCAD, Pipecat, Codex, WebRTC, Whisper, Voxtral, Orchestrator, GitHub, "
-    "repository, deploy, flowchart, voice agent"
-)
-
 VOICE_EMOTION_CODES: dict[VoiceEmotionCode, str] = {
     "N": "neutral",
     "F": "friendly",

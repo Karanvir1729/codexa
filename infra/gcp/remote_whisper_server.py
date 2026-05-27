@@ -65,8 +65,13 @@ HOTWORDS = os.environ.get("REMOTE_WHISPER_HOTWORDS", DEFAULT_HOTWORDS).strip() o
 
 TOKEN_RE = re.compile(r"[\w\u0900-\u097f]+", re.UNICODE)
 PROMPT_LEAK_PHRASES = {
+    "transcribe live voice agent speech exactly",
     "transcribe english hindi urdu",
     "transcribe english hindi urdu hinglish",
+    "preserve the user s wording punctuation product names acronyms and code terms",
+    "preserve pipecad pipecat codex webrtc",
+    "preserve pipecad pipecat codex webrtc whisper voxtral orchestrator",
+    "preserve pipecat codex webrtc",
     "preserve technical terms",
     "pipecat pipecad piecad",
     "pipecat pipecad pipe cad",

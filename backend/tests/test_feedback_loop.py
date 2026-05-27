@@ -18,6 +18,7 @@ from app.llm import LLMResult, MockLLMClient
 from app.local_voice_runtime import (
     LocalVoiceConversationRecorder,
     build_system_instruction,
+    create_local_stt_service,
     merge_adjacent_chat_messages,
     require_openai_compatible_llm,
     resolve_stt_language,
@@ -116,6 +117,20 @@ def test_local_voice_defaults_to_self_hosted_multilingual_whisper_and_fast_turn_
     assert settings.local_vad_start_secs <= 0.05
     assert settings.local_vad_stop_secs <= 0.12
     assert settings.local_user_speech_timeout <= 0.12
+
+
+def test_remote_whisper_does_not_send_default_prompt_or_hotwords():
+    settings = Settings(
+        local_stt_provider="remote_whisper",
+        remote_whisper_initial_prompt="",
+        remote_whisper_hotwords="",
+    )
+
+    provider, stt = create_local_stt_service(settings)
+
+    assert provider == "remote_whisper"
+    assert not stt.options.initial_prompt
+    assert not stt.options.hotwords
 
 
 def test_local_voice_merges_adjacent_turns_for_vllm_chat_template():

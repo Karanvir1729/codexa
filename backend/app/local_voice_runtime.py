@@ -13,8 +13,6 @@ from .feedback import PromptRepository
 from .flow_runtime import FlowRepository, FlowRuntime
 from .llm import make_llm_client
 from .voice_runtime_controls import (
-    DEFAULT_STT_HOTWORDS,
-    DEFAULT_STT_INITIAL_PROMPT,
     VOICE_EMOTION_CODES,
     VOICE_EMOTION_SYSTEM_PROMPT,
     consume_emotion_prefix,
@@ -470,8 +468,8 @@ def create_local_stt_service(settings: Settings):
             timeout_seconds=settings.remote_whisper_timeout_seconds,
             beam_size=settings.remote_whisper_beam_size,
             best_of=settings.remote_whisper_best_of,
-            initial_prompt=settings.remote_whisper_initial_prompt or DEFAULT_STT_INITIAL_PROMPT,
-            hotwords=settings.remote_whisper_hotwords or DEFAULT_STT_HOTWORDS,
+            initial_prompt=settings.remote_whisper_initial_prompt,
+            hotwords=settings.remote_whisper_hotwords,
             stt_ttfb_timeout=settings.local_stt_ttfb_timeout,
             ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
         )
