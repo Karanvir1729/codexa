@@ -194,6 +194,9 @@ async def health() -> dict[str, Any]:
         "voxtral_tts_model": settings.voxtral_tts_model
         if settings.local_tts_provider == "voxtral"
         else None,
+        "voxtral_tts_ref_audio_enabled": settings.voxtral_tts_ref_audio_enabled
+        if settings.local_tts_provider == "voxtral"
+        else None,
         "prompt_version": prompt.version,
         "reasoning_mode": settings.reasoning_mode,
         "max_completion_tokens": settings.max_completion_tokens,
@@ -596,6 +599,9 @@ async def latency_summary(limit: int = 100, conversation_id: str | None = None) 
             if settings.local_tts_provider == "voxtral"
             else None,
             "voxtral_tts_stream": settings.voxtral_tts_stream
+            if settings.local_tts_provider == "voxtral"
+            else None,
+            "voxtral_tts_ref_audio_enabled": settings.voxtral_tts_ref_audio_enabled
             if settings.local_tts_provider == "voxtral"
             else None,
             "llm_provider": settings.llm_provider,

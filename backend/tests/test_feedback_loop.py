@@ -82,7 +82,7 @@ async def test_text_consent_enables_voice_clone_profile(tmp_path: Path):
     response = await agent.respond("You can clone my voice.", channel="test")
     status = VoiceCloneProfileStore(settings).status()
 
-    assert response["message"].startswith("Voice cloning is on")
+    assert response["message"].startswith("Voice cloning capture is on")
     assert status["enabled"] is True
     assert status["sample_count"] == 0
 
@@ -210,10 +210,10 @@ def test_fast_policy_response_handles_voice_speed_and_oneplus_ambiguity():
     assert fast_policy_response("Please slow down your voice.") == "Sure, I'll slow down."
     assert fast_policy_response("Can you use a spooky tone?") == "Got it, I'll use a spooky tone."
     assert fast_policy_response("You can clone my voice.") == (
-        "Voice cloning is on. I'll save your voice samples and use them as my voice prompt."
+        "Voice cloning capture is on. I'll save your voice samples."
     )
     assert fast_policy_response("Can you clone my voice?") == (
-        "Voice cloning is on. I'll save your voice samples and use them as my voice prompt."
+        "Voice cloning capture is on. I'll save your voice samples."
     )
     assert fast_policy_response("What's OnePlus One?") == (
         "Do you mean the OnePlus phone or one plus one?"
@@ -295,6 +295,12 @@ def test_voxtral_ref_audio_takes_precedence_and_whisper_is_stronger():
     payload = tts._build_payload("Hello.", include_ref_audio=False)
     assert payload["voice_id"] == "saved-voice"
     assert "ref_audio" not in payload
+
+    tts.set_ref_audio_enabled(False)
+    payload = tts._build_payload("Hello.")
+    assert payload["voice_id"] == "saved-voice"
+    assert "ref_audio" not in payload
+    tts.set_ref_audio_enabled(True)
 
     tts.set_ref_audio_base64(None)
     tts.set_emotion("whisper")

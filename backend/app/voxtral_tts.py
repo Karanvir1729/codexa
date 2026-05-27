@@ -44,6 +44,7 @@ class VoxtralTTSService(TTSService):
         speed: float = 1.0,
         initial_codec_chunk_frames: int | None = None,
         timeout_seconds: float = 120,
+        ref_audio_enabled: bool = True,
         sample_rate: int | None = None,
         **kwargs,
     ):
@@ -66,6 +67,7 @@ class VoxtralTTSService(TTSService):
         self._voice_clone_ref_audio_base64: str | None = None
         self._whisper_ref_audio_base64 = whisper_ref_audio_base64
         self._style_ref_audio_base64: str | None = None
+        self._ref_audio_enabled = ref_audio_enabled
         self._response_format = response_format
         self._stream = stream
         self._pcm_encoding = pcm_encoding
@@ -107,6 +109,9 @@ class VoxtralTTSService(TTSService):
             return
         self.set_ref_audio_base64(base64.b64encode(Path(path).read_bytes()).decode("ascii"))
 
+    def set_ref_audio_enabled(self, enabled: bool) -> None:
+        self._ref_audio_enabled = enabled
+
     def set_voice_clone_ref_audio_path(self, path: str | Path | None) -> None:
         if not path:
             self._voice_clone_ref_audio_base64 = None
@@ -131,72 +136,81 @@ class VoxtralTTSService(TTSService):
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 for include_ref_audio in attempts:
                     payload = self._build_payload(text, include_ref_audio=include_ref_audio)
-                    async with client.stream(
-                        "POST",
-                        self._endpoint,
-                        json=payload,
-                        headers=headers,
-                    ) as response:
-                        if response.status_code >= 400:
-                            body = (await response.aread()).decode("utf-8", errors="replace")
-                            if payload.get("ref_audio") and include_ref_audio:
-                                logger.warning(
-                                    "Voxtral TTS ref_audio failed "
-                                    f"(HTTP {response.status_code}); retrying without ref_audio."
+                    try:
+                        async with client.stream(
+                            "POST",
+                            self._endpoint,
+                            json=payload,
+                            headers=headers,
+                        ) as response:
+                            if response.status_code >= 400:
+                                body = (await response.aread()).decode("utf-8", errors="replace")
+                                if payload.get("ref_audio") and include_ref_audio:
+                                    logger.warning(
+                                        "Voxtral TTS ref_audio failed "
+                                        f"(HTTP {response.status_code}); retrying without ref_audio."
+                                    )
+                                    continue
+                                yield ErrorFrame(
+                                    error=(
+                                        "Voxtral TTS failed "
+                                        f"(HTTP {response.status_code}): {body[:240]}"
+                                    )
                                 )
-                                continue
-                            yield ErrorFrame(
-                                error=(
-                                    "Voxtral TTS failed "
-                                    f"(HTTP {response.status_code}): {body[:240]}"
-                                )
+                                return
+
+                            content_type = response.headers.get("content-type", "")
+                            if "text/event-stream" in content_type:
+                                async for audio in self._stream_sse_audio(response.aiter_lines()):
+                                    if not ttfb_stopped:
+                                        await self.stop_ttfb_metrics()
+                                        ttfb_stopped = True
+                                    yield TTSAudioRawFrame(
+                                        audio=audio,
+                                        sample_rate=self._output_sample_rate(),
+                                        num_channels=1,
+                                        context_id=context_id,
+                                    )
+                                return
+
+                            if self._stream and (
+                                "audio/pcm" in content_type or self._response_format == "pcm"
+                            ):
+                                async for chunk in response.aiter_bytes():
+                                    if not chunk:
+                                        continue
+                                    audio = await self._decode_audio_bytes(chunk, "pcm")
+                                    if not ttfb_stopped:
+                                        await self.stop_ttfb_metrics()
+                                        ttfb_stopped = True
+                                    yield TTSAudioRawFrame(
+                                        audio=audio,
+                                        sample_rate=self._output_sample_rate(),
+                                        num_channels=1,
+                                        context_id=context_id,
+                                    )
+                                return
+
+                            body = await response.aread()
+                            audio = await self._decode_response_audio(body, content_type)
+                            if not ttfb_stopped:
+                                await self.stop_ttfb_metrics()
+                                ttfb_stopped = True
+                            yield TTSAudioRawFrame(
+                                audio=audio,
+                                sample_rate=self._output_sample_rate(),
+                                num_channels=1,
+                                context_id=context_id,
                             )
                             return
-
-                        content_type = response.headers.get("content-type", "")
-                        if "text/event-stream" in content_type:
-                            async for audio in self._stream_sse_audio(response.aiter_lines()):
-                                if not ttfb_stopped:
-                                    await self.stop_ttfb_metrics()
-                                    ttfb_stopped = True
-                                yield TTSAudioRawFrame(
-                                    audio=audio,
-                                    sample_rate=self._output_sample_rate(),
-                                    num_channels=1,
-                                    context_id=context_id,
-                                )
-                            return
-
-                        if self._stream and (
-                            "audio/pcm" in content_type or self._response_format == "pcm"
-                        ):
-                            async for chunk in response.aiter_bytes():
-                                if not chunk:
-                                    continue
-                                audio = await self._decode_audio_bytes(chunk, "pcm")
-                                if not ttfb_stopped:
-                                    await self.stop_ttfb_metrics()
-                                    ttfb_stopped = True
-                                yield TTSAudioRawFrame(
-                                    audio=audio,
-                                    sample_rate=self._output_sample_rate(),
-                                    num_channels=1,
-                                    context_id=context_id,
-                                )
-                            return
-
-                        body = await response.aread()
-                        audio = await self._decode_response_audio(body, content_type)
-                        if not ttfb_stopped:
-                            await self.stop_ttfb_metrics()
-                            ttfb_stopped = True
-                        yield TTSAudioRawFrame(
-                            audio=audio,
-                            sample_rate=self._output_sample_rate(),
-                            num_channels=1,
-                            context_id=context_id,
-                        )
-                        return
+                    except Exception as exc:
+                        if payload.get("ref_audio") and include_ref_audio:
+                            logger.warning(
+                                "Voxtral TTS ref_audio stream failed; "
+                                f"retrying without ref_audio: {exc}"
+                            )
+                            continue
+                        raise
         except Exception as exc:
             yield ErrorFrame(error=f"Voxtral TTS failed: {exc}")
         finally:
@@ -212,7 +226,7 @@ class VoxtralTTSService(TTSService):
         if self._stream:
             payload["stream"] = True
         ref_audio_base64 = None
-        if include_ref_audio:
+        if include_ref_audio and self._ref_audio_enabled:
             ref_audio_base64 = (
                 self._style_ref_audio_base64
                 or self._voice_clone_ref_audio_base64
@@ -407,6 +421,7 @@ def create_voxtral_tts_service(settings: Settings) -> VoxtralTTSService:
         speed=settings.voxtral_tts_speed,
         initial_codec_chunk_frames=settings.voxtral_tts_initial_codec_chunk_frames,
         timeout_seconds=settings.voxtral_tts_timeout_seconds,
+        ref_audio_enabled=settings.voxtral_tts_ref_audio_enabled,
         sample_rate=settings.local_audio_output_sample_rate,
         text_aggregation_mode=(
             TextAggregationMode.TOKEN

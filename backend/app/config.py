@@ -148,6 +148,7 @@ class Settings(BaseSettings):
     )
     voxtral_tts_ref_audio_path: str | None = None
     voxtral_tts_whisper_ref_audio_path: str | None = None
+    voxtral_tts_ref_audio_enabled: bool = False
     voxtral_tts_response_format: Literal["pcm", "wav"] = "wav"
     voxtral_tts_stream: bool = False
     voxtral_tts_pcm_encoding: Literal["int16", "float32"] = "int16"

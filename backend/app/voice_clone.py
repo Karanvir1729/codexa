@@ -66,7 +66,7 @@ def voice_clone_intent(text: str) -> VoiceCloneIntent | None:
 
 def voice_clone_response(intent: VoiceCloneIntent) -> str:
     if intent == "enable":
-        return "Voice cloning is on. I'll save your voice samples and use them as my voice prompt."
+        return "Voice cloning capture is on. I'll save your voice samples."
     if intent == "disable":
         return "Voice cloning is paused."
     return "I deleted the stored voice clone."
