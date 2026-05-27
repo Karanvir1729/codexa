@@ -37,6 +37,7 @@ class VoxtralTTSService(TTSService):
         language: str | None = "Auto",
         instructions: str | None = None,
         ref_audio_base64: str | None = None,
+        whisper_ref_audio_base64: str | None = None,
         response_format: str = "wav",
         stream: bool = False,
         pcm_encoding: str = "int16",
@@ -62,6 +63,9 @@ class VoxtralTTSService(TTSService):
         self._base_instructions = instructions
         self._instructions = instructions
         self._ref_audio_base64 = ref_audio_base64
+        self._voice_clone_ref_audio_base64: str | None = None
+        self._whisper_ref_audio_base64 = whisper_ref_audio_base64
+        self._style_ref_audio_base64: str | None = None
         self._response_format = response_format
         self._stream = stream
         self._pcm_encoding = pcm_encoding
@@ -75,6 +79,9 @@ class VoxtralTTSService(TTSService):
         self._speed = max(0.5, min(2.0, speed))
 
     def set_emotion(self, emotion: str) -> None:
+        self._style_ref_audio_base64 = (
+            self._whisper_ref_audio_base64 if emotion == "whisper" else None
+        )
         emotion_instruction = VOICE_EMOTION_TTS_INSTRUCTIONS.get(emotion)
         if not emotion_instruction:
             self._instructions = self._base_instructions
@@ -84,35 +91,35 @@ class VoxtralTTSService(TTSService):
             f"{base} Current turn style: {emotion_instruction}" if base else emotion_instruction
         )
 
+    def set_voice_id(self, voice_id: str | None) -> None:
+        self._voice_id = voice_id.strip() if isinstance(voice_id, str) and voice_id.strip() else None
+
+    def set_ref_audio_base64(self, ref_audio_base64: str | None) -> None:
+        self._ref_audio_base64 = (
+            ref_audio_base64.strip()
+            if isinstance(ref_audio_base64, str) and ref_audio_base64.strip()
+            else None
+        )
+
+    def set_ref_audio_path(self, path: str | Path | None) -> None:
+        if not path:
+            self.set_ref_audio_base64(None)
+            return
+        self.set_ref_audio_base64(base64.b64encode(Path(path).read_bytes()).decode("ascii"))
+
+    def set_voice_clone_ref_audio_path(self, path: str | Path | None) -> None:
+        if not path:
+            self._voice_clone_ref_audio_base64 = None
+            return
+        self._voice_clone_ref_audio_base64 = base64.b64encode(Path(path).read_bytes()).decode("ascii")
+
     @traced_tts
     async def run_tts(self, text: str, context_id: str) -> AsyncGenerator[Frame, None]:
         logger.debug(f"{self}: Generating Voxtral TTS [{text}]")
         ttfb_stopped = False
         try:
             await self.start_tts_usage_metrics(text)
-            payload: dict[str, Any] = {
-                "input": text,
-                "model": self._model,
-                "response_format": self._response_format,
-            }
-            if self._stream:
-                payload["stream"] = True
-            if self._voice_id:
-                payload["voice_id"] = self._voice_id
-            elif self._voice:
-                # vLLM-Omni's OpenAI-compatible endpoint uses `voice`.
-                payload["voice"] = self._voice
-            if self._language:
-                payload["language"] = self._language
-            if self._instructions:
-                payload["instructions"] = self._instructions
-            if self._initial_codec_chunk_frames is not None:
-                payload["initial_codec_chunk_frames"] = self._initial_codec_chunk_frames
-            if self._ref_audio_base64:
-                payload["ref_audio"] = self._ref_audio_base64
-            if abs(self._speed - 1.0) > 0.01:
-                # vLLM-Omni rejects top-level speed while streaming; extra_body is forwarded.
-                payload["extra_body"] = {"speed": round(self._speed, 2)}
+            payload = self._build_payload(text)
 
             headers = {"content-type": "application/json"}
             if self._stream:
@@ -185,6 +192,37 @@ class VoxtralTTSService(TTSService):
         finally:
             if not ttfb_stopped:
                 await self.stop_ttfb_metrics()
+
+    def _build_payload(self, text: str) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "input": text,
+            "model": self._model,
+            "response_format": self._response_format,
+        }
+        if self._stream:
+            payload["stream"] = True
+        ref_audio_base64 = (
+            self._style_ref_audio_base64
+            or self._voice_clone_ref_audio_base64
+            or self._ref_audio_base64
+        )
+        if ref_audio_base64:
+            payload["ref_audio"] = ref_audio_base64
+        elif self._voice_id:
+            payload["voice_id"] = self._voice_id
+        elif self._voice:
+            # vLLM-Omni's OpenAI-compatible endpoint uses `voice`.
+            payload["voice"] = self._voice
+        if self._language:
+            payload["language"] = self._language
+        if self._instructions:
+            payload["instructions"] = self._instructions
+        if self._initial_codec_chunk_frames is not None:
+            payload["initial_codec_chunk_frames"] = self._initial_codec_chunk_frames
+        if abs(self._speed - 1.0) > 0.01:
+            # vLLM-Omni rejects top-level speed while streaming; extra_body is forwarded.
+            payload["extra_body"] = {"speed": round(self._speed, 2)}
+        return payload
 
     async def _stream_sse_audio(self, lines: AsyncIterator[str]) -> AsyncGenerator[bytes, None]:
         async for event, data in _iter_sse_events(lines):
@@ -329,6 +367,11 @@ def create_voxtral_tts_service(settings: Settings) -> VoxtralTTSService:
         ref_audio_base64 = base64.b64encode(
             Path(settings.voxtral_tts_ref_audio_path).read_bytes()
         ).decode("ascii")
+    whisper_ref_audio_base64 = None
+    if settings.voxtral_tts_whisper_ref_audio_path:
+        whisper_ref_audio_base64 = base64.b64encode(
+            Path(settings.voxtral_tts_whisper_ref_audio_path).read_bytes()
+        ).decode("ascii")
     return VoxtralTTSService(
         base_url=settings.voxtral_tts_base_url,
         api_key=settings.voxtral_tts_api_key,
@@ -338,6 +381,7 @@ def create_voxtral_tts_service(settings: Settings) -> VoxtralTTSService:
         language=settings.voxtral_tts_language,
         instructions=settings.voxtral_tts_instructions,
         ref_audio_base64=ref_audio_base64,
+        whisper_ref_audio_base64=whisper_ref_audio_base64,
         response_format=settings.voxtral_tts_response_format,
         stream=settings.voxtral_tts_stream,
         pcm_encoding=settings.voxtral_tts_pcm_encoding,

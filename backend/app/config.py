@@ -61,6 +61,13 @@ class Settings(BaseSettings):
     voice_flow_id: str = "active"
     voice_stt_correction_enabled: bool = False
     voice_emotion_codes_enabled: bool = True
+    voice_clone_enabled: bool = True
+    voice_clone_profile_id: str = "default"
+    voice_clone_storage_dir: str = "data/voice_clones"
+    voice_clone_min_sample_seconds: float = Field(default=1.5, ge=0.5)
+    voice_clone_max_sample_seconds: float = Field(default=12.0, ge=2.0)
+    voice_clone_max_reference_seconds: float = Field(default=18.0, ge=2.0)
+    voice_clone_max_samples: int = Field(default=30, ge=1)
     deepgram_api_key: str | None = None
     cartesia_api_key: str | None = None
     cartesia_voice_id: str = "71a7ad14-091c-4e8e-a314-022ece01c121"
@@ -140,6 +147,7 @@ class Settings(BaseSettings):
         "Keep emotional tone calm and helpful unless the text clearly asks for a different tone."
     )
     voxtral_tts_ref_audio_path: str | None = None
+    voxtral_tts_whisper_ref_audio_path: str | None = None
     voxtral_tts_response_format: Literal["pcm", "wav"] = "wav"
     voxtral_tts_stream: bool = False
     voxtral_tts_pcm_encoding: Literal["int16", "float32"] = "int16"

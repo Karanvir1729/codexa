@@ -4,7 +4,13 @@ import re
 import uuid
 from typing import Any
 
-from .voice_runtime_controls import voice_speed_intent, voice_speed_response, voice_tone_intent, voice_tone_response
+from .voice_clone import voice_clone_intent, voice_clone_response
+from .voice_runtime_controls import (
+    voice_speed_intent,
+    voice_speed_response,
+    voice_tone_intent,
+    voice_tone_response,
+)
 from .config import Settings
 from .cost_guard import CostGuard
 from .db import Database, dumps, loads
@@ -122,6 +128,8 @@ def fast_policy_response(text: str) -> str | None:
         return voice_speed_response(speed_intent)
     if tone_intent := voice_tone_intent(text):
         return voice_tone_response(tone_intent)
+    if clone_intent := voice_clone_intent(text):
+        return voice_clone_response(clone_intent)
     if "your name" in normalized or "who are you" in normalized:
         return "I am an AI assistant."
     if (

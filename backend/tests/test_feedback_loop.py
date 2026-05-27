@@ -24,6 +24,8 @@ from app.local_voice_runtime import (
     resolve_stt_language,
     resolve_tts_language,
 )
+from app.voice_clone import VoiceCloneProfileStore, voice_clone_intent
+from app.voxtral_tts import VoxtralTTSService
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
@@ -173,6 +175,9 @@ def test_fast_policy_response_handles_voice_speed_and_oneplus_ambiguity():
     assert fast_policy_response("Talk very fast.") == "Got it, I'll talk very fast."
     assert fast_policy_response("Please slow down your voice.") == "Sure, I'll slow down."
     assert fast_policy_response("Can you use a spooky tone?") == "Got it, I'll use a spooky tone."
+    assert fast_policy_response("You can clone my voice.") == (
+        "Voice cloning is on. I'll save your voice samples and use them as my voice prompt."
+    )
     assert fast_policy_response("What's OnePlus One?") == (
         "Do you mean the OnePlus phone or one plus one?"
     )
@@ -182,6 +187,66 @@ def test_fast_policy_response_handles_voice_speed_and_oneplus_ambiguity():
 def test_fast_policy_does_not_block_long_form_requests():
     assert fast_policy_response("Tell me a story in a spooky tone.") is None
     assert fast_policy_response("Explain that in more detail.") is None
+
+
+def test_voice_clone_profile_store_requires_consent_and_builds_reference(tmp_path: Path):
+    settings = Settings(
+        voice_clone_storage_dir=str(tmp_path / "voice-clones"),
+        voice_clone_profile_id="Meher test",
+        voice_clone_min_sample_seconds=1.0,
+        voice_clone_max_reference_seconds=5.0,
+    )
+    store = VoiceCloneProfileStore(settings)
+    audio = b"\x00\x01" * 16000 * 2
+
+    assert voice_clone_intent("you can clone my voice") == "enable"
+    assert store.status()["enabled"] is False
+
+    store.start_utterance()
+    store.append_audio(audio, 16000, 1)
+    store.stop_utterance()
+    state = store.handle_transcript("You can clone my voice.")
+
+    assert state is not None
+    assert state["enabled"] is True
+    assert state["sample_count"] == 1
+    assert Path(state["reference_path"]).exists()
+
+    store.start_utterance()
+    store.append_audio(audio, 16000, 1)
+    store.stop_utterance()
+    state = store.handle_transcript("This is another voice sample.")
+
+    assert state is not None
+    assert state["sample_count"] == 2
+
+    state = store.handle_transcript("Delete my voice clone.")
+
+    assert state is not None
+    assert state["enabled"] is False
+    assert state["sample_count"] == 0
+
+
+def test_voxtral_ref_audio_takes_precedence_and_whisper_is_stronger():
+    tts = VoxtralTTSService(
+        base_url="http://tts.example/v1",
+        voice="neutral_female",
+        voice_id="saved-voice",
+        ref_audio_base64="abc123",
+    )
+
+    payload = tts._build_payload("Hello.")
+
+    assert payload["ref_audio"] == "abc123"
+    assert "voice" not in payload
+    assert "voice_id" not in payload
+
+    tts.set_ref_audio_base64(None)
+    tts.set_emotion("whisper")
+    payload = tts._build_payload("Hello.")
+
+    assert payload["voice_id"] == "saved-voice"
+    assert "whisper-like" in payload["instructions"]
 
 
 @pytest.mark.asyncio

@@ -12,6 +12,7 @@ from .db import Database, dumps, loads
 from .feedback import PromptRepository
 from .flow_runtime import FlowRepository, FlowRuntime
 from .llm import make_llm_client
+from .voice_clone import VoiceCloneProfileStore
 from .voice_runtime_controls import (
     VOICE_EMOTION_CODES,
     VOICE_EMOTION_SYSTEM_PROMPT,
@@ -544,6 +545,7 @@ async def _run_voice_pipeline(
     from pipecat.frames.frames import (
         ErrorFrame,
         Frame,
+        InputAudioRawFrame,
         InterruptionFrame,
         LLMFullResponseEndFrame,
         LLMFullResponseStartFrame,
@@ -551,6 +553,7 @@ async def _run_voice_pipeline(
         TTSAudioRawFrame,
         TTSStoppedFrame,
         TranscriptionFrame,
+        UserAudioRawFrame,
         VADUserStartedSpeakingFrame,
         VADUserStoppedSpeakingFrame,
     )
@@ -688,6 +691,8 @@ async def _run_voice_pipeline(
             )
 
     latency_state = VoiceLatencyState()
+    voice_clone_store = VoiceCloneProfileStore(settings)
+    recorder.update_metadata({"voice_clone": voice_clone_store.status()})
 
     @dataclass
     class VoiceControlState:
@@ -789,6 +794,18 @@ async def _run_voice_pipeline(
                 {
                     "voice_emotion_code": self.emotion_code,
                     "voice_emotion": self.emotion,
+                }
+            )
+
+        def apply_voice_clone_reference(self, path: Path | None, status: dict[str, Any]) -> None:
+            if self.tts_service and hasattr(self.tts_service, "set_voice_clone_ref_audio_path"):
+                self.tts_service.set_voice_clone_ref_audio_path(path)
+            elif self.tts_service and hasattr(self.tts_service, "set_ref_audio_path"):
+                self.tts_service.set_ref_audio_path(path)
+            recorder.update_metadata(
+                {
+                    "voice_clone": status,
+                    "voice_clone_reference_path": str(path) if path else None,
                 }
             )
 
@@ -983,8 +1000,10 @@ async def _run_voice_pipeline(
                     "Runtime voice control state: "
                     f"speech_speed={voice_controls.speed:.2f} "
                     f"({voice_speed_label(voice_controls.speed)}), "
-                    f"emotion={voice_controls.emotion}. "
-                    "Use this silently. Do not ask again about speed unless the user changes it."
+                    f"emotion={voice_controls.emotion}, "
+                    f"voice_clone_enabled={voice_clone_store.enabled}. "
+                    "Use this silently. Do not ask again about speed, tone, or voice clone status "
+                    "unless the user changes it."
                 ),
             }
             insert_at = 1 if messages and _message_role(messages[0]) == "system" else 0
@@ -1023,6 +1042,12 @@ async def _run_voice_pipeline(
                 text = raw_text.strip()
                 if text:
                     speed_state = voice_controls.apply_user_text(text)
+                    clone_state = voice_clone_store.handle_transcript(text)
+                    if clone_state:
+                        voice_controls.apply_voice_clone_reference(
+                            voice_clone_store.active_reference_path(),
+                            clone_state,
+                        )
                     now = time.perf_counter()
                     trace = latency_state.active_trace or VoiceLatencyTrace()
                     if latency_state.active_trace is None:
@@ -1048,6 +1073,7 @@ async def _run_voice_pipeline(
                             "voice_speed": round(voice_controls.speed, 2),
                             "voice_speed_label": voice_speed_label(voice_controls.speed),
                             "voice_speed_change": speed_state,
+                            "voice_clone": voice_clone_store.status(),
                             **trace.timings(),
                         },
                     )
@@ -1062,6 +1088,7 @@ async def _run_voice_pipeline(
                         voice_speed=round(voice_controls.speed, 2),
                         voice_speed_label=voice_speed_label(voice_controls.speed),
                         voice_speed_change=speed_state,
+                        voice_clone=voice_clone_store.status(),
                     )
             elif self._capture_assistant and isinstance(frame, LLMFullResponseStartFrame):
                 self._assistant_parts = []
@@ -1168,6 +1195,7 @@ async def _run_voice_pipeline(
                                 "voice_speed_label": voice_speed_label(voice_controls.speed),
                                 "voice_emotion_code": voice_controls.emotion_code,
                                 "voice_emotion": voice_controls.emotion,
+                                "voice_clone": voice_clone_store.status(),
                                 **trace.providers(),
                                 **trace.timings(),
                             },
@@ -1188,6 +1216,21 @@ async def _run_voice_pipeline(
                 latency_state.assistant_speaking = False
             await self.push_frame(frame, direction)
 
+    class VoiceCloneAudioCaptureProcessor(FrameProcessor):
+        async def process_frame(self, frame: Frame, direction: FrameDirection):
+            await super().process_frame(frame, direction)
+            if isinstance(frame, VADUserStartedSpeakingFrame):
+                voice_clone_store.start_utterance()
+            elif isinstance(frame, (InputAudioRawFrame, UserAudioRawFrame)):
+                voice_clone_store.append_audio(
+                    frame.audio,
+                    frame.sample_rate,
+                    frame.num_channels,
+                )
+            elif isinstance(frame, VADUserStoppedSpeakingFrame):
+                voice_clone_store.stop_utterance()
+            await self.push_frame(frame, direction)
+
     stt_provider, stt = create_local_stt_service(settings)
     llm = VoiceOpenAILLMService(
         api_key=settings.active_api_key,
@@ -1205,6 +1248,8 @@ async def _run_voice_pipeline(
     )
     tts_provider, tts = await create_local_tts_service(settings)
     voice_controls.bind_tts(tts)
+    if reference_path := voice_clone_store.active_reference_path():
+        voice_controls.apply_voice_clone_reference(reference_path, voice_clone_store.status())
     vad = VADProcessor(
         vad_analyzer=SileroVADAnalyzer(
             sample_rate=settings.local_audio_input_sample_rate,
@@ -1238,6 +1283,7 @@ async def _run_voice_pipeline(
         [
             transport.input(),
             vad,
+            VoiceCloneAudioCaptureProcessor(),
             stt,
             TranscriptCaptureProcessor(capture_user=True),
             user_aggregator,

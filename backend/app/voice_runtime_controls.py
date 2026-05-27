@@ -51,7 +51,10 @@ VOICE_EMOTION_TTS_INSTRUCTIONS = {
     "spooky": "Low, suspenseful, and eerie while remaining understandable.",
     "arrogant": "Confident and slightly smug without insulting the user.",
     "condescending": "Dry and superior in tone without being hostile.",
-    "whisper": "Hushed and quiet-sounding while staying intelligible.",
+    "whisper": (
+        "Use a whisper-like delivery: very soft, breathy, close-mic, and quiet, "
+        "while staying intelligible. Reduce projection and avoid a normal speaking voice."
+    ),
 }
 
 VOICE_TONE_ALIASES: dict[str, VoiceTone] = {
