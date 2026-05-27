@@ -152,6 +152,15 @@ def test_fast_policy_response_handles_name_without_handoff():
     )
 
 
+def test_fast_policy_response_handles_voice_speed_and_oneplus_ambiguity():
+    assert fast_policy_response("Can you talk a bit faster?") == "Sure, I'll talk faster."
+    assert fast_policy_response("Please slow down your voice.") == "Sure, I'll slow down."
+    assert fast_policy_response("What's OnePlus One?") == (
+        "Do you mean the OnePlus phone or one plus one?"
+    )
+    assert fast_policy_response("What's one plus one?") == "It's 2."
+
+
 @pytest.mark.asyncio
 async def test_agent_fast_policy_bypasses_bad_handoff_model(tmp_path: Path):
     class BadHandoffLLM:

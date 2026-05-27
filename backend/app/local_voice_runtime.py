@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from .agent import build_runtime_system_prompt, fast_policy_response
+from .agent import build_runtime_system_prompt, fast_policy_response, voice_speed_intent
 from .config import Settings, get_settings
 from .db import Database, dumps
 from .feedback import PromptRepository
@@ -177,6 +177,8 @@ def build_system_instruction(settings: Settings, prompt_repo: PromptRepository) 
         "- Control voice behavior through the spoken content: concise wording for speed, calm wording for tone, and the user's language for language.\n"
         "- If the user asks for a long story or explanation, ask how long they want it before continuing.\n"
         "- If asked about latency, identify the slow stage from runtime telemetry when it is available.\n"
+        "- If the user says OnePlus One, ask whether they mean the phone or one plus one.\n"
+        "- If the user asks to speak faster or slower, acknowledge it; the runtime will adjust speech speed.\n"
         "- Do not mention model identity, internal policy, or provider names unless the user asks."
     )
     if settings.reasoning_mode == "off":
@@ -641,6 +643,33 @@ async def _run_voice_pipeline(
 
     latency_state = VoiceLatencyState()
 
+    @dataclass
+    class VoiceControlState:
+        speed: float = settings.voxtral_tts_speed
+        tts_service: Any | None = None
+
+        def bind_tts(self, service: Any) -> None:
+            self.tts_service = service
+            self._apply_speed()
+
+        def apply_user_text(self, text: str) -> None:
+            intent = voice_speed_intent(text)
+            if intent == "faster":
+                self.speed = min(1.6, self.speed + 0.2)
+                self._apply_speed()
+            elif intent == "slower":
+                self.speed = max(0.75, self.speed - 0.2)
+                self._apply_speed()
+            elif intent == "normal":
+                self.speed = 1.0
+                self._apply_speed()
+
+        def _apply_speed(self) -> None:
+            if self.tts_service and hasattr(self.tts_service, "set_speed"):
+                self.tts_service.set_speed(self.speed)
+
+    voice_controls = VoiceControlState()
+
     def dominant_bottleneck(timings: Mapping[str, Any]) -> str | None:
         candidates = {
             "stt": timings.get("stt_after_speech_end_ms"),
@@ -752,6 +781,7 @@ async def _run_voice_pipeline(
             if self._capture_user and isinstance(frame, TranscriptionFrame):
                 text = frame.text.strip()
                 if text:
+                    voice_controls.apply_user_text(text)
                     now = time.perf_counter()
                     trace = latency_state.active_trace or VoiceLatencyTrace()
                     if latency_state.active_trace is None:
@@ -886,6 +916,7 @@ async def _run_voice_pipeline(
         ),
     )
     tts_provider, tts = await create_local_tts_service(settings)
+    voice_controls.bind_tts(tts)
     vad = VADProcessor(
         vad_analyzer=SileroVADAnalyzer(
             sample_rate=settings.local_audio_input_sample_rate,

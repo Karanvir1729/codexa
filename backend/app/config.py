@@ -87,17 +87,8 @@ class Settings(BaseSettings):
     remote_whisper_timeout_seconds: float = Field(default=8, ge=0.1)
     remote_whisper_beam_size: int = Field(default=3, ge=1, le=8)
     remote_whisper_best_of: int = Field(default=3, ge=1, le=8)
-    remote_whisper_initial_prompt: str | None = (
-        "This is a live voice agent conversation. Transcribe English, Hindi, Urdu, and "
-        "Hinglish accurately. Preserve technical terms and names such as Pipecat, PipeCAD, "
-        "Cekura, NVIDIA NIM, Nemotron, Mistral, Voxtral, Twilio, WebRTC, Vercel, "
-        "Cloudflare, Google Cloud, Vertex AI, Whisper, STT, and TTS."
-    )
-    remote_whisper_hotwords: str | None = (
-        "Pipecat, PipeCAD, Cekura, Daily, NVIDIA, NIM, Nemotron, Mistral, Voxtral, "
-        "Whisper, Faster Whisper, Twilio, WebRTC, Vercel, Cloudflare, Google Cloud, "
-        "GCP, Vertex AI, GPU, TPU, LLM, STT, TTS, Hindi, Urdu, Hinglish"
-    )
+    remote_whisper_initial_prompt: str | None = None
+    remote_whisper_hotwords: str | None = None
     local_whisperx_device: Literal["auto", "cpu", "cuda"] = "auto"
     local_whisperx_compute_type: str = "auto"
     local_whisperx_batch_size: int = Field(default=1, ge=1)
@@ -148,6 +139,7 @@ class Settings(BaseSettings):
     voxtral_tts_response_format: Literal["pcm", "wav"] = "wav"
     voxtral_tts_stream: bool = False
     voxtral_tts_pcm_encoding: Literal["int16", "float32"] = "int16"
+    voxtral_tts_speed: float = Field(default=1.0, ge=0.5, le=2.0)
     voxtral_tts_initial_codec_chunk_frames: int | None = Field(default=None, ge=1)
     voxtral_tts_timeout_seconds: float = Field(default=120, ge=1)
     local_vad_confidence: float = Field(default=0.6, ge=0, le=1)

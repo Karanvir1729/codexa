@@ -39,6 +39,7 @@ class VoxtralTTSService(TTSService):
         response_format: str = "wav",
         stream: bool = False,
         pcm_encoding: str = "int16",
+        speed: float = 1.0,
         initial_codec_chunk_frames: int | None = None,
         timeout_seconds: float = 120,
         sample_rate: int | None = None,
@@ -62,10 +63,14 @@ class VoxtralTTSService(TTSService):
         self._response_format = response_format
         self._stream = stream
         self._pcm_encoding = pcm_encoding
+        self._speed = speed
         self._initial_codec_chunk_frames = initial_codec_chunk_frames
         self._timeout = httpx.Timeout(timeout_seconds, connect=10)
         self._target_sample_rate = sample_rate or self.NATIVE_SAMPLE_RATE
         self._resampler = create_stream_resampler()
+
+    def set_speed(self, speed: float) -> None:
+        self._speed = max(0.5, min(2.0, speed))
 
     @traced_tts
     async def run_tts(self, text: str, context_id: str) -> AsyncGenerator[Frame, None]:
@@ -93,6 +98,9 @@ class VoxtralTTSService(TTSService):
                 payload["initial_codec_chunk_frames"] = self._initial_codec_chunk_frames
             if self._ref_audio_base64:
                 payload["ref_audio"] = self._ref_audio_base64
+            if abs(self._speed - 1.0) > 0.01:
+                # vLLM-Omni rejects top-level speed while streaming; extra_body is forwarded.
+                payload["extra_body"] = {"speed": round(self._speed, 2)}
 
             headers = {"content-type": "application/json"}
             if self._stream:
@@ -321,6 +329,7 @@ def create_voxtral_tts_service(settings: Settings) -> VoxtralTTSService:
         response_format=settings.voxtral_tts_response_format,
         stream=settings.voxtral_tts_stream,
         pcm_encoding=settings.voxtral_tts_pcm_encoding,
+        speed=settings.voxtral_tts_speed,
         initial_codec_chunk_frames=settings.voxtral_tts_initial_codec_chunk_frames,
         timeout_seconds=settings.voxtral_tts_timeout_seconds,
         sample_rate=settings.local_audio_output_sample_rate,

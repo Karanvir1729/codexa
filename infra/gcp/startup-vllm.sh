@@ -257,21 +257,19 @@ ADAPTIVE_NOISE_FLOOR = os.environ.get("REMOTE_WHISPER_ADAPTIVE_NOISE_FLOOR", "tr
 NOISE_FLOOR_ALPHA = float(os.environ.get("REMOTE_WHISPER_NOISE_FLOOR_ALPHA", "0.08"))
 NOISE_FLOOR_MULTIPLIER = float(os.environ.get("REMOTE_WHISPER_NOISE_FLOOR_MULTIPLIER", "1.8"))
 MAX_ADAPTIVE_MIN_RMS = float(os.environ.get("REMOTE_WHISPER_MAX_ADAPTIVE_MIN_RMS", "0.03"))
-DEFAULT_INITIAL_PROMPT = (
-    "This is a live voice agent conversation. Transcribe English, Hindi, Urdu, and Hinglish "
-    "accurately. Preserve technical terms and names such as Pipecat, PipeCAD, Cekura, NVIDIA "
-    "NIM, Nemotron, Mistral, Voxtral, Twilio, WebRTC, Vercel, Cloudflare, Google Cloud, "
-    "Vertex AI, Whisper, STT, and TTS."
-)
-DEFAULT_HOTWORDS = (
-    "Pipecat, PipeCAD, Cekura, Daily, NVIDIA, NIM, Nemotron, Mistral, Voxtral, Whisper, "
-    "Faster Whisper, Twilio, WebRTC, Vercel, Cloudflare, Google Cloud, GCP, Vertex AI, "
-    "GPU, TPU, LLM, STT, TTS, Hindi, Urdu, Hinglish"
-)
+DEFAULT_INITIAL_PROMPT = ""
+DEFAULT_HOTWORDS = ""
 INITIAL_PROMPT = os.environ.get("REMOTE_WHISPER_INITIAL_PROMPT", DEFAULT_INITIAL_PROMPT).strip() or None
 HOTWORDS = os.environ.get("REMOTE_WHISPER_HOTWORDS", DEFAULT_HOTWORDS).strip() or None
 
 TOKEN_RE = re.compile(r"[\w\u0900-\u097f]+", re.UNICODE)
+PROMPT_LEAK_PHRASES = {
+    "transcribe english hindi urdu",
+    "transcribe english hindi urdu hinglish",
+    "preserve technical terms",
+    "pipecat pipecad piecad",
+    "pipecat pipecad pipe cad",
+}
 COMMON_HALLUCINATIONS = {
     "thank you",
     "thanks",
@@ -420,6 +418,11 @@ def _filter_reason(
         return "common_hallucination"
     if normalized.count("thank you") >= 2:
         return "common_hallucination"
+    token_normalized = " ".join(_tokens(text))
+    if any(
+        phrase in normalized or phrase in token_normalized for phrase in PROMPT_LEAK_PHRASES
+    ):
+        return "prompt_leak"
 
     if reason := _repetition_reason(text):
         return reason
