@@ -146,6 +146,48 @@ CREATE TABLE IF NOT EXISTS interaction_events (
     FOREIGN KEY(conversation_id) REFERENCES conversations(id)
 );
 
+CREATE TABLE IF NOT EXISTS flow_definitions (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL CHECK(status IN ('draft', 'published', 'archived')) DEFAULT 'draft',
+    version INTEGER NOT NULL DEFAULT 1,
+    graph_json TEXT NOT NULL,
+    published_graph_json TEXT,
+    validation_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    published_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS flow_runs (
+    id TEXT PRIMARY KEY,
+    flow_id TEXT NOT NULL,
+    conversation_id TEXT,
+    active_node_id TEXT NOT NULL,
+    slots_json TEXT NOT NULL DEFAULT '{}',
+    transcript_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL CHECK(status IN ('active', 'completed', 'failed')) DEFAULT 'active',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(flow_id) REFERENCES flow_definitions(id),
+    FOREIGN KEY(conversation_id) REFERENCES conversations(id)
+);
+
+CREATE TABLE IF NOT EXISTS flow_events (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    flow_id TEXT NOT NULL,
+    node_id TEXT,
+    event TEXT NOT NULL,
+    role TEXT,
+    text TEXT,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(run_id) REFERENCES flow_runs(id),
+    FOREIGN KEY(flow_id) REFERENCES flow_definitions(id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_turns_conversation ON turns(conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_feedback_conversation ON feedback(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_eval_results_run ON eval_results(run_id);
@@ -154,6 +196,9 @@ CREATE INDEX IF NOT EXISTS idx_latency_traces_conversation ON latency_traces(con
 CREATE INDEX IF NOT EXISTS idx_latency_traces_interaction ON latency_traces(interaction_id);
 CREATE INDEX IF NOT EXISTS idx_interaction_events_conversation ON interaction_events(conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_interaction_events_interaction ON interaction_events(interaction_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_flow_definitions_status ON flow_definitions(status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_flow_runs_flow ON flow_runs(flow_id, updated_at);
+CREATE INDEX IF NOT EXISTS idx_flow_events_run ON flow_events(run_id, created_at);
 """
 
 

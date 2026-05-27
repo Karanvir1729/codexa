@@ -82,18 +82,23 @@ button:disabled {
   margin-top: 36px;
 }
 
-.nav a {
+.nav a,
+.nav button {
   display: flex;
   align-items: center;
   gap: 10px;
   min-height: 40px;
   padding: 0 12px;
   border-radius: 8px;
+  border: 0;
+  background: transparent;
   color: #a9b6bf;
   text-decoration: none;
+  text-align: left;
 }
 
-.nav a.active {
+.nav a.active,
+.nav button.active {
   background: #172027;
   color: #f8fbfd;
 }
@@ -360,11 +365,90 @@ h2 {
   padding: 18px;
 }
 
+.kitBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border: 1px solid #2a333d;
+  border-radius: 6px;
+  padding: 3px 8px;
+  color: #d8e2ea;
+  background: #0f151b;
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.kitBadge-active,
+.kitBadge-agent {
+  border-color: rgba(216, 251, 111, 0.55);
+  color: #e7ff9a;
+}
+
+.kitBadge-client {
+  border-color: rgba(103, 232, 249, 0.55);
+  color: #baf5ff;
+}
+
+.kitBadge-inactive,
+.kitBadge-secondary {
+  color: #95a3af;
+}
+
+.kitWaveform {
+  position: relative;
+  display: grid;
+  place-items: center;
+  border: 1px solid #1d2730;
+  border-radius: 50%;
+  background: var(--wave-bg);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03), 0 18px 60px rgba(0, 0, 0, 0.32);
+}
+
+.kitWaveform::after {
+  content: "";
+  width: 58%;
+  height: 58%;
+  border-radius: 50%;
+  border: 1px solid #27313b;
+  background: #0f151b;
+}
+
+.kitWaveform.isRotating {
+  animation: waveformRotate 12s linear infinite;
+}
+
+.kitWaveformBar {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 999px;
+  transform-origin: 50% 0;
+  opacity: 0.78;
+}
+
+.kitWaveform.isThinking .kitWaveformBar {
+  animation: waveformPulse 920ms ease-in-out infinite alternate;
+}
+
 .kitBadges {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   gap: 8px;
+}
+
+@keyframes waveformRotate {
+  to {
+    rotate: 360deg;
+  }
+}
+
+@keyframes waveformPulse {
+  to {
+    scale: 1 1.24;
+    opacity: 1;
+  }
 }
 
 .kitControlBar {
@@ -455,6 +539,456 @@ pre {
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.32);
 }
 
+.flowStudio {
+  display: grid;
+  grid-template-rows: auto minmax(620px, calc(100vh - 310px)) auto;
+  gap: 18px;
+  min-height: calc(100vh - 56px);
+}
+
+.flowTopbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.flowSubtitle {
+  max-width: 880px;
+  margin-top: 10px;
+  color: #91a0aa;
+  line-height: 1.45;
+}
+
+.flowActions,
+.flowSimControls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.flowActions button,
+.flowTestBench button,
+.nodePaletteGrid button {
+  min-height: 38px;
+  border-radius: 8px;
+  background: #d8fb6f;
+  color: #10140c;
+  padding: 0 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.flowWorkspace {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr) 330px;
+  gap: 14px;
+}
+
+.flowPalette,
+.flowInspector,
+.flowTestBench {
+  min-width: 0;
+  border: 1px solid #1d242b;
+  border-radius: 8px;
+  background: #0f1419;
+  overflow: hidden;
+}
+
+.flowPalette {
+  display: grid;
+  grid-template-rows: auto auto auto 1fr;
+}
+
+.studioPanelHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  min-height: 56px;
+  padding: 14px;
+  border-bottom: 1px solid #1d242b;
+}
+
+.studioPanelHead.compact {
+  border-top: 1px solid #1d242b;
+}
+
+.studioPanelHead strong,
+.studioPanelHead span {
+  display: block;
+}
+
+.studioPanelHead span {
+  color: #91a0aa;
+  font-size: 12px;
+}
+
+.nodePaletteGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 14px;
+}
+
+.nodePaletteGrid button {
+  min-width: 0;
+  min-height: 42px;
+  background: #172027;
+  color: #dbe7ee;
+  font-size: 12px;
+  padding: 0 10px;
+  justify-content: flex-start;
+}
+
+.flowCanvas {
+  position: relative;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #1d242b;
+  border-radius: 8px;
+  background: #0a0e12;
+}
+
+.flowEdges,
+.flowNodesLayer {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 2200px;
+  height: 1100px;
+}
+
+.flowEdges {
+  pointer-events: none;
+}
+
+.flowEdges path {
+  fill: none;
+  stroke: #52616d;
+  stroke-width: 2;
+}
+
+.flowEdges text {
+  fill: #a9b6bf;
+  font-size: 12px;
+}
+
+.flowNodesLayer {
+  pointer-events: none;
+}
+
+.react-flow,
+.react-flow__renderer,
+.react-flow__viewport {
+  background: #0a0e12;
+}
+
+.react-flow__controls button {
+  background: #111820;
+  border-bottom-color: #26313a;
+  color: #dbe7ee;
+}
+
+.react-flow__minimap {
+  background: #10161c;
+  border: 1px solid #26313a;
+  border-radius: 8px;
+}
+
+.flowNodeCard {
+  position: absolute;
+  width: 230px;
+  border: 1px solid #2a3640;
+  border-radius: 8px;
+  background: #111820;
+  color: #f3f6f8;
+  padding: 12px;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.22);
+  pointer-events: auto;
+  user-select: none;
+}
+
+.flowNodeCard.selected,
+.selectedRuntimeNode .flowNodeCard {
+  border-color: #67e8f9;
+}
+
+.activeRuntimeNode .flowNodeCard {
+  border-color: #d8fb6f;
+  box-shadow: 0 0 0 2px rgba(216, 251, 111, 0.18), 0 18px 54px rgba(0, 0, 0, 0.28);
+}
+
+.flowNodeCard.start,
+.flowNodeCard.end {
+  background: #101714;
+}
+
+.flowNodeCard.codex_task {
+  border-color: #67e8f9;
+}
+
+.flowNodeCard.guardrail {
+  border-color: #fbbf24;
+}
+
+.flowNodeTop,
+.flowNodeMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.flowNodeTop {
+  color: #91a0aa;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.flowNodeCard strong {
+  display: block;
+  margin-top: 9px;
+  font-size: 15px;
+}
+
+.flowNodeCard p {
+  display: -webkit-box;
+  overflow: hidden;
+  min-height: 40px;
+  margin-top: 6px;
+  color: #b7c4cc;
+  font-size: 12px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.flowNodeMeta {
+  margin-top: 10px;
+}
+
+.flowNodeMeta small {
+  border-radius: 999px;
+  background: #1b242c;
+  color: #dbe7ee;
+  padding: 4px 8px;
+}
+
+.flowInspector {
+  overflow: auto;
+}
+
+.emptyInspector {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  padding: 24px;
+  color: #91a0aa;
+  text-align: center;
+}
+
+.inspectorScroll {
+  display: grid;
+}
+
+.inspectorField {
+  display: grid;
+  gap: 7px;
+  padding: 12px 14px;
+}
+
+.inspectorField span,
+.inspectorGroup h3 {
+  color: #91a0aa;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.inspectorField input,
+.inspectorField select,
+.inspectorField textarea,
+.inspectorGroup textarea,
+.flowSimControls input[type="text"],
+.flowSimControls > input {
+  width: 100%;
+  border: 1px solid #26313a;
+  border-radius: 8px;
+  outline: none;
+  background: #0a0e12;
+  color: #f3f6f8;
+  padding: 10px 11px;
+}
+
+.inspectorField textarea,
+.inspectorGroup textarea {
+  resize: vertical;
+  min-height: 70px;
+  font-family: inherit;
+  line-height: 1.45;
+}
+
+.inspectorField input:focus,
+.inspectorField select:focus,
+.inspectorField textarea:focus,
+.inspectorGroup textarea:focus,
+.flowSimControls input:focus {
+  border-color: #d8fb6f;
+}
+
+.inspectorGroup {
+  display: grid;
+  gap: 2px;
+  padding: 12px 0;
+  border-top: 1px solid #1d242b;
+}
+
+.inspectorGroup h3 {
+  margin: 0;
+  padding: 0 14px 6px;
+}
+
+.inlineCheck {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 14px;
+  color: #dbe7ee;
+  font-size: 13px;
+}
+
+.edgeEditor {
+  display: grid;
+  gap: 8px;
+  padding: 0 14px 12px;
+}
+
+.edgeEditorRow {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.edgeEditorRow input,
+.edgeEditorRow select {
+  min-width: 0;
+  border: 1px solid #26313a;
+  border-radius: 8px;
+  background: #0a0e12;
+  color: #f3f6f8;
+  padding: 8px;
+}
+
+.edgeEditorRow button {
+  min-height: 36px;
+  border-radius: 8px;
+  background: #172027;
+  color: #dbe7ee;
+  padding: 0 10px;
+}
+
+.validationList {
+  display: grid;
+  gap: 8px;
+  overflow: auto;
+  padding: 14px;
+}
+
+.validationOk,
+.validationBad {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #d8fb6f;
+}
+
+.validationBad {
+  color: #ffb0b0;
+}
+
+.validationError,
+.validationWarning {
+  border-radius: 8px;
+  margin: 0;
+  padding: 9px 10px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.validationError {
+  background: rgba(255, 115, 115, 0.12);
+  color: #ffb0b0;
+}
+
+.validationWarning {
+  background: rgba(251, 191, 36, 0.12);
+  color: #f9d97a;
+}
+
+.flowTestBench {
+  display: grid;
+  grid-template-rows: auto minmax(130px, 1fr) auto;
+}
+
+.flowTranscript {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 14px;
+}
+
+.flowTurn {
+  flex: 0 0 min(360px, 82vw);
+}
+
+.flowTurn span {
+  display: block;
+  margin-bottom: 5px;
+  color: #91a0aa;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.flowTurn p {
+  border-radius: 8px;
+  background: #172027;
+  color: #dbe7ee;
+  padding: 11px 12px;
+  line-height: 1.4;
+}
+
+.flowTurn.assistant p {
+  background: #d8fb6f;
+  color: #11160c;
+}
+
+.flowTurn small {
+  display: block;
+  margin-top: 5px;
+  color: #91a0aa;
+}
+
+.flowSimControls {
+  border-top: 1px solid #1d242b;
+  padding: 14px;
+}
+
+.flowSimControls label {
+  flex: 0 0 auto;
+  color: #dbe7ee;
+  font-size: 13px;
+}
+
+.flowSimControls > input {
+  min-height: 40px;
+}
+
 @media (max-width: 980px) {
   .shell {
     grid-template-columns: 1fr;
@@ -474,6 +1008,25 @@ pre {
 
   .conversationPanel {
     min-height: 560px;
+  }
+
+  .flowStudio {
+    grid-template-rows: auto auto auto;
+  }
+
+  .flowTopbar,
+  .flowActions,
+  .flowSimControls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .flowWorkspace {
+    grid-template-columns: 1fr;
+  }
+
+  .flowCanvas {
+    min-height: 620px;
   }
 }
 

@@ -19,6 +19,7 @@ from .db import Database, dumps, loads
 from .eval_scheduler import EvalScheduler
 from .evaluator import EvalRunner
 from .feedback import FeedbackLearner, PromptRepository
+from .flow_runtime import FlowRepository, FlowRuntime, flow_summary, validate_flow_graph
 from .llm import make_llm_client
 from .local_voice_runtime import require_openai_compatible_llm, run_browser_pipecat_voice_agent
 from .pipecat_runtime import run_pipecat_twilio_bot
@@ -57,6 +58,28 @@ class EvalSchedulerRequest(BaseModel):
     apply_feedback: bool | None = None
 
 
+class FlowCreateRequest(BaseModel):
+    name: str = Field(default="Untitled voice flow", min_length=1)
+    description: str = ""
+
+
+class FlowUpdateRequest(BaseModel):
+    name: str = Field(min_length=1)
+    description: str = ""
+    graph: dict[str, Any]
+
+
+class FlowValidateRequest(BaseModel):
+    graph: dict[str, Any]
+
+
+class FlowSimulateRequest(BaseModel):
+    message: str | None = None
+    run_id: str | None = None
+    force_interrupt: bool = False
+    conversation_id: str | None = None
+
+
 settings: Settings = get_settings()
 REPO_ROOT = Path(__file__).resolve().parents[2]
 logger = logging.getLogger(__name__)
@@ -80,6 +103,8 @@ prompt_repo = PromptRepository(db)
 learner = FeedbackLearner(db, prompt_repo, settings.latency_target_ms)
 cost_guard = CostGuard(db, settings)
 agent = AgentService(db, settings, make_llm_client(settings), cost_guard)
+flow_repo = FlowRepository(db)
+flow_runtime = FlowRuntime(db, flow_repo, make_llm_client(settings))
 eval_runner = EvalRunner(db, agent, learner)
 eval_scheduler = EvalScheduler(
     eval_runner,
@@ -317,6 +342,75 @@ async def chat(payload: ChatRequest) -> dict[str, Any]:
         caller=payload.caller,
         metadata=payload.metadata,
     )
+
+
+@app.get("/api/flows")
+async def list_flows() -> dict[str, Any]:
+    return {"flows": [flow_summary(flow) for flow in flow_repo.list()]}
+
+
+@app.get("/api/flows/active")
+async def active_flow() -> dict[str, Any]:
+    return {"flow": flow_repo.active().to_dict()}
+
+
+@app.post("/api/flows")
+async def create_flow(payload: FlowCreateRequest) -> dict[str, Any]:
+    return {"flow": flow_repo.create(payload.name, payload.description).to_dict()}
+
+
+@app.get("/api/flows/{flow_id}")
+async def get_flow(flow_id: str) -> dict[str, Any]:
+    try:
+        return {"flow": flow_repo.get(flow_id).to_dict()}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Flow not found.") from exc
+
+
+@app.put("/api/flows/{flow_id}")
+async def update_flow(flow_id: str, payload: FlowUpdateRequest) -> dict[str, Any]:
+    try:
+        return {
+            "flow": flow_repo.update(
+                flow_id,
+                payload.name,
+                payload.description,
+                payload.graph,
+            ).to_dict()
+        }
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Flow not found.") from exc
+
+
+@app.post("/api/flows/{flow_id}/publish")
+async def publish_flow(flow_id: str) -> dict[str, Any]:
+    try:
+        return {"flow": flow_repo.publish(flow_id).to_dict()}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Flow not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/flows/validate")
+async def validate_flow(payload: FlowValidateRequest) -> dict[str, Any]:
+    return {"validation": validate_flow_graph(payload.graph)}
+
+
+@app.post("/api/flows/{flow_id}/simulate")
+async def simulate_flow(flow_id: str, payload: FlowSimulateRequest) -> dict[str, Any]:
+    try:
+        return await flow_runtime.handle_message(
+            flow_id=flow_id,
+            message=payload.message,
+            run_id=payload.run_id,
+            force_interrupt=payload.force_interrupt,
+            conversation_id=payload.conversation_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Flow or run not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/conversations/{conversation_id}")

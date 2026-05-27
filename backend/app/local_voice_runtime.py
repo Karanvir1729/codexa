@@ -232,6 +232,24 @@ def merge_adjacent_chat_messages(messages: list[Any]) -> list[Any]:
     return merged
 
 
+def trim_voice_chat_messages(messages: list[Any], *, max_messages: int, max_chars: int) -> list[Any]:
+    """Keep voice prompts short enough for low-latency hosted models."""
+
+    system_messages = [message for message in messages if _message_role(message) == "system"]
+    chat_messages = [message for message in messages if _message_role(message) != "system"]
+    kept = [*system_messages[:1], *chat_messages[-max_messages:]]
+    trimmed: list[Any] = []
+    for message in kept:
+        text = _message_content_text(message)
+        if text and len(text) > max_chars:
+            role = _message_role(message)
+            content = text[-max_chars:] if role == "user" else text[:max_chars]
+            trimmed.append({**message, "content": content.strip()})
+        else:
+            trimmed.append(message)
+    return trimmed
+
+
 async def create_local_tts_service(settings: Settings):
     from loguru import logger
     from pipecat.services.tts_service import TextAggregationMode
@@ -643,8 +661,13 @@ async def _run_voice_pipeline(
                 trace.llm_request_started_at = time.perf_counter()
                 latency_state.response_trace = trace
                 log_latency("llm_request_started", trace)
+            messages = trim_voice_chat_messages(
+                merge_adjacent_chat_messages(context.get_messages()),
+                max_messages=settings.voice_llm_context_messages,
+                max_chars=settings.voice_llm_context_max_chars,
+            )
             normalized = LLMContext(
-                messages=merge_adjacent_chat_messages(context.get_messages()),
+                messages=messages,
                 tools=context.tools,
                 tool_choice=context.tool_choice,
             )

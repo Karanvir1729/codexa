@@ -128,6 +128,20 @@ export class BrowserAudioMediaManager {
     return {};
   }
 
+  private microphoneConstraints(): MediaTrackConstraints {
+    const constraints: MediaTrackConstraints = {
+      echoCancellation: { ideal: true },
+      noiseSuppression: { ideal: true },
+      autoGainControl: { ideal: true },
+      channelCount: { ideal: 1 },
+      sampleRate: { ideal: 48000 }
+    };
+    if (this.selectedMicDeviceId) {
+      constraints.deviceId = { exact: this.selectedMicDeviceId };
+    }
+    return constraints;
+  }
+
   enableMic(enable: boolean) {
     this.micEnabled = enable;
     if (enable) {
@@ -180,11 +194,10 @@ export class BrowserAudioMediaManager {
       this.micStream = this.pendingMicStream;
       this.pendingMicStream = null;
     } else {
-      const audio =
-        this.selectedMicDeviceId
-          ? { deviceId: { exact: this.selectedMicDeviceId } }
-          : true;
-      this.micStream = await navigator.mediaDevices.getUserMedia({ audio, video: false });
+      this.micStream = await navigator.mediaDevices.getUserMedia({
+        audio: this.microphoneConstraints(),
+        video: false
+      });
     }
     const [inputTrack] = this.micStream.getAudioTracks();
     this.selectedMicDeviceId = inputTrack?.getSettings().deviceId ?? this.selectedMicDeviceId;

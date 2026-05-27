@@ -60,7 +60,13 @@ REMOTE_WHISPER_COMPUTE_TYPE="${REMOTE_WHISPER_COMPUTE_TYPE:-int8_float16}"
 REMOTE_WHISPER_CPU_THREADS="${REMOTE_WHISPER_CPU_THREADS:-4}"
 REMOTE_WHISPER_NUM_WORKERS="${REMOTE_WHISPER_NUM_WORKERS:-1}"
 REMOTE_WHISPER_PORT="${REMOTE_WHISPER_PORT:-7001}"
-REMOTE_WHISPER_MIN_RMS="${REMOTE_WHISPER_MIN_RMS:-0.002}"
+REMOTE_WHISPER_MIN_RMS="${REMOTE_WHISPER_MIN_RMS:-0.003}"
+REMOTE_WHISPER_MIN_DURATION_S="${REMOTE_WHISPER_MIN_DURATION_S:-0.10}"
+REMOTE_WHISPER_MIN_LANGUAGE_PROB="${REMOTE_WHISPER_MIN_LANGUAGE_PROB:-0.18}"
+REMOTE_WHISPER_MIN_AVG_LOGPROB="${REMOTE_WHISPER_MIN_AVG_LOGPROB:--1.1}"
+REMOTE_WHISPER_MAX_COMPRESSION_RATIO="${REMOTE_WHISPER_MAX_COMPRESSION_RATIO:-2.6}"
+REMOTE_WHISPER_HALLUCINATION_MAX_DURATION_S="${REMOTE_WHISPER_HALLUCINATION_MAX_DURATION_S:-1.6}"
+REMOTE_WHISPER_HALLUCINATION_MAX_RMS="${REMOTE_WHISPER_HALLUCINATION_MAX_RMS:-0.018}"
 AUTO_STOP_HOURS="${AUTO_STOP_HOURS:-4}"
 HUGGINGFACE_TOKEN="${HUGGINGFACE_TOKEN:-${HF_TOKEN:-}}"
 VLLM_API_KEY="${VLLM_API_KEY:-}"
@@ -171,7 +177,7 @@ else
     --description "Allow same-VPC app VMs to reach vLLM and remote Whisper")
 fi
 
-metadata_csv="model-id=${MODEL_ID},served-model-name=${SERVED_MODEL_NAME},tensor-parallel-size=${TENSOR_PARALLEL_SIZE},max-model-len=${MAX_MODEL_LEN},max-num-seqs=${MAX_NUM_SEQS},gpu-memory-utilization=${GPU_MEMORY_UTILIZATION},vllm-port=${VLLM_PORT},vllm-version=${VLLM_VERSION},nvidia-driver-package=${NVIDIA_DRIVER_PACKAGE},remote-whisper-model=${REMOTE_WHISPER_MODEL},remote-whisper-device=${REMOTE_WHISPER_DEVICE},remote-whisper-compute-type=${REMOTE_WHISPER_COMPUTE_TYPE},remote-whisper-cpu-threads=${REMOTE_WHISPER_CPU_THREADS},remote-whisper-num-workers=${REMOTE_WHISPER_NUM_WORKERS},remote-whisper-port=${REMOTE_WHISPER_PORT},remote-whisper-min-rms=${REMOTE_WHISPER_MIN_RMS},auto-stop-hours=${AUTO_STOP_HOURS}"
+metadata_csv="model-id=${MODEL_ID},served-model-name=${SERVED_MODEL_NAME},tensor-parallel-size=${TENSOR_PARALLEL_SIZE},max-model-len=${MAX_MODEL_LEN},max-num-seqs=${MAX_NUM_SEQS},gpu-memory-utilization=${GPU_MEMORY_UTILIZATION},vllm-port=${VLLM_PORT},vllm-version=${VLLM_VERSION},nvidia-driver-package=${NVIDIA_DRIVER_PACKAGE},remote-whisper-model=${REMOTE_WHISPER_MODEL},remote-whisper-device=${REMOTE_WHISPER_DEVICE},remote-whisper-compute-type=${REMOTE_WHISPER_COMPUTE_TYPE},remote-whisper-cpu-threads=${REMOTE_WHISPER_CPU_THREADS},remote-whisper-num-workers=${REMOTE_WHISPER_NUM_WORKERS},remote-whisper-port=${REMOTE_WHISPER_PORT},remote-whisper-min-rms=${REMOTE_WHISPER_MIN_RMS},remote-whisper-min-duration-s=${REMOTE_WHISPER_MIN_DURATION_S},remote-whisper-min-language-prob=${REMOTE_WHISPER_MIN_LANGUAGE_PROB},remote-whisper-min-avg-logprob=${REMOTE_WHISPER_MIN_AVG_LOGPROB},remote-whisper-max-compression-ratio=${REMOTE_WHISPER_MAX_COMPRESSION_RATIO},remote-whisper-hallucination-max-duration-s=${REMOTE_WHISPER_HALLUCINATION_MAX_DURATION_S},remote-whisper-hallucination-max-rms=${REMOTE_WHISPER_HALLUCINATION_MAX_RMS},auto-stop-hours=${AUTO_STOP_HOURS}"
 if [[ -n "$VLLM_API_KEY" ]]; then
   metadata_csv="${metadata_csv},vllm-api-key=${VLLM_API_KEY}"
 fi

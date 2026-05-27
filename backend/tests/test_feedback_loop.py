@@ -13,6 +13,7 @@ from app.db import Database
 from app.eval_scheduler import EvalScheduler
 from app.evaluator import EvalRunner
 from app.feedback import FeedbackLearner, PromptRepository
+from app.flow_runtime import FlowRepository, FlowRuntime, validate_flow_graph
 from app.llm import LLMResult, MockLLMClient
 from app.local_voice_runtime import (
     LocalVoiceConversationRecorder,
@@ -341,6 +342,64 @@ def test_local_voice_system_instruction_respects_no_think(tmp_path: Path):
 
     assert instruction.startswith("/no_think\n")
     assert "under 35 words" in instruction
+
+
+def test_default_flow_bootstraps_with_interruptible_codex_path(tmp_path: Path):
+    settings = Settings(database_path=str(tmp_path / "agent.sqlite3"), llm_provider="mock")
+    repo = FlowRepository(Database(settings.database_path))
+
+    flow = repo.active()
+    validation = validate_flow_graph(flow.graph)
+    node_types = {node["data"]["nodeType"] for node in flow.graph["nodes"]}
+
+    assert flow.status == "published"
+    assert validation["ok"] is True
+    assert {"start", "listen", "intent_router", "codex_task", "guardrail", "fallback"} <= node_types
+
+
+@pytest.mark.asyncio
+async def test_flow_runtime_routes_code_request_through_codex_guardrail(tmp_path: Path):
+    settings = Settings(database_path=str(tmp_path / "agent.sqlite3"), llm_provider="mock")
+    db = Database(settings.database_path)
+    repo = FlowRepository(db)
+    runtime = FlowRuntime(db, repo, MockLLMClient(settings))
+    flow = repo.active()
+
+    started = await runtime.handle_message(flow_id=flow.id, message=None)
+    routed = await runtime.handle_message(
+        flow_id=flow.id,
+        run_id=started["run_id"],
+        message="I need Codex to inspect this repo and fix the failing tests.",
+    )
+    approved = await runtime.handle_message(
+        flow_id=flow.id,
+        run_id=started["run_id"],
+        message="yes proceed",
+    )
+
+    assert started["messages"][0]["text"] == "I'm here. Tell me what you want to do."
+    assert routed["active_node_id"] == "codex_confirm"
+    assert any("Codex Orchestrator" in message["text"] for message in approved["messages"])
+
+
+@pytest.mark.asyncio
+async def test_flow_runtime_interrupt_routes_to_cancel(tmp_path: Path):
+    settings = Settings(database_path=str(tmp_path / "agent.sqlite3"), llm_provider="mock")
+    db = Database(settings.database_path)
+    repo = FlowRepository(db)
+    runtime = FlowRuntime(db, repo, MockLLMClient(settings))
+    flow = repo.active()
+
+    started = await runtime.handle_message(flow_id=flow.id, message=None)
+    interrupted = await runtime.handle_message(
+        flow_id=flow.id,
+        run_id=started["run_id"],
+        message="stop, actually cancel that",
+        force_interrupt=True,
+    )
+
+    assert interrupted["active_node_id"] == "understand_request"
+    assert any("Stopped." in message["text"] for message in interrupted["messages"])
 
 
 @pytest.mark.asyncio

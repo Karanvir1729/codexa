@@ -1,26 +1,21 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Activity,
-  Brain,
-  CheckCircle2,
-  Clock3,
-  Gauge,
-  MessageSquare,
-  PhoneCall,
-  Play,
-  RefreshCcw,
-  Send,
-  Server,
-  ShieldCheck,
-  Sparkles,
-  Square,
-  ThumbsDown,
-  ThumbsUp
-} from "lucide-react";
-import {
-  Badge,
-  CircularWaveform
-} from "@pipecat-ai/voice-ui-kit";
+import { FormEvent, type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import Activity from "lucide-react/dist/esm/icons/activity.js";
+import Brain from "lucide-react/dist/esm/icons/brain.js";
+import CheckCircle2 from "lucide-react/dist/esm/icons/check-circle-2.js";
+import Clock3 from "lucide-react/dist/esm/icons/clock-3.js";
+import Gauge from "lucide-react/dist/esm/icons/gauge.js";
+import MessageSquare from "lucide-react/dist/esm/icons/message-square.js";
+import PhoneCall from "lucide-react/dist/esm/icons/phone-call.js";
+import Play from "lucide-react/dist/esm/icons/play.js";
+import RefreshCcw from "lucide-react/dist/esm/icons/refresh-ccw.js";
+import Send from "lucide-react/dist/esm/icons/send.js";
+import Server from "lucide-react/dist/esm/icons/server.js";
+import ShieldCheck from "lucide-react/dist/esm/icons/shield-check.js";
+import Sparkles from "lucide-react/dist/esm/icons/sparkles.js";
+import Square from "lucide-react/dist/esm/icons/square.js";
+import ThumbsDown from "lucide-react/dist/esm/icons/thumbs-down.js";
+import ThumbsUp from "lucide-react/dist/esm/icons/thumbs-up.js";
+import Workflow from "lucide-react/dist/esm/icons/workflow.js";
 import { PipecatClient, type TransportState } from "@pipecat-ai/client-js";
 import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
 import { BrowserAudioMediaManager } from "./browserAudioMediaManager";
@@ -43,6 +38,7 @@ import {
   startEvalScheduler,
   stopEvalScheduler
 } from "./api";
+import { FlowStudio } from "./FlowStudio";
 
 type PipecatErrorMessage = {
   data?: {
@@ -98,6 +94,73 @@ const prompts = [
 const voiceIceServers: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
 const voiceConnectTimeoutMs = 30000;
 
+function Badge({
+  children,
+  color
+}: {
+  children: React.ReactNode;
+  color: string;
+  variant?: string;
+  rounded?: string;
+}) {
+  return <span className={`kitBadge kitBadge-${color}`}>{children}</span>;
+}
+
+function CircularWaveform({
+  backgroundColor,
+  barWidth,
+  color1,
+  color2,
+  isThinking,
+  numBars,
+  rotationEnabled,
+  sensitivity,
+  size
+}: {
+  audioTrack: MediaStreamTrack | null;
+  backgroundColor: string;
+  barWidth: number;
+  color1: string;
+  color2: string;
+  isThinking: boolean;
+  numBars: number;
+  rotationEnabled: boolean;
+  sensitivity: number;
+  size: number;
+}) {
+  const radius = size / 2 - 16;
+  return (
+    <div
+      className={`kitWaveform ${rotationEnabled ? "isRotating" : ""} ${isThinking ? "isThinking" : ""}`}
+      style={
+        {
+          "--wave-bg": backgroundColor,
+          width: size,
+          height: size
+        } as CSSProperties
+      }
+    >
+      {Array.from({ length: numBars }).map((_, index) => {
+        const height = Math.round((16 + (index % 7) * 4) * sensitivity);
+        const color = index % 2 ? color2 : color1;
+        return (
+          <span
+            key={index}
+            className="kitWaveformBar"
+            style={{
+              width: barWidth,
+              height,
+              background: color,
+              transform: `rotate(${(360 / numBars) * index}deg) translateY(-${radius}px)`,
+              animationDelay: `${index * 32}ms`
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   let timeoutId: number | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
@@ -116,8 +179,15 @@ async function requestMicrophoneStream() {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error("This browser does not expose microphone capture.");
   }
+  const audio: MediaTrackConstraints = {
+    echoCancellation: { ideal: true },
+    noiseSuppression: { ideal: true },
+    autoGainControl: { ideal: true },
+    channelCount: { ideal: 1 },
+    sampleRate: { ideal: 48000 }
+  };
   try {
-    return await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    return await navigator.mediaDevices.getUserMedia({ audio, video: false });
   } catch (error) {
     if (error instanceof DOMException && error.name === "NotAllowedError") {
       throw new Error(
@@ -129,6 +199,7 @@ async function requestMicrophoneStream() {
 }
 
 export function App() {
+  const [activeView, setActiveView] = useState<"live" | "flow">("flow");
   const [health, setHealth] = useState<Health | null>(null);
   const [prompt, setPrompt] = useState<PromptState | null>(null);
   const [conversationId, setConversationId] = useState<string | undefined>();
@@ -418,13 +489,22 @@ export function App() {
           </div>
         </div>
         <nav className="nav">
-          <a className="active"><MessageSquare size={18} /> Live</a>
-          <a><Activity size={18} /> Evals</a>
-          <a><Server size={18} /> Runtime</a>
+          <button className={activeView === "flow" ? "active" : ""} onClick={() => setActiveView("flow")}>
+            <Workflow size={18} /> Flow
+          </button>
+          <button className={activeView === "live" ? "active" : ""} onClick={() => setActiveView("live")}>
+            <MessageSquare size={18} /> Live
+          </button>
+          <button onClick={() => setActiveView("live")}><Activity size={18} /> Evals</button>
+          <button onClick={() => setActiveView("live")}><Server size={18} /> Runtime</button>
         </nav>
       </aside>
 
       <section className="workspace">
+        {activeView === "flow" ? (
+          <FlowStudio onNotice={setNotice} />
+        ) : (
+          <>
         <header className="topbar">
           <div>
             <p className="eyebrow">NVIDIA reasoning voice agent</p>
@@ -584,6 +664,8 @@ export function App() {
             </section>
           </div>
         </section>
+          </>
+        )}
         {notice && <div className="toast">{notice}</div>}
       </section>
     </main>

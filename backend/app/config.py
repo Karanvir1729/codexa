@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     llm_provider: Literal["mock", "nvidia", "vertex_nim", "local", "ollama"] = "mock"
     nvidia_api_key: str | None = None
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
-    nvidia_model: str = "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+    nvidia_model: str = "mistralai/mistral-nemotron"
     vertex_nim_project: str | None = None
     vertex_nim_region: str = "us-east4"
     vertex_nim_endpoint_id: str | None = None
@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     max_completion_tokens: int = 24
     llm_timeout_seconds: float = 60
     llm_warmup_enabled: bool = True
+    voice_llm_context_messages: int = Field(default=8, ge=2)
+    voice_llm_context_max_chars: int = Field(default=700, ge=100)
 
     cost_guard_enabled: bool = True
     cost_guard_cap_usd: float = Field(default=95.0, ge=0)

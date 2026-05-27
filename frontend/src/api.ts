@@ -59,6 +59,75 @@ export type WebRTCIceConfig = {
   iceServers: RTCIceServer[];
 };
 
+export type FlowValidation = {
+  ok: boolean;
+  errors: string[];
+  warnings: string[];
+  node_count: number;
+  edge_count: number;
+};
+
+export type FlowSummary = {
+  id: string;
+  name: string;
+  description: string;
+  status: "draft" | "published" | "archived";
+  version: number;
+  node_count: number;
+  edge_count: number;
+  validation: FlowValidation;
+  updated_at: string;
+  published_at: string | null;
+};
+
+export type FlowDefinition = {
+  id: string;
+  name: string;
+  description: string;
+  status: "draft" | "published" | "archived";
+  version: number;
+  graph: FlowGraph;
+  published_graph: FlowGraph | null;
+  validation: FlowValidation;
+  created_at: string;
+  updated_at: string;
+  published_at: string | null;
+};
+
+export type FlowGraph = {
+  nodes: Array<Record<string, unknown>>;
+  edges: Array<Record<string, unknown>>;
+  viewport?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+};
+
+export type FlowSimulationMessage = {
+  id: string;
+  role: "assistant";
+  node_id: string;
+  text: string;
+  latency_ms?: number;
+};
+
+export type FlowSimulationResponse = {
+  run_id: string;
+  flow_id: string;
+  flow_version: number;
+  status: "active" | "completed" | "failed";
+  active_node_id: string;
+  active_node: Record<string, unknown> | null;
+  slots: Record<string, unknown>;
+  transcript: Array<{
+    id: string;
+    role: "user" | "assistant";
+    text: string;
+    latency_ms?: number;
+    created_at: number;
+  }>;
+  messages: FlowSimulationMessage[];
+  error: string | null;
+};
+
 export const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
 export function apiUrl(path: string) {
@@ -157,4 +226,64 @@ export function listEvalRuns() {
       aggregate_score: number;
     }>;
   }>("/api/evals/runs");
+}
+
+export function listFlows() {
+  return request<{ flows: FlowSummary[] }>("/api/flows");
+}
+
+export function getActiveFlow() {
+  return request<{ flow: FlowDefinition }>("/api/flows/active");
+}
+
+export function getFlow(flowId: string) {
+  return request<{ flow: FlowDefinition }>(`/api/flows/${flowId}`);
+}
+
+export function saveFlow(payload: {
+  id: string;
+  name: string;
+  description: string;
+  graph: FlowGraph;
+}) {
+  return request<{ flow: FlowDefinition }>(`/api/flows/${payload.id}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      name: payload.name,
+      description: payload.description,
+      graph: payload.graph
+    })
+  });
+}
+
+export function publishFlow(flowId: string) {
+  return request<{ flow: FlowDefinition }>(`/api/flows/${flowId}/publish`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+}
+
+export function validateFlow(graph: FlowGraph) {
+  return request<{ validation: FlowValidation }>("/api/flows/validate", {
+    method: "POST",
+    body: JSON.stringify({ graph })
+  });
+}
+
+export function simulateFlow(payload: {
+  flowId: string;
+  runId?: string;
+  message?: string;
+  forceInterrupt?: boolean;
+  conversationId?: string;
+}) {
+  return request<FlowSimulationResponse>(`/api/flows/${payload.flowId}/simulate`, {
+    method: "POST",
+    body: JSON.stringify({
+      run_id: payload.runId,
+      message: payload.message,
+      force_interrupt: payload.forceInterrupt ?? false,
+      conversation_id: payload.conversationId
+    })
+  });
 }

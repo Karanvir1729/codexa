@@ -12,3 +12,7 @@ __pycache__/
 *.tsbuildinfo
 data/
 frontend/dist/
+logs/
+.playwright-mcp/
+voice-flow-studio.png
+docs/repository-variable-map.md

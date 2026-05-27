@@ -66,6 +66,12 @@ class RemoteWhisperSTTService(SegmentedSTTService):
 
         text = str(transcript.get("text", "")).strip()
         if not text:
+            if reason := transcript.get("filtered_reason"):
+                logger.debug(
+                    "Remote Whisper suppressed transcript "
+                    f"reason={reason} duration_ms={transcript.get('audio_duration_ms')} "
+                    f"rms={transcript.get('audio_rms')}"
+                )
             return
 
         logger.debug(f"Remote Whisper transcription: [{text}]")
