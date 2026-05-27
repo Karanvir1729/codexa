@@ -58,6 +58,25 @@ export type EvalSchedulerState = {
   next_run_at: string | null;
 };
 
+export type AutoImprovementState = {
+  active_prompt_version: number;
+  learned_hints: string;
+  proposed_hints: string[];
+  feedback_summary: Array<{
+    label: string;
+    avg_rating: number | null;
+    count: number;
+  }>;
+  recent_eval_results: Array<{
+    case_id: string;
+    score: number;
+    passed: boolean;
+    latency_ms: number | null;
+    failed_checks: string[];
+    created_at: string;
+  }>;
+};
+
 export type WebRTCIceConfig = {
   iceServers: RTCIceServer[];
 };
@@ -110,6 +129,12 @@ export type FlowSimulationMessage = {
   node_id: string;
   text: string;
   latency_ms?: number;
+  voice?: {
+    tone?: string;
+    speed?: number;
+    language?: string;
+    allowBargeIn?: boolean;
+  };
 };
 
 export type FlowSimulationResponse = {
@@ -169,6 +194,10 @@ export function getPrompt() {
   return request<PromptState>("/api/prompt");
 }
 
+export function getAutoImprovement() {
+  return request<AutoImprovementState>("/api/auto-improvement");
+}
+
 export function getCost() {
   return request<{ cost_guard: CostGuard }>("/api/cost");
 }
@@ -203,6 +232,7 @@ export function runEval() {
     status: string;
     aggregate_score: number;
     prompt_version: number | null;
+    improvement_hints: string[];
     results: Array<{ case_id: string; score: number; passed: boolean; latency_ms: number }>;
   }>("/api/evals/run", {
     method: "POST",
@@ -298,4 +328,10 @@ export function simulateFlow(payload: {
       conversation_id: payload.conversationId
     })
   });
+}
+
+export function getFlowRunByConversation(conversationId: string) {
+  return request<{ run: FlowSimulationResponse | null }>(
+    `/api/flows/runs/by-conversation/${encodeURIComponent(conversationId)}`
+  );
 }

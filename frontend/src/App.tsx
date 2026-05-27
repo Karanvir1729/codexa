@@ -21,10 +21,12 @@ import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
 import { BrowserAudioMediaManager } from "./browserAudioMediaManager";
 import {
   apiUrl,
+  AutoImprovementState,
   ChatResponse,
   CostGuard,
   EvalSchedulerState,
   getEvalScheduler,
+  getAutoImprovement,
   getCost,
   getHealth,
   getWebRTCIceConfig,
@@ -209,6 +211,7 @@ export function App() {
   const [evalBusy, setEvalBusy] = useState(false);
   const [evalRuns, setEvalRuns] = useState<EvalRun[]>([]);
   const [scheduler, setScheduler] = useState<EvalSchedulerState | null>(null);
+  const [autoImprovement, setAutoImprovement] = useState<AutoImprovementState | null>(null);
   const [cost, setCost] = useState<CostGuard | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [voiceClient, setVoiceClient] = useState<PipecatClient | null>(null);
@@ -227,18 +230,20 @@ export function App() {
   const voiceModeInitializedRef = useRef(false);
 
   async function refresh() {
-    const [healthState, promptState, runs, costState, schedulerState] = await Promise.all([
+    const [healthState, promptState, runs, costState, schedulerState, improvementState] = await Promise.all([
       getHealth(),
       getPrompt(),
       listEvalRuns(),
       getCost(),
-      getEvalScheduler()
+      getEvalScheduler(),
+      getAutoImprovement()
     ]);
     setHealth(healthState);
     setPrompt(promptState);
     setEvalRuns(runs.runs);
     setCost(costState.cost_guard);
     setScheduler(schedulerState);
+    setAutoImprovement(improvementState);
   }
 
   useEffect(() => {
@@ -695,11 +700,16 @@ export function App() {
             <section className="panel grow">
               <div className="sectionHead">
                 <div>
-                  <h2>Learned Hints</h2>
-                  <p>Active prompt delta</p>
+                  <h2>Auto-Improvement</h2>
+                  <p>Eval data feeding prompt v{autoImprovement?.active_prompt_version ?? prompt?.version ?? "-"}</p>
                 </div>
               </div>
               <pre>{prompt?.learned_hints || "No feedback has been applied yet."}</pre>
+              <div className="improvementList">
+                {(autoImprovement?.proposed_hints ?? []).map((hint) => (
+                  <span key={hint}>{hint.replace(/^-\s*/, "")}</span>
+                ))}
+              </div>
             </section>
           </div>
         </section>

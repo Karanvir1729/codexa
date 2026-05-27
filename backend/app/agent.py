@@ -4,7 +4,7 @@ import re
 import uuid
 from typing import Any
 
-from .voice_runtime_controls import voice_speed_intent, voice_speed_response
+from .voice_runtime_controls import voice_speed_intent, voice_speed_response, voice_tone_intent, voice_tone_response
 from .config import Settings
 from .cost_guard import CostGuard
 from .db import Database, dumps, loads
@@ -39,6 +39,7 @@ def build_runtime_system_prompt(system_prompt: str) -> str:
         "- If the user greets you, asks if you are there, or asks what is going on, say that you are here and ask how you can help.\n"
         "- If the user says OnePlus One, ask whether they mean the phone or the math problem.\n"
         "- If the user asks you to speak faster or slower, acknowledge the new speed briefly.\n"
+        "- If the user asks you to change tone or speaking style, acknowledge that you can do it.\n"
         "- If the user asks about network, speed, or latency, say: We reduce latency with streaming and local voice processing.\n"
         "- If the user asks for a story, narration, explanation, or more detail, answer directly instead of asking how long it should be.\n"
         "- Otherwise, ask one concise clarifying question when required information is missing.\n"
@@ -119,6 +120,8 @@ def fast_policy_response(text: str) -> str | None:
         return response
     if speed_intent := voice_speed_intent(text):
         return voice_speed_response(speed_intent)
+    if tone_intent := voice_tone_intent(text):
+        return voice_tone_response(tone_intent)
     if "your name" in normalized or "who are you" in normalized:
         return "I am an AI assistant."
     if (

@@ -32,7 +32,19 @@ FLOW_NODE_TYPES = [
     "end",
 ]
 
-VOICE_PRESETS = ["neutral", "calm", "confident", "friendly", "concise", "careful"]
+VOICE_PRESETS = [
+    "neutral",
+    "calm",
+    "confident",
+    "friendly",
+    "careful",
+    "sympathetic",
+    "energetic",
+    "spooky",
+    "arrogant",
+    "condescending",
+    "whisper",
+]
 LATENCY_PROFILES = ["instant", "fast", "balanced", "quality", "async"]
 
 
@@ -68,6 +80,8 @@ def _node(
     fields: list[dict[str, Any]] | None = None,
     endpoint: str | None = None,
     integration: dict[str, Any] | None = None,
+    llm: dict[str, Any] | None = None,
+    response_mode: str | None = None,
     auto_advance: bool = False,
 ) -> dict[str, Any]:
     return {
@@ -85,15 +99,17 @@ def _node(
             "fields": fields or [],
             "endpoint": endpoint,
             "integration": integration or {},
+            "llm": llm or {},
+            "responseMode": response_mode,
             "autoAdvance": auto_advance,
             "voice": _voice(tone=tone),
             "latency": _latency(latency_profile, target_ms),
             "interrupt": {
                 "enabled": node_type not in {"start", "end"},
                 "stopSpeaking": True,
-                "routes": [{"intent": "correction_or_cancel", "target": "clarify_requirements"}],
+                "routes": [{"intent": "correction_or_cancel", "target": "clarify_request"}],
             },
-            "fallback": {"unclear": "clarify_requirements", "failed": "process_failed"},
+            "fallback": {"unclear": "clarify_request", "failed": "repair"},
         },
     }
 
@@ -132,14 +148,11 @@ DEFAULT_FLOW_GRAPH: FlowGraph = {
         _node(
             "opening",
             "dialogue",
-            "Opening Sentence",
+            "Flow Voice Opening",
             -460,
             0,
-            purpose="Introduce the Codex Orchestrator and set the coding-on-the-go context.",
-            script=(
-                "Hey there, this is Agent Name with Codex Orchestrator. "
-                "What task can I help you get done today?"
-            ),
+            purpose="Start the flow-bound conversational voice agent.",
+            script="I am an AI assistant. What would you like to do?",
             outputs=["Continue"],
             tone="friendly",
             latency_profile="instant",
@@ -147,158 +160,100 @@ DEFAULT_FLOW_GRAPH: FlowGraph = {
             auto_advance=True,
         ),
         _node(
-            "collect_task_details",
+            "listen_for_intent",
             "collect",
-            "Collect Task Details",
+            "Listen For Intent",
             -150,
             0,
-            purpose="Collect the coding task, repo scope, files, constraints, and desired outcome.",
-            script=(
-                "Got it. Can you give me the full details? The more specific you are, "
-                "the better results I can get for you."
-            ),
-            outputs=["Task details collected", "Needs clarification"],
-            fields=[
-                {"name": "task_description", "type": "text", "required": True},
-                {"name": "repo_scope", "type": "text", "required": False},
-                {"name": "success_criteria", "type": "text", "required": False},
-            ],
+            purpose="Capture the user's latest request and route it through the flow.",
+            script="I'm listening.",
+            outputs=["Tone change", "Long form", "Answer", "Needs clarification"],
+            fields=[{"name": "user_request", "type": "text", "required": True}],
             tone="calm",
             target_ms=700,
         ),
         _node(
-            "clarify_requirements",
+            "tone_control",
             "dialogue",
-            "Clarify Requirements",
+            "Apply Tone Control",
             170,
-            190,
-            purpose="Ask a focused follow-up when requirements are ambiguous or the caller interrupts.",
-            script=(
-                "I want to make sure I get this right. Can you tell me a bit more "
-                "about what you're looking for?"
-            ),
-            outputs=["Requirements clarified"],
-            tone="careful",
-            target_ms=700,
+            -150,
+            purpose="Acknowledge requested tone or speaking-style changes.",
+            script="Got it, I'll adjust my tone.",
+            outputs=["Continue"],
+            tone="confident",
+            latency_profile="instant",
+            target_ms=250,
         ),
         _node(
-            "confirm_task",
-            "confirm",
-            "Confirm Task Understanding",
+            "answer_request",
+            "dialogue",
+            "Answer Request",
+            170,
+            0,
+            purpose="Answer the user's request naturally while staying inside the flow.",
+            prompt=(
+                "Answer as a conversational voice AI. Honor requested tone, speed, language, "
+                "and length. Do not claim external actions are complete."
+            ),
+            script="",
+            outputs=["Continue"],
+            tone="neutral",
+            target_ms=900,
+            llm={"mode": "open"},
+            response_mode="llm",
+        ),
+        _node(
+            "long_form_response",
+            "dialogue",
+            "Long Form Response",
+            170,
+            150,
+            purpose="Give complete multi-sentence stories, explanations, or detailed answers.",
+            prompt=(
+                "Give a complete spoken response. If the user requested a story, explanation, "
+                "or specific number of sentences, satisfy that length directly."
+            ),
+            script="",
+            outputs=["Continue"],
+            tone="careful",
+            target_ms=1200,
+            llm={"mode": "open"},
+            response_mode="llm",
+        ),
+        _node(
+            "clarify_request",
+            "dialogue",
+            "Clarify Request",
             490,
             0,
-            purpose="Restate the interpreted task and wait for confirmation or correction.",
-            script=(
-                "Alright, so just to confirm, you need me to handle Task Description. "
-                "Does that sound right?"
-            ),
-            outputs=["Task confirmed", "Caller corrects task"],
+            purpose="Ask one focused follow-up when the request is ambiguous.",
+            script="I want to make sure I get this right. What should I focus on?",
+            outputs=["Continue"],
             tone="careful",
-            latency_profile="instant",
-            target_ms=300,
-            fields=[{"name": "confirmed", "type": "boolean", "required": True}],
+            target_ms=500,
         ),
         _node(
-            "preflight_guardrails",
-            "condition",
-            "Preflight Safety Check",
-            810,
-            0,
-            purpose="Decide whether Codex can start autonomously or needs explicit approval.",
-            prompt="Check for destructive actions, deploys, commits, secrets, or unknown repo scope.",
-            outputs=["Safe to run", "Needs approval"],
-            latency_profile="instant",
-            target_ms=120,
-            integration={"blockedActions": ["destructive_shell", "deploy", "commit_without_review"]},
-        ),
-        _node(
-            "approval_dialogue",
-            "confirm",
-            "Confirm Codex Approval",
-            1110,
-            -170,
-            purpose="Ask for explicit approval before Codex writes, commits, deploys, or runs risky commands.",
-            script="This may change files or run commands. Should I proceed with Codex Orchestrator?",
-            outputs=["Approved", "Denied"],
-            tone="careful",
-            latency_profile="instant",
-            target_ms=250,
-        ),
-        _node(
-            "process_with_codex",
-            "codex_task",
-            "Process Task with Codex",
-            1110,
-            0,
-            purpose="Create and monitor the Codex Orchestrator job for the confirmed task.",
-            script="I'll send this to Codex Orchestrator and keep tracking it live.",
-            outputs=["Task processed successfully", "Processing failed", "Needs more info"],
-            latency_profile="async",
-            target_ms=1200,
-            integration={
-                "orchestrator": "codex",
-                "taskType": "edit_or_inspect",
-                "approvalMode": "ask_before_write",
-            },
-        ),
-        _node(
-            "monitor_progress",
-            "wait",
-            "Monitor Codex Progress",
-            1430,
-            0,
-            purpose="Follow the running Codex job and speak concise progress updates.",
-            script="Codex is working on it. I'll call out anything that needs your decision.",
-            outputs=["Complete", "Needs user input", "Failed"],
-            latency_profile="async",
-            target_ms=1000,
-        ),
-        _node(
-            "deliver_result",
-            "dialogue",
-            "Deliver Result",
-            1740,
-            0,
-            purpose="Summarize what Codex did, what changed, and what still needs review.",
-            script="Codex finished. Here's what changed and what I verified.",
-            outputs=["Continue coding", "Task complete"],
-            tone="confident",
-            target_ms=800,
-        ),
-        _node(
-            "process_failed",
+            "repair",
             "fallback",
-            "Process Failed",
-            1430,
-            210,
-            purpose="Recover from Codex/API failures with a clear retry path.",
-            script="Codex hit an issue. I can retry with different instructions or summarize the current state.",
-            outputs=["Retry", "Summarize"],
-            tone="careful",
+            "Repair",
+            490,
+            170,
+            purpose="Recover from unclear input, interruptions, and tool failures.",
+            script="I missed that. Say it again and I'll stay with the flow.",
+            outputs=["Retry"],
+            tone="sympathetic",
             latency_profile="instant",
             target_ms=250,
-        ),
-        _node(
-            "transfer_call",
-            "transfer_call",
-            "Transfer Call",
-            1740,
-            210,
-            purpose="Summarize the transcript, slots, and Codex job context without leaving the conversation.",
-            script="Here is the task summary and current Codex state.",
-            outputs=["Summarized"],
-            tone="careful",
-            latency_profile="balanced",
-            target_ms=900,
         ),
         _node(
             "end",
             "end",
             "End",
-            2040,
+            800,
             0,
-            purpose="Close the workflow and persist the transcript, task details, and execution trace.",
-            script="Done. I saved the task summary and run history.",
+            purpose="Close the flow run and persist transcript history.",
+            script="Done.",
             outputs=["Complete"],
             tone="neutral",
             latency_profile="instant",
@@ -307,71 +262,64 @@ DEFAULT_FLOW_GRAPH: FlowGraph = {
     ],
     "edges": [
         _edge("start-opening", "start", "opening", "Start"),
-        _edge("opening-collect", "opening", "collect_task_details", "Continue"),
+        _edge("opening-listen", "opening", "listen_for_intent", "Continue"),
         _edge(
-            "collect-confirm",
-            "collect_task_details",
-            "confirm_task",
-            "Task details collected",
-            ["details", "scope", "repo", "files"],
+            "listen-tone",
+            "listen_for_intent",
+            "tone_control",
+            "Tone change",
+            ["tone", "style", "sound", "arrogant", "condescending", "calm", "friendly", "whisper"],
         ),
         _edge(
-            "collect-clarify",
-            "collect_task_details",
-            "clarify_requirements",
+            "listen-long",
+            "listen_for_intent",
+            "long_form_response",
+            "Long form",
+            ["story", "explain", "detail", "details", "longer", "continue", "narrate"],
+        ),
+        _edge(
+            "listen-answer",
+            "listen_for_intent",
+            "answer_request",
+            "Answer",
+            ["who", "what", "when", "where", "why", "how", "tell", "can", "should"],
+        ),
+        _edge(
+            "listen-clarify",
+            "listen_for_intent",
+            "clarify_request",
             "Needs clarification",
-            ["unclear", "not sure", "clarify", "maybe"],
-        ),
-        _edge("clarify-confirm", "clarify_requirements", "confirm_task", "Requirements clarified"),
-        _edge(
-            "confirm-preflight",
-            "confirm_task",
-            "preflight_guardrails",
-            "Task confirmed",
-            ["yes", "correct", "right", "confirmed", "go ahead"],
+            ["maybe", "something", "whatever", "not sure", "clarify"],
         ),
         _edge(
-            "confirm-correction",
-            "confirm_task",
-            "collect_task_details",
-            "Caller corrects task",
-            ["no", "actually", "change", "wrong", "not exactly"],
+            "listen-end",
+            "listen_for_intent",
+            "end",
+            "End",
+            ["bye", "goodbye", "done", "finish", "end conversation"],
         ),
-        _edge("preflight-run", "preflight_guardrails", "process_with_codex", "Safe to run"),
-        _edge("preflight-approval", "preflight_guardrails", "approval_dialogue", "Needs approval"),
-        _edge(
-            "approval-run",
-            "approval_dialogue",
-            "process_with_codex",
-            "Approved",
-            ["yes", "approved", "proceed", "go"],
-        ),
-        _edge(
-            "approval-denied",
-            "approval_dialogue",
-            "collect_task_details",
-            "Denied",
-            ["no", "stop", "cancel"],
-        ),
-        _edge("codex-monitor", "process_with_codex", "monitor_progress", "Task processed successfully"),
-        _edge("codex-failed", "process_with_codex", "process_failed", "Processing failed"),
-        _edge("codex-more-info", "process_with_codex", "clarify_requirements", "Needs more info"),
-        _edge("monitor-deliver", "monitor_progress", "deliver_result", "Complete"),
-        _edge("monitor-input", "monitor_progress", "clarify_requirements", "Needs user input"),
-        _edge("monitor-failed", "monitor_progress", "process_failed", "Failed"),
-        _edge("deliver-continue", "deliver_result", "collect_task_details", "Continue coding"),
-        _edge("deliver-end", "deliver_result", "end", "Task complete"),
-        _edge("failure-retry", "process_failed", "process_with_codex", "Retry"),
-        _edge("failure-transfer", "process_failed", "transfer_call", "Summarize"),
-        _edge("transfer-end", "transfer_call", "end", "Summarized"),
+        _edge("tone-listen", "tone_control", "listen_for_intent", "Continue"),
+        _edge("answer-listen", "answer_request", "listen_for_intent", "Continue"),
+        _edge("long-listen", "long_form_response", "listen_for_intent", "Continue"),
+        _edge("clarify-listen", "clarify_request", "listen_for_intent", "Continue"),
+        _edge("repair-listen", "repair", "listen_for_intent", "Retry"),
     ],
     "viewport": {"x": -45, "y": 170, "zoom": 0.42},
     "metadata": {
-        "schemaVersion": 3,
-        "defaultVoice": "af_heart",
+        "schemaVersion": 4,
+        "defaultVoice": "neutral_female",
         "defaultLatencyProfile": "fast",
         "alwaysListening": True,
-        "runtime": "codex-orchestrator-agent-flow",
+        "runtime": "flow-bound-conversational-voice-agent",
+        "voiceDuties": [
+            "listen",
+            "route_intent",
+            "answer",
+            "change_tone",
+            "change_speed",
+            "handle_interruptions",
+            "repair",
+        ],
     },
 }
 
@@ -594,7 +542,7 @@ class FlowRepository:
         if row:
             graph = loads(row["graph_json"], {})
             metadata = graph.get("metadata") if isinstance(graph, dict) else {}
-            if isinstance(metadata, dict) and metadata.get("schemaVersion") == 3:
+            if isinstance(metadata, dict) and metadata.get("schemaVersion") == 4:
                 return
             graph = default_flow_graph()
             validation = validate_flow_graph(graph)
@@ -607,8 +555,8 @@ class FlowRepository:
                 WHERE id = 'default-voice-flow'
                 """,
                 (
-                    "Codex Orchestrator Agent Flow",
-                    "Agentic live-call workflow for collecting a coding task and running Codex Orchestrator.",
+                    "Flow Voice Agent",
+                    "Flow-bound conversational voice workflow with tone control, routing, repair, and long-form responses.",
                     dumps(graph),
                     dumps(graph),
                     dumps(validation),
@@ -628,8 +576,8 @@ class FlowRepository:
             """,
             (
                 flow_id,
-                "Codex Orchestrator Agent Flow",
-                "Agentic live-call workflow for collecting a coding task and running Codex Orchestrator.",
+                "Flow Voice Agent",
+                "Flow-bound conversational voice workflow with tone control, routing, repair, and long-form responses.",
                 dumps(graph),
                 dumps(graph),
                 dumps(validation),
@@ -767,6 +715,7 @@ class FlowRuntime:
         if not start:
             raise ValueError("Flow has no start node.")
         run_id = str(uuid.uuid4())
+        self._ensure_conversation(conversation_id)
         self.db.execute(
             """
             INSERT INTO flow_runs(
@@ -849,6 +798,38 @@ class FlowRuntime:
         target = _first_outgoing_target(graph, str(active_node["id"])) or str(active_node["id"])
         return await self._enter_until_waiting(run_id, graph, target, text)
 
+    def run_state(self, run_id: str) -> dict[str, Any]:
+        run = self._get_run(run_id)
+        flow = self.repo.get(run["flow_id"])
+        graph = flow.published_graph or flow.graph
+        return self._response(run, flow, _target_node(graph, run["active_node_id"]), [], None)
+
+    def latest_run_for_conversation(self, conversation_id: str) -> dict[str, Any] | None:
+        row = self.db.one(
+            """
+            SELECT id
+            FROM flow_runs
+            WHERE conversation_id = ?
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (conversation_id,),
+        )
+        if not row:
+            return None
+        return self.run_state(row["id"])
+
+    def _ensure_conversation(self, conversation_id: str | None) -> None:
+        if not conversation_id:
+            return
+        self.db.execute(
+            """
+            INSERT OR IGNORE INTO conversations(id, channel, metadata_json)
+            VALUES (?, 'flow', ?)
+            """,
+            (conversation_id, dumps({"source": "flow_runtime"})),
+        )
+
     async def _enter_until_waiting(
         self,
         run_id: str,
@@ -881,14 +862,18 @@ class FlowRuntime:
             if node_type == "start":
                 target = _first_outgoing_target(graph, current_id)
                 if not target:
-                    messages.append(self._assistant_message(current_id, "Flow started."))
+                    messages.append(self._assistant_message(current_id, "Flow started.", voice=data.get("voice")))
                     break
                 current_id = target
                 continue
 
             if node_type == "dialogue":
-                text = self._render_script(data, self._get_slots(run_id))
-                messages.append(self._assistant_message(current_id, text))
+                if data.get("responseMode") == "llm" and user_text:
+                    text, latency_ms = await self._generate_node_response(node, user_text)
+                else:
+                    text = self._render_script(data, self._get_slots(run_id))
+                    latency_ms = None
+                messages.append(self._assistant_message(current_id, text, latency_ms, data.get("voice")))
                 self._append_transcript(run_id, "assistant", text)
                 target = _first_outgoing_target(graph, current_id)
                 if not target or not data.get("autoAdvance"):
@@ -906,13 +891,13 @@ class FlowRuntime:
                         continue
                 else:
                     text = self._render_script(data, self._get_slots(run_id))
-                    messages.append(self._assistant_message(current_id, text))
+                    messages.append(self._assistant_message(current_id, text, voice=data.get("voice")))
                     self._append_transcript(run_id, "assistant", text)
                 break
 
             if node_type == "confirm":
                 text = self._render_script(data, self._get_slots(run_id))
-                messages.append(self._assistant_message(current_id, text))
+                messages.append(self._assistant_message(current_id, text, voice=data.get("voice")))
                 self._append_transcript(run_id, "assistant", text)
                 break
 
@@ -923,7 +908,7 @@ class FlowRuntime:
 
             if node_type == "api":
                 text = self._render_script(data, self._get_slots(run_id)) or "Calling the configured API."
-                messages.append(self._assistant_message(current_id, text))
+                messages.append(self._assistant_message(current_id, text, voice=data.get("voice")))
                 self._append_transcript(run_id, "assistant", text)
                 self._record_event(
                     run_id,
@@ -940,15 +925,15 @@ class FlowRuntime:
 
             if node_type == "codex_task":
                 text = self._render_script(data, self._get_slots(run_id)) or (
-                    "I queued the Codex Orchestrator task."
+                    "I queued the agent task."
                 )
-                messages.append(self._assistant_message(current_id, text, 0))
+                messages.append(self._assistant_message(current_id, text, 0, data.get("voice")))
                 self._append_transcript(run_id, "assistant", text)
                 self._record_event(
                     run_id,
                     flow.id,
                     current_id,
-                    "codex_orchestrator_job_created",
+                    "agent_job_created",
                     payload={
                         "simulated": True,
                         "integration": data.get("integration") or data.get("codex") or {},
@@ -963,13 +948,13 @@ class FlowRuntime:
 
             if node_type == "wait":
                 text = self._render_script(data, self._get_slots(run_id)) or "Waiting for the running process."
-                messages.append(self._assistant_message(current_id, text))
+                messages.append(self._assistant_message(current_id, text, voice=data.get("voice")))
                 self._append_transcript(run_id, "assistant", text)
                 break
 
             if node_type in {"handoff", "transfer_call"}:
                 text = self._render_script(data, self._get_slots(run_id)) or "I can summarize the current context."
-                messages.append(self._assistant_message(current_id, text))
+                messages.append(self._assistant_message(current_id, text, voice=data.get("voice")))
                 self._append_transcript(run_id, "assistant", text)
                 self._record_event(run_id, flow.id, current_id, "context_summary_requested")
                 target = _first_outgoing_target(graph, current_id)
@@ -980,13 +965,13 @@ class FlowRuntime:
 
             if node_type == "end":
                 text = self._render_script(data, self._get_slots(run_id)) or "Done."
-                messages.append(self._assistant_message(current_id, text))
+                messages.append(self._assistant_message(current_id, text, voice=data.get("voice")))
                 self._append_transcript(run_id, "assistant", text)
                 self._mark_completed(run_id)
                 break
 
             text = self._render_script(data, self._get_slots(run_id)) or "I need one more detail."
-            messages.append(self._assistant_message(current_id, text))
+            messages.append(self._assistant_message(current_id, text, voice=data.get("voice")))
             self._append_transcript(run_id, "assistant", text)
             break
 
@@ -1020,12 +1005,14 @@ class FlowRuntime:
 
     def _should_use_fast_template(self, node_id: str, user_text: str) -> bool:
         normalized = user_text.casefold()
-        return node_id == "codex_scope" and any(keyword in normalized for keyword in ["code", "repo", "codex"])
+        return node_id in {"codex_scope", "agent_scope"} and any(
+            keyword in normalized for keyword in ["code", "repo", "task"]
+        )
 
     def _fast_template_response(self, user_text: str) -> str:
         normalized = user_text.casefold()
-        if "code" in normalized or "repo" in normalized or "codex" in normalized:
-            return "Which repo or files should Codex inspect first?"
+        if "code" in normalized or "repo" in normalized:
+            return "Which repo or files should I inspect first?"
         return "I understand. What detail should I use for the next step?"
 
     def _route_by_keywords(self, graph: FlowGraph, node_id: str, text: str) -> str:
@@ -1047,6 +1034,14 @@ class FlowRuntime:
         if not edges:
             return node_id
         normalized = text.casefold()
+        for edge in edges:
+            data = edge.get("data") if isinstance(edge.get("data"), dict) else {}
+            keywords = data.get("keywords") if isinstance(data.get("keywords"), list) else []
+            label = str(edge.get("label") or "")
+            label_tokens = re.findall(r"[a-z0-9?]+", label.casefold())
+            candidates = [str(keyword).casefold() for keyword in keywords] + label_tokens
+            if any(candidate and candidate in normalized for candidate in candidates):
+                return str(edge.get("target"))
         needs_clarification = (
             len(re.findall(r"\w+", text)) < 7
             or any(
@@ -1088,6 +1083,14 @@ class FlowRuntime:
                 str(slots.get("success_criteria") or ""),
             ]
         ).casefold()
+        for edge in edges:
+            data = edge.get("data") if isinstance(edge.get("data"), dict) else {}
+            keywords = data.get("keywords") if isinstance(data.get("keywords"), list) else []
+            label = str(edge.get("label") or "")
+            label_tokens = re.findall(r"[a-z0-9?]+", label.casefold())
+            candidates = [str(keyword).casefold() for keyword in keywords] + label_tokens
+            if any(candidate and candidate in normalized for candidate in candidates):
+                return str(edge.get("target"))
         risky_terms = [
             "deploy",
             "production",
@@ -1177,6 +1180,8 @@ class FlowRuntime:
         ):
             slots["order_id"] = order_match.group(1).upper()
         if _node_type(node) in {"collect", "dialogue", "listen"}:
+            if "user_request" in slot_names and text:
+                slots["user_request"] = text
             if "task_description" in slot_names and text:
                 slots["task_description"] = text
             if "repo_scope" in slot_names:
@@ -1201,14 +1206,18 @@ class FlowRuntime:
         node_id: str,
         text: str,
         latency_ms: int | None = None,
+        voice: Any | None = None,
     ) -> dict[str, Any]:
-        return {
+        message = {
             "id": str(uuid.uuid4()),
             "role": "assistant",
             "node_id": node_id,
             "text": text,
             "latency_ms": latency_ms,
         }
+        if isinstance(voice, dict):
+            message["voice"] = voice
+        return message
 
     def _response(
         self,

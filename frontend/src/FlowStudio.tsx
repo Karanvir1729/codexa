@@ -28,17 +28,23 @@ import Trash2 from "lucide-react/dist/esm/icons/trash-2.js";
 import TriangleAlert from "lucide-react/dist/esm/icons/triangle-alert.js";
 import UploadCloud from "lucide-react/dist/esm/icons/upload-cloud.js";
 import X from "lucide-react/dist/esm/icons/x.js";
+import { PipecatClient, type TransportState } from "@pipecat-ai/client-js";
+import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
 import {
+  apiUrl,
   FlowDefinition,
   FlowGraph,
   FlowSimulationResponse,
   FlowValidation,
   getActiveFlow,
+  getFlowRunByConversation,
+  getWebRTCIceConfig,
   publishFlow,
   saveFlow,
   simulateFlow,
   validateFlow
 } from "./api";
+import { BrowserAudioMediaManager } from "./browserAudioMediaManager";
 
 type NodeField = {
   name: string;
@@ -99,6 +105,35 @@ type VoiceEdge = {
 type FlowStudioProps = {
   onNotice?: (message: string) => void;
 };
+
+type PipecatErrorMessage = {
+  data?: {
+    message?: string;
+  };
+};
+
+type PipecatDeviceError = {
+  message?: string;
+};
+
+type TranscriptData = {
+  final?: boolean;
+  text?: string;
+};
+
+type BotOutputData = {
+  spoken?: boolean;
+  text?: string;
+};
+
+type FlowVoiceTurn = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+};
+
+const flowVoiceConnectTimeoutMs = 30000;
+const fallbackIceServers: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
 
 type PaletteItem = {
   type: string;
@@ -178,9 +213,9 @@ const palette: PaletteItem[] = [
   },
   {
     type: "codex_task",
-    label: "Codex Task",
+    label: "Agent Task",
     group: "Actions",
-    description: "Create and monitor a Codex Orchestrator job.",
+    description: "Create and monitor an agent task.",
     icon: SquareFunction,
     category: "action",
     outputs: ["Task processed successfully", "Processing failed", "Needs more info"]
@@ -207,7 +242,7 @@ const palette: PaletteItem[] = [
     type: "transfer_call",
     label: "Summarize Context",
     group: "Actions",
-    description: "Summarize transcript, slots, and Codex state.",
+    description: "Summarize transcript, slots, and current state.",
     icon: PhoneForwarded,
     category: "action",
     outputs: ["Summarized"]
@@ -243,7 +278,57 @@ const palette: PaletteItem[] = [
 
 const paletteGroups: PaletteItem["group"][] = ["Pre-Call", "In-Call", "Collect", "Actions", "Post-Call"];
 const latencyProfiles = ["instant", "fast", "balanced", "quality", "async"];
-const tones = ["neutral", "calm", "confident", "friendly", "concise", "careful"];
+const tones = [
+  "neutral",
+  "calm",
+  "confident",
+  "friendly",
+  "careful",
+  "sympathetic",
+  "energetic",
+  "spooky",
+  "arrogant",
+  "condescending",
+  "whisper"
+];
+
+function appendFlowVoiceTurn(current: FlowVoiceTurn[], next: FlowVoiceTurn) {
+  const last = current[current.length - 1];
+  if (last?.role === next.role && last.text.trim() === next.text.trim()) {
+    return current;
+  }
+  return [...current, next].slice(-10);
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeoutId: number | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId !== undefined) {
+      window.clearTimeout(timeoutId);
+    }
+  }
+}
+
+async function requestMicrophoneStream() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error("This browser does not expose microphone capture.");
+  }
+  return navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: { ideal: true },
+      noiseSuppression: { ideal: true },
+      autoGainControl: { ideal: true },
+      channelCount: { ideal: 1 },
+      sampleRate: { ideal: 48000 }
+    },
+    video: false
+  });
+}
 
 export function FlowStudio({ onNotice }: FlowStudioProps) {
   return <FlowStudioInner onNotice={onNotice} />;
@@ -265,6 +350,15 @@ function FlowStudioInner({ onNotice }: FlowStudioProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [zoom, setZoom] = useState(0.82);
   const [pan, setPan] = useState({ x: 150, y: 100 });
+  const [flowVoiceClient, setFlowVoiceClient] = useState<PipecatClient | null>(null);
+  const [flowVoiceState, setFlowVoiceState] = useState<TransportState>("disconnected");
+  const [flowVoiceNotice, setFlowVoiceNotice] = useState<string | null>(null);
+  const [flowVoiceConversationId, setFlowVoiceConversationId] = useState<string | null>(null);
+  const [flowVoiceTurns, setFlowVoiceTurns] = useState<FlowVoiceTurn[]>([]);
+  const [flowVoiceMicEnabled, setFlowVoiceMicEnabled] = useState(false);
+  const [flowBotAudioTrack, setFlowBotAudioTrack] = useState<MediaStreamTrack | null>(null);
+  const flowBotAudioRef = useRef<HTMLAudioElement | null>(null);
+  const flowVoiceMediaManagerRef = useRef<BrowserAudioMediaManager | null>(null);
   const [dragState, setDragState] = useState<{
     id: string;
     startX: number;
@@ -303,9 +397,9 @@ function FlowStudioInner({ onNotice }: FlowStudioProps) {
       edges: edges as unknown as Array<Record<string, unknown>>,
       viewport: { x: pan.x, y: pan.y, zoom },
       metadata: {
-        schemaVersion: 3,
+        schemaVersion: 4,
         alwaysListening: true,
-        runtime: "codex-orchestrator-agent-flow"
+        runtime: "flow-bound-conversational-voice-agent"
       }
     }),
     [edges, nodes, pan.x, pan.y, zoom]
@@ -327,6 +421,103 @@ function FlowStudioInner({ onNotice }: FlowStudioProps) {
       })
       .catch((error) => onNotice?.(error instanceof Error ? error.message : "Failed to load flow"));
   }, [onNotice]);
+
+  useEffect(() => {
+    if (!window.RTCPeerConnection) {
+      setFlowVoiceNotice("Browser voice needs WebRTC support.");
+      return;
+    }
+
+    let client: PipecatClient;
+    try {
+      const mediaManager = new BrowserAudioMediaManager();
+      flowVoiceMediaManagerRef.current = mediaManager;
+      client = new PipecatClient({
+        transport: new SmallWebRTCTransport({
+          iceServers: fallbackIceServers,
+          mediaManager,
+          waitForICEGathering: false
+        }),
+        enableMic: false,
+        enableCam: false,
+        callbacks: {
+          onConnected: () => setFlowVoiceNotice(null),
+          onDisconnected: () => {
+            setFlowVoiceMicEnabled(false);
+            setFlowBotAudioTrack(null);
+          },
+          onTransportStateChanged: (state: TransportState) => setFlowVoiceState(state),
+          onError: (message: PipecatErrorMessage) => {
+            if (message.data?.message) setFlowVoiceNotice(message.data.message);
+          },
+          onDeviceError: (error: PipecatDeviceError) => {
+            setFlowVoiceNotice(error.message ?? "Device access failed");
+          },
+          onTrackStarted: (track: MediaStreamTrack, participant?: unknown) => {
+            if (track.kind !== "audio") return;
+            if (participant) {
+              setFlowVoiceMicEnabled(true);
+              setFlowVoiceNotice(null);
+            } else {
+              setFlowBotAudioTrack(track);
+            }
+          },
+          onTrackStopped: (track: MediaStreamTrack, participant?: unknown) => {
+            if (track.kind !== "audio") return;
+            if (participant) {
+              setFlowVoiceMicEnabled(false);
+            } else {
+              setFlowBotAudioTrack(null);
+            }
+          },
+          onUserTranscript: (data: TranscriptData) => {
+            const text = data.text?.trim();
+            if (!data.final || !text) return;
+            setFlowVoiceTurns((current) =>
+              appendFlowVoiceTurn(current, { id: crypto.randomUUID(), role: "user", text })
+            );
+          },
+          onBotOutput: (data: BotOutputData) => {
+            const text = data.text?.trim();
+            if (!text || !data.spoken) return;
+            setFlowVoiceTurns((current) =>
+              appendFlowVoiceTurn(current, { id: crypto.randomUUID(), role: "assistant", text })
+            );
+          }
+        }
+      });
+    } catch (error) {
+      setFlowVoiceNotice(error instanceof Error ? error.message : "Pipecat client failed to initialize.");
+      return;
+    }
+
+    setFlowVoiceClient(client);
+    return () => {
+      flowVoiceMediaManagerRef.current = null;
+      client.disconnect().catch(() => undefined);
+    };
+  }, []);
+
+  useEffect(() => {
+    const audio = flowBotAudioRef.current;
+    if (!audio || !flowBotAudioTrack) return;
+    audio.srcObject = new MediaStream([flowBotAudioTrack]);
+    audio.play().catch((error) => setFlowVoiceNotice(error.message));
+  }, [flowBotAudioTrack]);
+
+  useEffect(() => {
+    if (!flowVoiceConversationId) return;
+    const poll = window.setInterval(() => {
+      getFlowRunByConversation(flowVoiceConversationId)
+        .then(({ run: latestRun }) => {
+          if (!latestRun) return;
+          setRun(latestRun);
+          setSelectedNodeId(latestRun.active_node_id);
+        })
+        .catch(() => undefined);
+    }, 1200);
+    return () => window.clearInterval(poll);
+  }, [flowVoiceConversationId]);
 
   useEffect(() => {
     viewRef.current = { zoom, pan };
@@ -582,6 +773,84 @@ function FlowStudioInner({ onNotice }: FlowStudioProps) {
     }
   }
 
+  async function ensurePublishedFlow() {
+    if (!flow) return null;
+    if (!dirty) return flow;
+    const saved = await saveFlow({
+      id: flow.id,
+      name: flow.name,
+      description: flow.description,
+      graph
+    });
+    const published = await publishFlow(saved.flow.id);
+    setFlow(published.flow);
+    setValidation(published.flow.validation);
+    setDirty(false);
+    return published.flow;
+  }
+
+  async function toggleFlowVoiceConnection() {
+    if (!flowVoiceClient) return;
+    setFlowVoiceNotice(null);
+    try {
+      const connected = flowVoiceState === "connected" || flowVoiceState === "ready";
+      if (connected) {
+        await flowVoiceClient.disconnect();
+        setFlowVoiceConversationId(null);
+        return;
+      }
+      const publishedFlow = await ensurePublishedFlow();
+      if (!publishedFlow) return;
+      const conversationId = crypto.randomUUID();
+      setFlowVoiceConversationId(conversationId);
+      setFlowVoiceTurns([]);
+      await withTimeout(
+        getWebRTCIceConfig()
+          .catch(() => ({ iceServers: fallbackIceServers }))
+          .then((iceConfig) =>
+            flowVoiceClient.connect({
+              webrtcRequestParams: {
+                endpoint: apiUrl("/api/offer"),
+                requestData: {
+                  source: "flow_studio",
+                  conversation_id: conversationId,
+                  voice_behavior_mode: "flow",
+                  voice_flow_id: publishedFlow.id
+                }
+              },
+              iceConfig
+            })
+          ),
+        flowVoiceConnectTimeoutMs,
+        "Flow voice connection timed out."
+      );
+      setFlowVoiceMicEnabled(flowVoiceClient.isMicEnabled);
+    } catch (error) {
+      await flowVoiceClient.disconnect().catch(() => undefined);
+      setFlowVoiceConversationId(null);
+      setFlowVoiceNotice(error instanceof Error ? error.message : "Flow voice connection failed.");
+    }
+  }
+
+  async function toggleFlowVoiceMic() {
+    if (!flowVoiceClient || !(flowVoiceState === "connected" || flowVoiceState === "ready")) return;
+    try {
+      const next = !flowVoiceMicEnabled;
+      if (next) {
+        const stream = await withTimeout(
+          requestMicrophoneStream(),
+          flowVoiceConnectTimeoutMs,
+          "Microphone permission timed out."
+        );
+        flowVoiceMediaManagerRef.current?.setPendingMicStream(stream);
+      }
+      flowVoiceClient.enableMic(next);
+      if (!next) setFlowVoiceMicEnabled(false);
+    } catch (error) {
+      setFlowVoiceNotice(error instanceof Error ? error.message : "Microphone toggle failed.");
+    }
+  }
+
   async function startSimulation() {
     if (!flow) return;
     setBusy(true);
@@ -636,11 +905,11 @@ function FlowStudioInner({ onNotice }: FlowStudioProps) {
     <section className="flowStudio">
       <header className="flowTopbar">
         <div>
-          <p className="eyebrow">Codex Orchestrator behavior graph</p>
+          <p className="eyebrow">Flow-bound voice agent</p>
           <h1>{flow?.name ?? "Loading flow"}</h1>
           <p className="flowSubtitle">
             The audio runtime stays realtime and always-on; this graph controls what the agent says,
-            collects, confirms, branches, and sends into Codex.
+            collects, routes, repairs, and how it changes tone or speed during the call.
           </p>
         </div>
         <div className="flowActions">
@@ -781,6 +1050,35 @@ function FlowStudioInner({ onNotice }: FlowStudioProps) {
           <button onClick={startSimulation} disabled={busy || !flow}>
             <Play size={16} /> Start
           </button>
+        </div>
+
+        <div className="flowVoicePanel">
+          <audio ref={flowBotAudioRef} autoPlay />
+          <div>
+            <strong>Flow Voice Agent</strong>
+            <span>{flowVoiceConversationId ? `${flowVoiceState} · ${flowVoiceConversationId.slice(0, 8)}` : flowVoiceState}</span>
+          </div>
+          <div className="flowVoiceControls">
+            <button onClick={toggleFlowVoiceConnection} disabled={!flowVoiceClient || busy}>
+              {flowVoiceState === "connected" || flowVoiceState === "ready" ? "Disconnect" : "Connect Flow"}
+            </button>
+            <button
+              onClick={toggleFlowVoiceMic}
+              disabled={!(flowVoiceState === "connected" || flowVoiceState === "ready")}
+            >
+              {flowVoiceMicEnabled ? "Mute" : "Unmute"}
+            </button>
+          </div>
+          {flowVoiceNotice && <p className="errorText">{flowVoiceNotice}</p>}
+          {flowVoiceTurns.length > 0 && (
+            <div className="flowVoiceTurns">
+              {flowVoiceTurns.map((turn) => (
+                <span className={turn.role} key={turn.id}>
+                  {turn.role}: {turn.text}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="flowTranscript">
@@ -1306,11 +1604,11 @@ function defaultNodeData(nodeType: string): VoiceNodeData {
     prompt: script,
     script,
     outputs: paletteItem?.outputs ?? ["Continue"],
-    fields: nodeType === "collect" ? [{ name: "task_description", type: "text", required: true }] : [],
+    fields: nodeType === "collect" ? [{ name: "user_request", type: "text", required: true }] : [],
     endpoint: nodeType === "api" ? "https://api.example.com/context" : "",
-    integration: nodeType === "codex_task" ? { orchestrator: "codex", approvalMode: "ask_before_write" } : {},
+    integration: nodeType === "codex_task" ? { orchestrator: "agent", approvalMode: "ask_before_write" } : {},
     voice: {
-      voiceId: "af_heart",
+      voiceId: "neutral_female",
       tone: nodeType === "confirm" ? "careful" : "calm",
       speed: 1,
       language: "en",
@@ -1323,11 +1621,11 @@ function defaultNodeData(nodeType: string): VoiceNodeData {
     interrupt: {
       enabled: nodeType !== "end",
       stopSpeaking: true,
-      routes: [{ intent: "correction_or_cancel", target: "clarify_requirements" }]
+      routes: [{ intent: "correction_or_cancel", target: "clarify_request" }]
     },
     fallback: {
-      unclear: "clarify_requirements",
-      failed: "process_failed"
+      unclear: "clarify_request",
+      failed: "repair"
     },
     autoAdvance: nodeType === "start"
   };
@@ -1346,16 +1644,16 @@ function defaultTypePatch(nodeType: string): Partial<VoiceNodeData> {
 
 function defaultScript(nodeType: string) {
   if (nodeType === "start") return "";
-  if (nodeType === "dialogue") return "What can I help you get done with Codex Orchestrator?";
-  if (nodeType === "collect") return "Can you give me the full details? The more specific you are, the better results I can get.";
-  if (nodeType === "confirm") return "Alright, so just to confirm, you need me to handle {task_description}. Does that sound right?";
+  if (nodeType === "dialogue") return "Answer naturally inside this flow node.";
+  if (nodeType === "collect") return "I'm listening.";
+  if (nodeType === "confirm") return "Just to confirm, should I continue with {user_request}?";
   if (nodeType === "condition") return "Check whether this should proceed automatically or needs approval.";
   if (nodeType === "api") return "I'll call the configured API and use the result in the next step.";
-  if (nodeType === "codex_task") return "I'll send this to Codex Orchestrator and keep tracking it live.";
-  if (nodeType === "wait") return "Codex is working on it. I'll call out anything that needs your decision.";
-  if (nodeType === "transfer_call") return "Here is the task summary and current Codex state.";
-  if (nodeType === "fallback") return "I hit an issue. I can retry with different instructions or hand this off.";
-  if (nodeType === "end") return "Done. I saved the task summary and run history.";
+  if (nodeType === "codex_task") return "I'll queue this task and keep tracking it live.";
+  if (nodeType === "wait") return "The task is running. I'll call out anything that needs your decision.";
+  if (nodeType === "transfer_call") return "Here is the current conversation summary.";
+  if (nodeType === "fallback") return "I missed that. Say it again and I'll stay with the flow.";
+  if (nodeType === "end") return "Done.";
   return "Reply naturally inside this node's scope.";
 }
 

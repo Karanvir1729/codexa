@@ -16,11 +16,13 @@ from .voice_runtime_controls import (
     VOICE_EMOTION_CODES,
     VOICE_EMOTION_SYSTEM_PROMPT,
     consume_emotion_prefix,
+    emotion_code_for_tone,
     emotion_code_for_turn,
     next_voice_speed,
     prefix_emotion_code,
     voice_speed_intent,
     voice_speed_label,
+    voice_tone_intent,
 )
 
 
@@ -700,26 +702,77 @@ async def _run_voice_pipeline(
             self._apply_emotion()
 
         def apply_user_text(self, text: str) -> dict[str, Any] | None:
-            intent = voice_speed_intent(text)
-            if not intent:
+            speed_intent = voice_speed_intent(text)
+            tone_intent = voice_tone_intent(text)
+            if not speed_intent and not tone_intent:
                 return None
-            previous_speed = self.speed
-            self.speed = next_voice_speed(self.speed, intent)
-            self._apply_speed()
-            state = {
-                "intent": intent,
-                "previous_speed": round(previous_speed, 2),
+            state: dict[str, Any] = {
                 "speed": round(self.speed, 2),
                 "speed_label": voice_speed_label(self.speed),
+                "tone": self.emotion,
             }
+            if speed_intent:
+                previous_speed = self.speed
+                self.speed = next_voice_speed(self.speed, speed_intent)
+                self._apply_speed()
+                state.update(
+                    {
+                        "speed_intent": speed_intent,
+                        "previous_speed": round(previous_speed, 2),
+                        "speed": round(self.speed, 2),
+                        "speed_label": voice_speed_label(self.speed),
+                    }
+                )
+            if tone_intent:
+                self.apply_tone(tone_intent)
+                state.update(
+                    {
+                        "tone_intent": tone_intent,
+                        "tone": self.emotion,
+                        "emotion_code": self.emotion_code,
+                    }
+                )
             recorder.update_metadata(
                 {
                     "voice_speed": state["speed"],
                     "voice_speed_label": state["speed_label"],
-                    "last_voice_speed_intent": intent,
+                    "voice_tone": state["tone"],
+                    "last_voice_speed_intent": state.get("speed_intent"),
+                    "last_voice_tone_intent": state.get("tone_intent"),
                 }
             )
             return state
+
+        def apply_flow_voice(self, voice: Mapping[str, Any] | None) -> None:
+            if not voice:
+                return
+            speed = voice.get("speed")
+            if isinstance(speed, (int, float)) and not isinstance(speed, bool):
+                self.speed = max(0.5, min(2.0, float(speed)))
+                self._apply_speed()
+            tone = voice.get("tone")
+            if isinstance(tone, str) and tone.strip():
+                self.apply_tone(tone)
+            recorder.update_metadata(
+                {
+                    "voice_speed": round(self.speed, 2),
+                    "voice_speed_label": voice_speed_label(self.speed),
+                    "voice_tone": self.emotion,
+                    "voice_flow_node_tone": tone if isinstance(tone, str) else None,
+                }
+            )
+
+        def apply_tone(self, tone: str) -> None:
+            normalized = tone.casefold().strip().replace(" ", "_")
+            self.emotion = normalized
+            self.emotion_code = emotion_code_for_tone(normalized)
+            self._apply_emotion()
+            recorder.update_metadata(
+                {
+                    "voice_emotion_code": self.emotion_code,
+                    "voice_emotion": self.emotion,
+                }
+            )
 
         def apply_emotion_code(self, code: str) -> None:
             normalized = code.upper().strip()
@@ -785,6 +838,16 @@ async def _run_voice_pipeline(
                 ),
                 "",
             )
+            response_voice = next(
+                (
+                    message.get("voice")
+                    for message in reversed(messages)
+                    if isinstance(message.get("voice"), Mapping)
+                ),
+                None,
+            )
+            if isinstance(response_voice, Mapping):
+                voice_controls.apply_flow_voice(response_voice)
             if not response_text:
                 response_text = "I understand. What should happen next?"
             if trace:
@@ -792,6 +855,7 @@ async def _run_voice_pipeline(
                     "flow_runtime_response",
                     trace,
                     text=response_text,
+                    voice=response_voice,
                     flow_id=self.flow_id,
                     flow_run_id=self.run_id,
                     active_node_id=result.get("active_node_id"),

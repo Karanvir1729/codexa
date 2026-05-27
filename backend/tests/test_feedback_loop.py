@@ -172,6 +172,7 @@ def test_fast_policy_response_handles_voice_speed_and_oneplus_ambiguity():
     assert fast_policy_response("Can you talk a bit faster?") == "Sure, I'll talk faster."
     assert fast_policy_response("Talk very fast.") == "Got it, I'll talk very fast."
     assert fast_policy_response("Please slow down your voice.") == "Sure, I'll slow down."
+    assert fast_policy_response("Can you use a spooky tone?") == "Got it, I'll use a spooky tone."
     assert fast_policy_response("What's OnePlus One?") == (
         "Do you mean the OnePlus phone or one plus one?"
     )
@@ -378,7 +379,7 @@ def test_local_voice_system_instruction_respects_no_think(tmp_path: Path):
     assert "runtime telemetry" in instruction
 
 
-def test_default_flow_bootstraps_with_interruptible_codex_path(tmp_path: Path):
+def test_default_flow_bootstraps_with_flow_voice_agent_path(tmp_path: Path):
     settings = Settings(database_path=str(tmp_path / "agent.sqlite3"), llm_provider="mock")
     repo = FlowRepository(Database(settings.database_path))
 
@@ -387,22 +388,14 @@ def test_default_flow_bootstraps_with_interruptible_codex_path(tmp_path: Path):
     node_types = {node["data"]["nodeType"] for node in flow.graph["nodes"]}
 
     assert flow.status == "published"
+    assert flow.name == "Flow Voice Agent"
+    assert flow.graph["metadata"]["schemaVersion"] == 4
     assert validation["ok"] is True
-    assert {
-        "start",
-        "dialogue",
-        "collect",
-        "confirm",
-        "condition",
-        "codex_task",
-        "wait",
-        "fallback",
-        "transfer_call",
-    } <= node_types
+    assert {"start", "dialogue", "collect", "fallback", "end"} <= node_types
 
 
 @pytest.mark.asyncio
-async def test_flow_runtime_routes_code_request_through_codex_guardrail(tmp_path: Path):
+async def test_flow_runtime_routes_voice_requests_through_flow_nodes(tmp_path: Path):
     settings = Settings(database_path=str(tmp_path / "agent.sqlite3"), llm_provider="mock")
     db = Database(settings.database_path)
     repo = FlowRepository(db)
@@ -410,25 +403,42 @@ async def test_flow_runtime_routes_code_request_through_codex_guardrail(tmp_path
     flow = repo.active()
 
     started = await runtime.handle_message(flow_id=flow.id, message=None)
-    routed = await runtime.handle_message(
+    toned = await runtime.handle_message(
         flow_id=flow.id,
         run_id=started["run_id"],
-        message="I need Codex to inspect this repo and fix the failing tests.",
+        message="Can you use a spooky tone?",
     )
-    approved = await runtime.handle_message(
+    story = await runtime.handle_message(
         flow_id=flow.id,
         run_id=started["run_id"],
-        message="yes proceed",
+        message="Tell me a spooky story in four sentences.",
     )
 
-    assert started["active_node_id"] == "collect_task_details"
-    assert any("Codex Orchestrator" in message["text"] for message in started["messages"])
-    assert routed["active_node_id"] == "confirm_task"
-    assert routed["slots"]["task_description"] == (
-        "I need Codex to inspect this repo and fix the failing tests."
-    )
-    assert approved["active_node_id"] == "monitor_progress"
-    assert any("Codex Orchestrator" in message["text"] for message in approved["messages"])
+    assert started["active_node_id"] == "listen_for_intent"
+    assert any("I am an AI assistant" in message["text"] for message in started["messages"])
+    assert toned["active_node_id"] == "tone_control"
+    assert toned["slots"]["user_request"] == "Can you use a spooky tone?"
+    assert any(message.get("voice") for message in toned["messages"])
+    assert story["active_node_id"] == "long_form_response"
+    assert any("clock" in message["text"].casefold() for message in story["messages"])
+    assert runtime.latest_run_for_conversation(story["run_id"]) is None
+
+
+@pytest.mark.asyncio
+async def test_flow_runtime_can_lookup_voice_run_by_conversation(tmp_path: Path):
+    settings = Settings(database_path=str(tmp_path / "agent.sqlite3"), llm_provider="mock")
+    db = Database(settings.database_path)
+    repo = FlowRepository(db)
+    runtime = FlowRuntime(db, repo, MockLLMClient(settings))
+    flow = repo.active()
+    conversation_id = "voice-conversation"
+
+    started = await runtime.handle_message(flow_id=flow.id, message=None, conversation_id=conversation_id)
+    latest = runtime.latest_run_for_conversation(conversation_id)
+
+    assert latest is not None
+    assert latest["run_id"] == started["run_id"]
+    assert latest["active_node_id"] == "listen_for_intent"
 
 
 @pytest.mark.asyncio
@@ -447,7 +457,7 @@ async def test_flow_runtime_interrupt_routes_to_cancel(tmp_path: Path):
         force_interrupt=True,
     )
 
-    assert interrupted["active_node_id"] == "clarify_requirements"
+    assert interrupted["active_node_id"] == "clarify_request"
     assert any("make sure I get this right" in message["text"] for message in interrupted["messages"])
 
 
@@ -462,6 +472,8 @@ async def test_eval_suite_records_results(runtime):
     assert result["status"] == "passed"
     assert result["aggregate_score"] == 1.0
     assert repo.active().version == result["prompt_version"]
+    assert result["improvement_hints"]
+    assert learner.report()["active_prompt_version"] == result["prompt_version"]
 
 
 @pytest.mark.asyncio

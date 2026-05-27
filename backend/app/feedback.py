@@ -63,6 +63,53 @@ class FeedbackLearner:
         hints = self._derive_hints()
         return self.repo.create(active.system_prompt, "\n".join(hints), "feedback-loop")
 
+    def derive_hints(self) -> list[str]:
+        return self._derive_hints()
+
+    def report(self) -> dict[str, object]:
+        active = self.repo.active()
+        feedback_rows = self.db.all(
+            """
+            SELECT label, AVG(rating) AS avg_rating, COUNT(*) AS count
+            FROM feedback
+            GROUP BY label
+            ORDER BY count DESC
+            LIMIT 10
+            """
+        )
+        eval_rows = self.db.all(
+            """
+            SELECT case_id, score, passed, latency_ms, feedback_json, created_at
+            FROM eval_results
+            ORDER BY created_at DESC
+            LIMIT 20
+            """
+        )
+        return {
+            "active_prompt_version": active.version,
+            "learned_hints": active.learned_hints,
+            "proposed_hints": self._derive_hints(),
+            "feedback_summary": [
+                {
+                    "label": row["label"],
+                    "avg_rating": row["avg_rating"],
+                    "count": row["count"],
+                }
+                for row in feedback_rows
+            ],
+            "recent_eval_results": [
+                {
+                    "case_id": row["case_id"],
+                    "score": row["score"],
+                    "passed": bool(row["passed"]),
+                    "latency_ms": row["latency_ms"],
+                    "failed_checks": _failed_check_names(row["feedback_json"]),
+                    "created_at": row["created_at"],
+                }
+                for row in eval_rows
+            ],
+        }
+
     def _derive_hints(self) -> list[str]:
         hints: list[str] = []
         feedback_rows = self.db.all(
@@ -104,6 +151,18 @@ class FeedbackLearner:
 
         for row in failing_cases:
             case_id = row["case_id"]
+            failed_checks = _failed_check_names(row["feedback_json"])
+            for check in failed_checks:
+                if check.startswith("must_include:"):
+                    concept = check.split(":", 1)[1]
+                    hints.append(f"- Eval {case_id}: include the concept '{concept}' when that intent appears.")
+                elif check.startswith("must_not_include:"):
+                    phrase = check.split(":", 1)[1]
+                    hints.append(f"- Eval {case_id}: avoid saying '{phrase}'.")
+                elif check.startswith("max_latency_ms:"):
+                    hints.append(f"- Eval {case_id}: reduce first response latency before adding extra detail.")
+                elif check == "asks_clarifying_question":
+                    hints.append(f"- Eval {case_id}: ask one clear follow-up question when the request is underspecified.")
             if case_id in {
                 "account_lookup_requires_identifier",
                 "cancellation_collects_required_fields",
@@ -118,3 +177,17 @@ class FeedbackLearner:
         if not hints:
             hints.append("- Current evaluations are passing; preserve concise confirmations and explicit next steps.")
         return list(dict.fromkeys(hints))[:5]
+
+
+def _failed_check_names(feedback_json: str | None) -> list[str]:
+    from .db import loads
+
+    feedback = loads(feedback_json, {})
+    checks = feedback.get("checks") if isinstance(feedback, dict) else []
+    if not isinstance(checks, list):
+        return []
+    return [
+        str(check.get("name"))
+        for check in checks
+        if isinstance(check, dict) and check.get("name") and not check.get("passed")
+    ]

@@ -6,6 +6,19 @@ from typing import Literal
 
 VoiceSpeedIntent = Literal["slower", "very_slow", "normal", "faster", "very_fast"]
 VoiceEmotionCode = Literal["N", "F", "C", "P", "S", "E"]
+VoiceTone = Literal[
+    "neutral",
+    "friendly",
+    "careful",
+    "confident",
+    "sympathetic",
+    "energetic",
+    "calm",
+    "spooky",
+    "arrogant",
+    "condescending",
+    "whisper",
+]
 
 
 VOICE_EMOTION_CODES: dict[VoiceEmotionCode, str] = {
@@ -34,6 +47,38 @@ VOICE_EMOTION_TTS_INSTRUCTIONS = {
     "confident": "Confident and direct.",
     "sympathetic": "Patient and sympathetic, without sounding slow.",
     "energetic": "Brisk, upbeat, and fast while staying clear.",
+    "calm": "Calm, steady, and grounded.",
+    "spooky": "Low, suspenseful, and eerie while remaining understandable.",
+    "arrogant": "Confident and slightly smug without insulting the user.",
+    "condescending": "Dry and superior in tone without being hostile.",
+    "whisper": "Hushed and quiet-sounding while staying intelligible.",
+}
+
+VOICE_TONE_ALIASES: dict[str, VoiceTone] = {
+    "neutral": "neutral",
+    "normal": "neutral",
+    "friendly": "friendly",
+    "warm": "friendly",
+    "careful": "careful",
+    "precise": "careful",
+    "confident": "confident",
+    "assertive": "confident",
+    "sympathetic": "sympathetic",
+    "empathetic": "sympathetic",
+    "sorry": "sympathetic",
+    "energetic": "energetic",
+    "excited": "energetic",
+    "upbeat": "energetic",
+    "calm": "calm",
+    "relaxed": "calm",
+    "spooky": "spooky",
+    "scary": "spooky",
+    "creepy": "spooky",
+    "arrogant": "arrogant",
+    "smug": "arrogant",
+    "condescending": "condescending",
+    "whisper": "whisper",
+    "whispering": "whisper",
 }
 
 
@@ -109,6 +154,62 @@ def voice_speed_response(intent: VoiceSpeedIntent) -> str:
     return "Sure, I'll use normal speed."
 
 
+def voice_tone_intent(text: str) -> VoiceTone | None:
+    normalized = normalize_for_intent(text)
+    if not normalized:
+        return None
+
+    words = set(normalized.split())
+    has_tone_context = bool(
+        words
+        & {
+            "tone",
+            "voice",
+            "sound",
+            "sounds",
+            "speak",
+            "talk",
+            "talking",
+            "style",
+            "vibe",
+        }
+    ) or any(
+        phrase in normalized
+        for phrase in [
+            "be more",
+            "make it",
+            "can you be",
+            "sound more",
+            "talk like",
+            "speak like",
+        ]
+    )
+    for alias, tone in VOICE_TONE_ALIASES.items():
+        if alias in words and (has_tone_context or alias in {"whisper", "whispering"}):
+            return tone
+    return None
+
+
+def voice_tone_response(tone: VoiceTone) -> str:
+    if tone == "whisper":
+        return "Got it, I'll use a whisper-like tone."
+    return f"Got it, I'll use a {tone} tone."
+
+
+def emotion_code_for_tone(tone: str) -> VoiceEmotionCode:
+    if tone in {"friendly"}:
+        return "F"
+    if tone in {"careful", "calm", "spooky", "whisper"}:
+        return "C"
+    if tone in {"confident", "arrogant", "condescending"}:
+        return "P"
+    if tone in {"sympathetic"}:
+        return "S"
+    if tone in {"energetic"}:
+        return "E"
+    return "N"
+
+
 def next_voice_speed(current: float, intent: VoiceSpeedIntent) -> float:
     if intent == "very_fast":
         return 1.6
@@ -136,6 +237,8 @@ def voice_speed_label(speed: float) -> str:
 def emotion_code_for_turn(user_text: str, response_text: str) -> VoiceEmotionCode:
     normalized_user = normalize_for_intent(user_text)
     normalized_response = normalize_for_intent(response_text)
+    if tone := voice_tone_intent(user_text):
+        return emotion_code_for_tone(tone)
     if voice_speed_intent(user_text):
         return "E"
     if any(

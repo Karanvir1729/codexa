@@ -427,6 +427,11 @@ async def simulate_flow(flow_id: str, payload: FlowSimulateRequest) -> dict[str,
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/api/flows/runs/by-conversation/{conversation_id}")
+async def flow_run_by_conversation(conversation_id: str) -> dict[str, Any]:
+    return {"run": flow_runtime.latest_run_for_conversation(conversation_id)}
+
+
 @app.get("/api/conversations/{conversation_id}")
 async def conversation(conversation_id: str) -> dict[str, Any]:
     return {"conversation_id": conversation_id, "turns": agent.transcript(conversation_id)}
@@ -693,6 +698,11 @@ async def prompt() -> dict[str, Any]:
         "learned_hints": active.learned_hints,
         "compiled": active.compiled,
     }
+
+
+@app.get("/api/auto-improvement")
+async def auto_improvement() -> dict[str, Any]:
+    return learner.report()
 
 
 @app.post("/api/evals/run")

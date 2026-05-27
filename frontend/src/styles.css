@@ -498,6 +498,22 @@ h2 {
   background: #1d242b;
 }
 
+.improvementList {
+  display: grid;
+  gap: 8px;
+  padding: 0 16px 16px;
+}
+
+.improvementList span {
+  border: 1px solid #26333d;
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #dbe7ee;
+  background: #111820;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .padX {
   padding: 0 18px 14px;
 }
@@ -959,7 +975,56 @@ pre {
 
 .flowTestBench {
   display: grid;
-  grid-template-rows: auto minmax(130px, 1fr) auto;
+  grid-template-rows: auto auto minmax(130px, 1fr) auto;
+}
+
+.flowVoicePanel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 14px;
+  align-items: center;
+  padding: 12px 14px;
+  border-bottom: 1px solid #1d242b;
+  background: #0b1116;
+}
+
+.flowVoicePanel strong,
+.flowVoicePanel span {
+  display: block;
+}
+
+.flowVoicePanel span {
+  color: #91a0aa;
+  font-size: 12px;
+}
+
+.flowVoiceControls {
+  display: flex;
+  gap: 8px;
+}
+
+.flowVoiceTurns {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.flowVoiceTurns span {
+  flex: 0 0 auto;
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid #26333d;
+  border-radius: 8px;
+  padding: 7px 9px;
+  color: #dbe7ee;
+}
+
+.flowVoiceTurns span.assistant {
+  border-color: rgba(216, 251, 111, 0.4);
+  color: #d8fb6f;
 }
 
 .flowTranscript {
@@ -1775,7 +1840,7 @@ pre {
 
 .flowTestBench {
   display: grid;
-  grid-template-rows: auto minmax(130px, 1fr) auto;
+  grid-template-rows: auto auto minmax(130px, 1fr) auto;
 }
 
 .flowTranscript {

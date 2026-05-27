@@ -38,23 +38,39 @@ class EvalRunner:
 
         aggregate = statistics.mean([r["score"] for r in results]) if results else 0.0
         status = "passed" if all(r["passed"] for r in results) else "failed"
+        prompt_version = None
+        improvement_hints: list[str] = []
+        if apply_feedback:
+            prompt = self.learner.rebuild()
+            prompt_version = prompt.version
+            improvement_hints = [line for line in prompt.learned_hints.splitlines() if line.strip()]
         self.db.execute(
             """
             UPDATE eval_runs
             SET status = ?, completed_at = CURRENT_TIMESTAMP, aggregate_score = ?, metrics_json = ?
             WHERE id = ?
             """,
-            (status, aggregate, dumps({"case_count": len(results)}), run_id),
+            (
+                status,
+                aggregate,
+                dumps(
+                    {
+                        "case_count": len(results),
+                        "failing_cases": [result["case_id"] for result in results if not result["passed"]],
+                        "applied_prompt_version": prompt_version,
+                        "improvement_hints": improvement_hints,
+                    }
+                ),
+                run_id,
+            ),
         )
-        prompt_version = None
-        if apply_feedback:
-            prompt_version = self.learner.rebuild().version
         return {
             "run_id": run_id,
             "suite": suite.get("name", suite_path.stem),
             "status": status,
             "aggregate_score": aggregate,
             "prompt_version": prompt_version,
+            "improvement_hints": improvement_hints,
             "results": results,
         }
 

@@ -20,6 +20,15 @@ cases:
       max_latency_ms: 1200
     pass_threshold: 1.0
 
+  - id: tone_control_is_acknowledged
+    turns:
+      - "Can you use a spooky tone?"
+    assertions:
+      must_include:
+        - "spooky tone"
+      max_latency_ms: 1200
+    pass_threshold: 1.0
+
   - id: no_customer_service_handoff
     turns:
       - "Can I talk to a human agent?"
