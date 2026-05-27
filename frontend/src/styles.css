@@ -1207,6 +1207,8 @@ pre {
   border: 1px solid #202830;
   border-radius: 8px;
   cursor: grab;
+  touch-action: none;
+  overscroll-behavior: contain;
   background-color: #090d11;
   background-image:
     radial-gradient(circle at 1px 1px, rgba(120, 136, 150, 0.34) 1px, transparent 0),

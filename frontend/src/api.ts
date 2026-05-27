@@ -128,7 +128,13 @@ export type FlowSimulationResponse = {
   error: string | null;
 };
 
-export const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+const configuredApiBase = import.meta.env.VITE_API_BASE?.trim() ?? "";
+const localDevApiBase =
+  import.meta.env.DEV && typeof window !== "undefined" && window.location.port === "5173"
+    ? "http://localhost:8000"
+    : "";
+
+export const API_BASE = configuredApiBase || localDevApiBase;
 
 export function apiUrl(path: string) {
   return API_BASE ? `${API_BASE}${path}` : path;

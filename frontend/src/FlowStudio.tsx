@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent
+} from "react";
 import BookOpen from "lucide-react/dist/esm/icons/book-open.js";
 import CheckCircle2 from "lucide-react/dist/esm/icons/check-circle-2.js";
 import Code2 from "lucide-react/dist/esm/icons/code-2.js";
@@ -244,6 +251,7 @@ export function FlowStudio({ onNotice }: FlowStudioProps) {
 
 function FlowStudioInner({ onNotice }: FlowStudioProps) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const viewRef = useRef({ zoom: 0.82, pan: { x: 150, y: 100 } });
   const [flow, setFlow] = useState<FlowDefinition | null>(null);
   const [nodes, setNodes] = useState<VoiceNode[]>([]);
   const [edges, setEdges] = useState<VoiceEdge[]>([]);
@@ -320,6 +328,48 @@ function FlowStudioInner({ onNotice }: FlowStudioProps) {
       .catch((error) => onNotice?.(error instanceof Error ? error.message : "Failed to load flow"));
   }, [onNotice]);
 
+  useEffect(() => {
+    viewRef.current = { zoom, pan };
+  }, [pan, zoom]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const handleWheel = (event: globalThis.WheelEvent) => {
+      if (isCanvasControlTarget(event.target)) return;
+      event.preventDefault();
+
+      const { zoom: currentZoom, pan: currentPan } = viewRef.current;
+      if (event.ctrlKey || event.metaKey) {
+        const rect = canvas.getBoundingClientRect();
+        const worldX = (event.clientX - rect.left - currentPan.x) / currentZoom;
+        const worldY = (event.clientY - rect.top - currentPan.y) / currentZoom;
+        const nextZoom = Math.min(1.4, Math.max(0.32, currentZoom * Math.exp(-event.deltaY * 0.002)));
+
+        const nextPan = {
+          x: Math.round(event.clientX - rect.left - worldX * nextZoom),
+          y: Math.round(event.clientY - rect.top - worldY * nextZoom)
+        };
+        const roundedZoom = Number(nextZoom.toFixed(3));
+        viewRef.current = { zoom: roundedZoom, pan: nextPan };
+        setZoom(roundedZoom);
+        setPan(nextPan);
+        return;
+      }
+
+      const nextPan = {
+        x: Math.round(currentPan.x - event.deltaX),
+        y: Math.round(currentPan.y - event.deltaY)
+      };
+      viewRef.current = { zoom: currentZoom, pan: nextPan };
+      setPan(nextPan);
+    };
+
+    canvas.addEventListener("wheel", handleWheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", handleWheel);
+  }, []);
+
   function addNode(nodeType: string) {
     const id = `${nodeType}_${Math.random().toString(36).slice(2, 8)}`;
     const next: VoiceNode = {
@@ -352,7 +402,7 @@ function FlowStudioInner({ onNotice }: FlowStudioProps) {
   }
 
   function beginPan(event: PointerEvent<HTMLDivElement>) {
-    if (event.button !== 0 || event.target !== event.currentTarget) return;
+    if (event.button !== 0 || isCanvasControlTarget(event.target)) return;
     setPanState({
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -1364,4 +1414,15 @@ function edgeLabelPoint(source: VoiceNode, target: VoiceNode, outputIndex: numbe
 
 function readNumber(value: unknown, fallback: number) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function isCanvasControlTarget(target: EventTarget | null) {
+  return (
+    target instanceof Element &&
+    Boolean(
+      target.closest(
+        ".flowNodeCard, .canvasToolbar, .nodePicker, .selectedPreview, button, input, textarea, select"
+      )
+    )
+  );
 }
