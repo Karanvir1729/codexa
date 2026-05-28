@@ -21,7 +21,7 @@ Current phase status:
 | GCP VM real Codex app build | In progress | Primary auth path is now the dedicated `codex_home_bundle` design. API-key auth is fallback-only. Local bundle creation and GCP VM Codex smoke still need proof from this branch. |
 | GKE Job worker backend | Firestore full-stack smoke passed with caveats | `gke_job` mode, manager, manifest generator, setup/smoke script, tests, Codex-home bundle auth, authenticated Cloud Run callbacks, and Firestore-backed full-stack conversation smoke passed in `teamtiffy1729`. GKE outputs are still Pod-local evidence, not durable repo branches. |
 | Full-stack local/GKE app smokes | Done with caveats | Docker Local and GKE Job both completed real Vertex-planned Wordle-style full-stack smokes. The latest GKE run used Firestore state and passed with graph `task_graph_a314e396-6dd3-42cb-bea4-1880e5774a1b`. |
-| Authenticated Cloud Run deployment | Done | Production URL `https://head-developer-api-jq6oo2ormq-uc.a.run.app` is on revision `head-developer-api-00046-xp5` with Firestore state, Vertex/Gemini provider indicators, amd64 API/worker images, and authenticated invoker access for worker service accounts plus `teamtiffy1729@gmail.com`. |
+| Cloud Run deployment | Done | Production URL `https://head-developer-api-jq6oo2ormq-uc.a.run.app` is on revision `head-developer-api-00046-xp5` with Firestore state, Vertex/Gemini provider indicators, amd64 API/worker images, and public `allUsers` invoker access per user approval. |
 | Git repo / PR orchestration | Design documented, implementation gap | Local git init, Docker worker branches, and worktrees exist. Durable GKE output artifacts, remote repo creation, branch push, PR creation, conflict resolution, and approval-gated merge remain unimplemented. |
 
 Active branch/chat visibility:
@@ -128,11 +128,14 @@ Deployment evidence:
 - Worker image: `us-central1-docker.pkg.dev/teamtiffy1729/head-developer/worker:karan-cloudrun-amd64-prod-20260528141254`.
 - Runtime state: `HEAD_DEVELOPER_STATE_STORE=firestore`, Firestore project `teamtiffy1729`, production prefix from deployment env.
 - Provider indicator from `/ready`: `Supervisor: Vertex/Gemini`, `Planner: Vertex/Gemini`, `Worker code model: Codex CLI`.
-- Cloud Run auth remains enabled. Invokers are `gke-worker-sa@teamtiffy1729.iam.gserviceaccount.com`, `worker-vm-sa@teamtiffy1729.iam.gserviceaccount.com`, and `teamtiffy1729@gmail.com`.
+- Initial deployment kept Cloud Run authenticated. On 2026-05-28, user explicitly approved public access; `allUsers` now has `roles/run.invoker` on `head-developer-api`.
+- Current invokers are `allUsers`, `gke-worker-sa@teamtiffy1729.iam.gserviceaccount.com`, `worker-vm-sa@teamtiffy1729.iam.gserviceaccount.com`, and `teamtiffy1729@gmail.com`.
 - Authenticated smoke passed: `/ready` returned `ok=true`, `/` returned HTTP 200, frontend bundle contains the Cloud Run API base rather than localhost, `POST /sessions` created session `a2ac28f8-0db5-48a5-b9a2-b20c988778d3`, and `GET /projects` returned quickly with a bounded empty list.
+- Public unauthenticated smoke passed: `/` returned HTTP 200 and `/ready` returned `ok=true` with provider indicators `Vertex/Gemini` and `Codex CLI`.
 
-Pending in this release pass:
-- Final post-deploy verification, staging secret scan, commit, and push `karan-changes`.
+Release pass status:
+- Deployment implementation was committed and pushed in `95c298b`.
+- Public Cloud Run access was applied after explicit user approval and is documented in the follow-up repo change.
 
 ## 2026-05-28 - Firestore production hardening and GKE full-stack smoke
 
