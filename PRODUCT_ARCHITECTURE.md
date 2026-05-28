@@ -24,6 +24,8 @@ The user-facing supervisor and agentic planner use real GCP Vertex/Gemini by def
 
 Required runtime Vertex env vars are `VERTEX_PROJECT_ID`, `VERTEX_LOCATION`, and `VERTEX_MODEL`. Missing Vertex config fails clearly before orchestration can silently degrade.
 
+Planner output remains model-driven, but the controller applies generic safety/performance normalization after parsing: cloud and multi-worker execution still require approval, and serial or overlapping splits for one static app surface are collapsed to one worker so simple builds do not spend minutes running unnecessary sequential workers. This guard is based on task structure and file ownership, not prompt names or sample app strings.
+
 The dashboard exposes non-secret model indicators:
 
 - `supervisor_model_provider`: `Vertex/Gemini`
@@ -45,7 +47,7 @@ The GCP VM worker path creates disposable Compute Engine VMs with no public IP b
 
 The GKE Job worker path is a prototype alternative. It creates one Kubernetes Job per worker assignment in the `head-developer-workers` namespace, uses the `head-developer-worker` Kubernetes service account mapped through Workload Identity Federation to `gke-worker-sa@PROJECT.iam.gserviceaccount.com`, mounts emptyDir volumes for `/workspace`, `/state`, and `/codex-home`, fetches the restricted Codex home bundle at runtime, and posts authenticated callbacks to Cloud Run. It preserves `gcp_vm`; it is not a production migration yet.
 
-Current GKE workers intentionally use Pod-local `/workspace` and therefore do not yet create durable repo branches. API-side git repo preparation is skipped for `gke_job` execution because those local Cloud Run repo files are not the worker's execution workspace. A minimal API artifact handoff now restores current project app files into each GKE Pod before execution and persists generated app files back into the state store after validation. Preview routes rehydrate those persisted artifacts into the serving workspace before serving each asset so Cloud Run instance-local stale files do not win. This makes previewable app files available across sequential GKE Jobs, but it is still not a replacement for durable branches, remote repository pushes, or PRs.
+Current GKE workers intentionally use Pod-local `/workspace` and therefore do not yet create durable repo branches. API-side git repo preparation is skipped for `gke_job` execution because those local Cloud Run repo files are not the worker's execution workspace. A minimal API artifact handoff now restores persisted project app files into each GKE Pod before execution and persists generated app files back into the state store after validation. Preview routes use preview/artifact metadata caches and replace stale requested files before serving assets so Cloud Run instance-local stale files do not win without forcing a full artifact rewrite on every CSS/JS request. This makes previewable app files available across sequential GKE Jobs, but it is still not a replacement for durable branches, remote repository pushes, or PRs.
 
 ## Durable Repo And PR Lifecycle Design
 

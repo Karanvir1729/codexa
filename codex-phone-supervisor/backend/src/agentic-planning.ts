@@ -278,6 +278,70 @@ function oneWorkerLandingSplit(userMessage: string): PlannerTaskSplitItem[] {
   ];
 }
 
+function isStaticArtifactFile(file: string) {
+  return /\.(?:html|css|js|mjs|cjs|json|svg|png|jpe?g|webp|ico|txt|md)$/i.test(file);
+}
+
+function duplicateExpectedFiles(split: PlannerTaskSplitItem[]) {
+  const files = split.flatMap((item) => item.expected_files).filter((file) => !isDocPath(file));
+  return files.length !== new Set(files).size;
+}
+
+function looksLikeSingleSurfaceStaticWork(input: PlannerInput, decision: PlannerDecision) {
+  const split = decision.proposed_task_split;
+  if (split.length <= 1) return false;
+  const appFiles = split.flatMap((item) => item.expected_files).filter((file) => !isDocPath(file));
+  if (!appFiles.length || !appFiles.every(isStaticArtifactFile)) return false;
+  const serialSplit = !split.some((item) => item.can_run_parallel);
+  if (!serialSplit && !duplicateExpectedFiles(split)) return false;
+  const corpus = normalized([
+    input.user_message,
+    decision.requirements_summary,
+    decision.proposed_design,
+    ...split.flatMap((item) => [item.title, item.goal]),
+  ].join(" "));
+  if (!/\b(static|html|css|javascript|js|browser|form|landing page|website|site|localstorage|local storage|no backend)\b/.test(corpus)) return false;
+  const nonNegatedCorpus = corpus.replace(/\b(no|without)\s+(api|backend|server|database|db)\b/g, "");
+  if (/\b(api|backend|server|database|db|postgres|mysql|sqlite|full stack|full-stack|deploy|stripe|payment)\b/.test(nonNegatedCorpus)) return false;
+  const surfaces = ["landing", "login", "dashboard", "settings", "admin", "billing", "pricing", "reports", "profile"].filter((surface) => new RegExp(`\\b${surface}\\b`).test(corpus));
+  return new Set(surfaces).size < 3;
+}
+
+function optimizePlannerDecisionForSpeed(input: PlannerInput, decision: PlannerDecision) {
+  if (!looksLikeSingleSurfaceStaticWork(input, decision)) return decision;
+  const expectedFiles = uniqueText(decision.proposed_task_split.flatMap((item) => item.expected_files));
+  const validation = uniqueText(decision.proposed_task_split.flatMap((item) => item.validation));
+  const approvalIsRiskBased = decision.risk_level !== "low" || /risk|secret|iam|deploy|public|destructive/i.test(decision.approval_reason);
+  const workerLabel = decision.recommended_worker_mode === "docker_local"
+    ? "Docker Local"
+    : decision.recommended_worker_mode === "gke_job"
+      ? "GKE Job"
+      : decision.recommended_worker_mode === "gcp_vm"
+        ? "GCP VM"
+        : "local";
+  return {
+    ...decision,
+    decision_type: approvalIsRiskBased ? decision.decision_type : "start_simple_task" as const,
+    reason: `${decision.reason} Optimized the planner split to one worker because the proposed static-app tasks were serial or overlapped on one app surface.`,
+    user_visible_response: `I can keep this fast as one ${workerLabel} worker because the proposed static-app split is sequential or targets the same app surface. I will build the requested static app, validate the generated files, and report real command evidence.`,
+    proposed_task_split: [
+      {
+        title: "Build static app",
+        goal: decision.requirements_summary || input.user_message,
+        can_run_parallel: false,
+        depends_on: [],
+        expected_files: expectedFiles,
+        validation,
+      },
+    ],
+    recommended_worker_count: 1,
+    requires_user_approval: approvalIsRiskBased ? decision.requires_user_approval : false,
+    approval_reason: approvalIsRiskBased ? decision.approval_reason : "",
+    next_action: approvalIsRiskBased ? decision.next_action : "launch_workers" as const,
+    execution_allowed: approvalIsRiskBased ? decision.execution_allowed : true,
+  };
+}
+
 function decision(input: Omit<PlannerDecision, "planning_decision_id">): PlannerDecision {
   return { planning_decision_id: `planning_${randomUUID()}`, ...input };
 }
@@ -800,7 +864,7 @@ export class AgenticPlanningController {
       decision = parsePlannerDecision(await fallback.generatePlanningDecision(plannerInput));
       decision.reason = `Planner fallback used because ${error instanceof Error ? error.message : String(error)} ${decision.reason}`;
     }
-    decision = normalizeUserVisibleApprovalPrompt(enforceExecutionSafety(decision));
+    decision = normalizeUserVisibleApprovalPrompt(enforceExecutionSafety(optimizePlannerDecisionForSpeed(plannerInput, decision)));
     const planningDecisionId = decision.planning_decision_id ?? `planning_${randomUUID()}`;
     decision.planning_decision_id = planningDecisionId;
     decision = redactSensitiveJson(decision);

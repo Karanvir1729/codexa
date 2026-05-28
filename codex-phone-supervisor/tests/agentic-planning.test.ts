@@ -182,6 +182,85 @@ test("agentic planner converts human validation text into acceptance checks, not
   assert.ok(payload.acceptance?.includes("Verify that the nonce appears in index.html."));
 });
 
+test("agentic planner collapses serial single-surface static splits to one worker", () => {
+  const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), "planner-speed-store-"));
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "planner-speed-root-"));
+  const projectDir = path.join(workspaceRoot, "speed-project");
+  fs.mkdirSync(projectDir, { recursive: true });
+  const script = `
+    ${bootstrapEnv(storeDir, workspaceRoot)}
+    const { AgenticPlanningController } = await import("./codex-phone-supervisor/backend/src/agentic-planning.ts");
+    const { createSession } = await import("./codex-phone-supervisor/backend/src/session.ts");
+    const { upsertSession } = await import("./codex-phone-supervisor/backend/src/store.ts");
+    const { projectRecordForWorkspace, upsertProject } = await import("./codex-phone-supervisor/backend/src/project-store.ts");
+    const project = projectRecordForWorkspace(${JSON.stringify(projectDir)});
+    upsertProject(project);
+    const session = createSession("speed planner", ${JSON.stringify(workspaceRoot)});
+    session.session_id = "session_speed_planner";
+    session.project_id = project.project_id;
+    session.current_project_id = project.project_id;
+    session.project_discovery.status = "selected";
+    session.preferred_worker_mode = "docker_local";
+    upsertSession(session);
+    const serialStaticModel = {
+      modelName: "serial_static_model",
+      async generatePlanningDecision() {
+        return {
+          decision_type: "propose_task_split",
+          confidence: 0.82,
+          reason: "Sequential static implementation tasks.",
+          user_visible_response: "I will split this into HTML, CSS, and JavaScript tasks.",
+          requirements_summary: "Build a static browser form app with local storage and no backend.",
+          open_questions: [],
+          assumptions: ["Static HTML/CSS/JS only."],
+          proposed_design: "Single static browser app.",
+          proposed_task_split: [
+            { title: "HTML shell", goal: "Create the form markup.", can_run_parallel: false, depends_on: [], expected_files: ["index.html"], validation: ["test -f index.html"] },
+            { title: "Styles", goal: "Style the same app.", can_run_parallel: false, depends_on: ["HTML shell"], expected_files: ["styles.css"], validation: ["test -f styles.css"] },
+            { title: "Client behavior", goal: "Add localStorage behavior.", can_run_parallel: false, depends_on: ["Styles"], expected_files: ["script.js"], validation: ["node --check script.js"] }
+          ],
+          recommended_worker_count: 3,
+          recommended_worker_mode: "docker_local",
+          requires_user_approval: true,
+          approval_reason: "Multi-worker execution needs approval.",
+          risk_level: "low",
+          next_action: "none",
+          execution_allowed: false
+        };
+      }
+    };
+    const controller = new AgenticPlanningController(serialStaticModel);
+    const planned = await controller.decide({ session, userMessage: "Build a static form app with localStorage. No backend.", project, workerMode: "docker_local" });
+    console.log(JSON.stringify({
+      decisionType: planned.decision.decision_type,
+      workerCount: planned.decision.recommended_worker_count,
+      splitLength: planned.decision.proposed_task_split.length,
+      approvalRequired: planned.decision.requires_user_approval,
+      executionAllowed: planned.decision.execution_allowed,
+      files: planned.decision.proposed_task_split[0]?.expected_files,
+      response: planned.decision.user_visible_response
+    }));
+  `;
+  const result = runIsolated(script);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}") as {
+    decisionType?: string;
+    workerCount?: number;
+    splitLength?: number;
+    approvalRequired?: boolean;
+    executionAllowed?: boolean;
+    files?: string[];
+    response?: string;
+  };
+  assert.equal(payload.decisionType, "start_simple_task");
+  assert.equal(payload.workerCount, 1);
+  assert.equal(payload.splitLength, 1);
+  assert.equal(payload.approvalRequired, false);
+  assert.equal(payload.executionAllowed, true);
+  assert.deepEqual(payload.files, ["index.html", "styles.css", "script.js"]);
+  assert.match(String(payload.response), /one Docker Local worker/i);
+});
+
 test("agentic planner forces approval before cloud worker execution", () => {
   const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), "planner-cloud-approval-store-"));
   const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "planner-cloud-approval-root-"));

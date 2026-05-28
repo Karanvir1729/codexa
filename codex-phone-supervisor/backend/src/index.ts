@@ -199,6 +199,27 @@ function listArtifactFiles(workspacePath: string, projectId?: string) {
   return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
 }
 
+function listPersistedArtifactFiles(projectId: string) {
+  return listProjectArtifactFiles(projectId)
+    .filter((record) => isPersistableArtifactPath(record.path))
+    .map((record) => ({
+      path: record.path,
+      content_base64: record.content_base64,
+      size_bytes: record.size_bytes,
+    }))
+    .sort((a, b) => a.path.localeCompare(b.path));
+}
+
+function writeFileIfChanged(filePath: string, data: Buffer) {
+  if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+    const current = fs.readFileSync(filePath);
+    if (current.length === data.length && current.equals(data)) return false;
+  }
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, data);
+  return true;
+}
+
 function workerRuntimeMetadataFromBody(body: Record<string, unknown>): WorkerRuntimeMetadata {
   return {
     task_id: optionalBodyString(body.task_id),
@@ -1079,7 +1100,11 @@ app.post("/workers/:worker_id/events", async (req, res) => {
 app.get("/projects/:project_id/artifacts/files", (req, res) => {
   const target = artifactWorkspaceForProject(req.params.project_id);
   if (!target) return res.status(404).json(apiError("PROJECT_NOT_FOUND", "Project not found."));
-  const files = listArtifactFiles(target.workspacePath, target.project.project_id);
+  const source = optionalBodyString(req.query.source);
+  const persistedOnly = source === "persisted" || req.query.persisted_only === "1";
+  const files = persistedOnly
+    ? listPersistedArtifactFiles(target.project.project_id)
+    : listArtifactFiles(target.workspacePath, target.project.project_id);
   res.json({ project_id: target.project.project_id, files });
 });
 
@@ -1103,6 +1128,7 @@ app.post("/workers/:worker_id/artifacts/files", (req, res) => {
   const maxBytes = 2 * 1024 * 1024;
   const maxFileBytes = 512 * 1024;
   fs.mkdirSync(target.workspacePath, { recursive: true });
+  const existingArtifacts = new Map(listProjectArtifactFiles(target.project.project_id).map((artifact) => [artifact.artifact_id, artifact]));
   for (const item of rawFiles) {
     if (!item || typeof item !== "object") continue;
     const record = item as Record<string, unknown>;
@@ -1120,12 +1146,11 @@ app.post("/workers/:worker_id/artifacts/files", (req, res) => {
     if (resolved !== resolvedRoot && !resolved.startsWith(`${resolvedRoot}${path.sep}`)) {
       return res.status(400).json(apiError("ARTIFACT_PATH_INVALID", "Artifact path must stay inside the project workspace."));
     }
-    fs.mkdirSync(path.dirname(targetFile), { recursive: true });
-    fs.writeFileSync(targetFile, data);
+    writeFileIfChanged(targetFile, data);
     const now = new Date().toISOString();
     const artifactId = artifactIdFor(target.project.project_id, relativePath);
-    const previous = listProjectArtifactFiles(target.project.project_id).find((artifact) => artifact.artifact_id === artifactId);
-    upsertProjectArtifactFile({
+    const previous = existingArtifacts.get(artifactId);
+    const nextArtifact = upsertProjectArtifactFile({
       artifact_id: artifactId,
       project_id: target.project.project_id,
       task_id: task.task_id,
@@ -1136,6 +1161,7 @@ app.post("/workers/:worker_id/artifacts/files", (req, res) => {
       created_at: previous?.created_at ?? now,
       updated_at: now,
     });
+    existingArtifacts.set(artifactId, nextArtifact);
     savedFiles.push(relativePath);
   }
 

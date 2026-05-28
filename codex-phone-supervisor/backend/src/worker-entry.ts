@@ -902,7 +902,7 @@ function isArtifactFile(relativePath: string) {
 
 async function restoreProjectArtifacts(projectId: string, projectWorkspace: string) {
   if (workerType !== "gke_job") return 0;
-  const payload = await get<{ files?: Array<{ path: string; content_base64: string }> }>(`/projects/${encodeURIComponent(projectId)}/artifacts/files`).catch((error) => {
+  const payload = await get<{ files?: Array<{ path: string; content_base64: string }> }>(`/projects/${encodeURIComponent(projectId)}/artifacts/files?source=persisted`).catch((error) => {
     process.stderr.write(`Project artifact restore skipped: ${error instanceof Error ? error.message : String(error)}\n`);
     return null;
   });

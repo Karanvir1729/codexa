@@ -735,6 +735,12 @@ test("worker artifact file handoff persists app files into the project workspace
     const restored = artifactPayload.files.find((file) => file.path === "index.html");
     assert.ok(restored);
     assert.equal(Buffer.from(restored.content_base64, "base64").toString("utf8"), html);
+    fs.writeFileSync(path.join(workspaceDir, "local-only.html"), "<p>local only</p>");
+    const persistedOnlyResponse = await fetch(`http://127.0.0.1:${port}/projects/${attachPayload.project.project_id}/artifacts/files?source=persisted`);
+    assert.equal(persistedOnlyResponse.status, 200);
+    const persistedOnlyPayload = await persistedOnlyResponse.json() as { files: Array<{ path: string }> };
+    assert.ok(persistedOnlyPayload.files.some((file) => file.path === "index.html"));
+    assert.ok(!persistedOnlyPayload.files.some((file) => file.path === "local-only.html"));
   } finally {
     child.kill();
   }
@@ -833,6 +839,10 @@ test("preview action restores persisted artifacts when the local workspace copy 
     const scriptResponse = await fetch(`${previewPayload.preview.preview_url}script.js`);
     assert.equal(scriptResponse.status, 200);
     assert.equal(await scriptResponse.text(), updatedJs);
+    fs.writeFileSync(path.join(workspaceDir, "script.js"), "window.artifactPreviewLoaded = 'stale again';\n");
+    const cachedScriptResponse = await fetch(`${previewPayload.preview.preview_url}script.js`);
+    assert.equal(cachedScriptResponse.status, 200);
+    assert.equal(await cachedScriptResponse.text(), updatedJs);
   } finally {
     child.kill();
     fs.rmSync(storeDir, { recursive: true, force: true });

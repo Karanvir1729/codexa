@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Response } from "express";
 import { config } from "./config.js";
 import { CommandRunner } from "./command-runner.js";
@@ -18,11 +18,29 @@ import {
   upsertTask,
 } from "./store.js";
 import { generateRunSummary } from "./summary.js";
-import type { PreviewMetadata, ProjectRecord, RunSummaryRecord, SessionState, TaskRecord } from "./types.js";
+import type { PreviewMetadata, ProjectArtifactFileRecord, ProjectRecord, RunSummaryRecord, SessionState, TaskRecord } from "./types.js";
 
 type PreviewStartResult =
   | { ok: true; preview: PreviewMetadata; task: TaskRecord; project: ProjectRecord; reused: boolean }
   | { ok: false; code: string; message: string; status: number };
+
+type PreviewRecordCacheEntry = {
+  preview_id: string;
+  task_id: string;
+  project_id: string;
+  preview: PreviewMetadata;
+};
+
+type ArtifactRestoreCacheEntry = {
+  project_id: string;
+  workspace_path: string;
+  project_updated_at: string | null;
+  fingerprint: string;
+  artifacts: ProjectArtifactFileRecord[];
+};
+
+const previewRecordCache = new Map<string, PreviewRecordCacheEntry>();
+const artifactRestoreCache = new Map<string, ArtifactRestoreCacheEntry>();
 
 function isWithinDirectory(candidate: string, parent: string) {
   const relative = path.relative(parent, candidate);
@@ -152,21 +170,73 @@ function detectPreviewEntry(workspacePath: string, task: TaskRecord) {
   return null;
 }
 
-function restoreArtifactFiles(projectId: string, workspacePath: string) {
-  const artifacts = listProjectArtifactFiles(projectId);
-  let restored = 0;
+function artifactRestoreCacheKey(projectId: string, workspacePath: string) {
+  return `${projectId}:${path.resolve(workspacePath)}`;
+}
+
+function artifactFingerprint(artifacts: ProjectArtifactFileRecord[]) {
+  const hash = createHash("sha256");
   for (const artifact of artifacts) {
-    const relativePath = safeRelativePath(artifact.path);
-    if (!relativePath || !isRestorableArtifactPath(relativePath)) continue;
-    const target = path.resolve(workspacePath, relativePath);
-    if (!isWithinDirectory(target, workspacePath)) continue;
-    const data = Buffer.from(artifact.content_base64, "base64");
-    if (!data.length) continue;
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, data);
-    restored += 1;
+    hash.update(artifact.artifact_id);
+    hash.update("\0");
+    hash.update(artifact.path);
+    hash.update("\0");
+    hash.update(String(artifact.size_bytes));
+    hash.update("\0");
+    hash.update(artifact.updated_at);
+    hash.update("\0");
+    hash.update(artifact.content_base64);
+    hash.update("\0");
   }
-  return restored;
+  return hash.digest("hex");
+}
+
+function loadProjectArtifacts(projectId: string, workspacePath: string, projectUpdatedAt?: string | null) {
+  const cacheKey = artifactRestoreCacheKey(projectId, workspacePath);
+  const cached = artifactRestoreCache.get(cacheKey);
+  if (cached && cached.project_updated_at === (projectUpdatedAt ?? null)) return cached;
+  const artifacts = listProjectArtifactFiles(projectId);
+  const next: ArtifactRestoreCacheEntry = {
+    project_id: projectId,
+    workspace_path: path.resolve(workspacePath),
+    project_updated_at: projectUpdatedAt ?? null,
+    fingerprint: artifactFingerprint(artifacts),
+    artifacts,
+  };
+  artifactRestoreCache.set(cacheKey, next);
+  return next;
+}
+
+function writeArtifactFileIfChanged(artifact: ProjectArtifactFileRecord, workspacePath: string) {
+  const relativePath = safeRelativePath(artifact.path);
+  if (!relativePath || !isRestorableArtifactPath(relativePath)) return false;
+  const target = path.resolve(workspacePath, relativePath);
+  if (!isWithinDirectory(target, workspacePath)) return false;
+  const data = Buffer.from(artifact.content_base64, "base64");
+  if (!data.length) return false;
+  if (fs.existsSync(target) && fs.statSync(target).isFile()) {
+    const current = fs.readFileSync(target);
+    if (current.length === data.length && current.equals(data)) return false;
+  }
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, data);
+  return true;
+}
+
+function restoreArtifactFiles(projectId: string, workspacePath: string, options: { projectUpdatedAt?: string | null; requestedPath?: string; force?: boolean } = {}) {
+  const cache = loadProjectArtifacts(projectId, workspacePath, options.projectUpdatedAt);
+  const requestedPath = options.requestedPath ? safeRelativePath(options.requestedPath) : "";
+  if (!options.force && requestedPath) {
+    const requestedArtifact = cache.artifacts.find((artifact) => safeRelativePath(artifact.path) === requestedPath);
+    if (requestedArtifact) {
+      return { restored: writeArtifactFileIfChanged(requestedArtifact, workspacePath) ? 1 : 0, artifact_count: cache.artifacts.length, skipped_full_restore: true };
+    }
+  }
+  let restored = 0;
+  for (const artifact of cache.artifacts) {
+    if (writeArtifactFileIfChanged(artifact, workspacePath)) restored += 1;
+  }
+  return { restored, artifact_count: cache.artifacts.length, skipped_full_restore: false };
 }
 
 async function logPreviewInspection(preview: PreviewMetadata) {
@@ -209,6 +279,15 @@ function previewResponse(preview: PreviewMetadata) {
   return `Preview is ready at ${preview.preview_url}. It is serving ${preview.entry_file} from ${preview.workspace_path}.`;
 }
 
+function cachePreviewRecord(preview: PreviewMetadata, taskId: string, projectId: string) {
+  previewRecordCache.set(preview.preview_id, {
+    preview_id: preview.preview_id,
+    task_id: taskId,
+    project_id: projectId,
+    preview,
+  });
+}
+
 export async function startPreviewForSession(sessionId: string): Promise<PreviewStartResult> {
   const session = getSession(sessionId);
   if (!session) return { ok: false, code: "SESSION_NOT_FOUND", message: "Session not found.", status: 404 };
@@ -224,19 +303,20 @@ export async function startPreviewForSession(sessionId: string): Promise<Preview
     session.latest_summary = session.latest_summary || task.latest_summary;
     session.last_updated = new Date().toISOString();
     upsertSession(session);
+    cachePreviewRecord(task.latest_preview, task.task_id, project.project_id);
     return { ok: true, preview: task.latest_preview, task, project, reused: true };
   }
 
   let entry = detectPreviewEntry(workspacePath, task);
   if (!entry) {
-    const restored = restoreArtifactFiles(project.project_id, workspacePath);
-    if (restored) {
+    const restore = restoreArtifactFiles(project.project_id, workspacePath, { projectUpdatedAt: project.updated_at, force: true });
+    if (restore.restored) {
       appendOrchestratorEvent({
         scope: "preview",
         scope_id: task.task_id,
         type: "preview.artifacts.restored",
-        message: `Restored ${restored} persisted artifact file(s) before preview.`,
-        data: { task_id: task.task_id, project_id: project.project_id, workspace_path: workspacePath, restored },
+        message: `Restored ${restore.restored} persisted artifact file(s) before preview.`,
+        data: { task_id: task.task_id, project_id: project.project_id, workspace_path: workspacePath, restored: restore.restored, artifact_count: restore.artifact_count },
       });
       entry = detectPreviewEntry(workspacePath, task);
     }
@@ -298,6 +378,7 @@ export async function startPreviewForSession(sessionId: string): Promise<Preview
   project.latest_preview = preview;
   project.updated_at = preview.updated_at;
   upsertProject(project);
+  cachePreviewRecord(preview, task.task_id, project.project_id);
 
   updateSummaryWithPreview(task.task_id, preview);
 
@@ -322,11 +403,30 @@ export async function startPreviewForSession(sessionId: string): Promise<Preview
 }
 
 export function findPreview(previewId: string) {
+  const cached = previewRecordCache.get(previewId);
+  if (cached) {
+    const task = getTask(cached.task_id);
+    const project = getProject(cached.project_id);
+    const preview = task?.latest_preview?.preview_id === previewId
+      ? task.latest_preview
+      : project?.latest_preview?.preview_id === previewId
+        ? project.latest_preview
+        : cached.preview;
+    return { preview, task, project };
+  }
   for (const task of listTasks()) {
-    if (task.latest_preview?.preview_id === previewId) return { preview: task.latest_preview, task, project: getProject(task.project_id) };
+    if (task.latest_preview?.preview_id === previewId) {
+      const project = getProject(task.project_id);
+      cachePreviewRecord(task.latest_preview, task.task_id, task.project_id);
+      return { preview: task.latest_preview, task, project };
+    }
   }
   for (const project of listProjects()) {
-    if (project.latest_preview?.preview_id === previewId) return { preview: project.latest_preview, task: getTask(project.latest_preview.task_id), project };
+    if (project.latest_preview?.preview_id === previewId) {
+      const task = getTask(project.latest_preview.task_id);
+      cachePreviewRecord(project.latest_preview, project.latest_preview.task_id, project.project_id);
+      return { preview: project.latest_preview, task, project };
+    }
   }
   return null;
 }
@@ -378,7 +478,7 @@ export function servePreviewAsset(previewId: string, requestPath: string, res: R
   const requested = requestPath && requestPath !== "/" ? requestPath.replace(/^\/+/, "") : record.preview.entry_file;
   const decoded = decodeURIComponent(requested);
   const target = path.resolve(workspacePath, decoded);
-  restoreArtifactFiles(record.preview.project_id, workspacePath);
+  restoreArtifactFiles(record.preview.project_id, workspacePath, { projectUpdatedAt: record.project?.updated_at, requestedPath: decoded });
   if (!isWithinDirectory(target, workspacePath) || !fs.existsSync(target) || !fs.statSync(target).isFile()) {
     res.status(404).json({ error: { code: "PREVIEW_ASSET_NOT_FOUND", message: "Preview asset not found." } });
     return;
@@ -428,6 +528,7 @@ export function recordPreviewReport(previewId: string, report: { loaded?: unknow
   record.project.latest_preview = next;
   record.project.updated_at = next.updated_at;
   upsertProject(record.project);
+  cachePreviewRecord(next, record.task.task_id, record.project.project_id);
   updateSummaryWithPreview(record.task.task_id, next);
   appendOrchestratorEvent({
     scope: "preview",

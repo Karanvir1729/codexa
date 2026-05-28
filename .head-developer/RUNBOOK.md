@@ -188,7 +188,7 @@ export WORKER_CALLBACK_URL=https://your-authenticated-control-plane
 scripts/gcp/run-gke-job-codex-home-smoke.sh
 ```
 
-Expected: the script creates or selects the Autopilot cluster, configures namespace/KSA/WIF/IAM, launches one Kubernetes Job, verifies `codex_home_bundle` auth and Codex execution inside the Pod, records command/validation events through authenticated Cloud Run callbacks, and deletes the Job. GKE workers restore current project app artifacts from the API before running and upload validated app files back after running; preview routes rehydrate persisted artifacts before serving each asset so stale Cloud Run instance-local copies do not override newer worker output. This is an interim preview handoff, not the durable repo/PR lifecycle. Private nodes still need Cloud NAT or equivalent external egress for Codex CLI network calls.
+Expected: the script creates or selects the Autopilot cluster, configures namespace/KSA/WIF/IAM, launches one Kubernetes Job, verifies `codex_home_bundle` auth and Codex execution inside the Pod, records command/validation events through authenticated Cloud Run callbacks, and deletes the Job. GKE workers restore persisted project app artifacts from the API before running and upload validated app files back after running; preview routes cache preview/artifact metadata and replace stale requested files before serving assets so stale Cloud Run instance-local copies do not override newer worker output without rewriting every artifact for every request. This is an interim preview handoff, not the durable repo/PR lifecycle. Private nodes still need Cloud NAT or equivalent external egress for Codex CLI network calls.
 
 ## Two-worker smoke still required
 

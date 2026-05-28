@@ -19,7 +19,7 @@ Current phase status:
 | Verification suite | Done | Latest documented pass: `npm run typecheck`, `npm test` with 173 passed / 1 skipped, `npm run build`, and Docker Compose config. |
 | Env staging risk | Done | `.env.codex-phone-supervisor` was removed from the git index and remains ignored/local-only as of 2026-05-26 21:10 EDT. |
 | GCP VM real Codex app build | In progress | Primary auth path is now the dedicated `codex_home_bundle` design. API-key auth is fallback-only. Local bundle creation and GCP VM Codex smoke still need proof from this branch. |
-| GKE Job worker backend | Artifact handoff fixed; graph-split caveat remains | `gke_job` mode, manager, manifest generator, setup/smoke script, tests, Codex-home bundle auth, authenticated Cloud Run callbacks, and Firestore-backed full-stack conversation smoke passed in `teamtiffy1729`. Jobs are one-shot and app-file artifacts are restored/uploaded for previewable Cloud Run workspaces. Preview serving now rehydrates persisted artifacts before serving each asset. Durable repo branches/PRs remain unimplemented. |
+| GKE Job worker backend | Artifact handoff fixed; speed guard added | `gke_job` mode, manager, manifest generator, setup/smoke script, tests, Codex-home bundle auth, authenticated Cloud Run callbacks, and Firestore-backed full-stack conversation smoke passed in `teamtiffy1729`. Jobs are one-shot and app-file artifacts are restored/uploaded for previewable Cloud Run workspaces. Preview serving uses persisted artifact hydration with per-preview/project caching and stale-file replacement. Durable repo branches/PRs remain unimplemented. |
 | Full-stack local/GKE app smokes | Done with caveats | Docker Local and GKE Job both completed real Vertex-planned Wordle-style full-stack smokes. The latest GKE run used Firestore state and passed with graph `task_graph_a314e396-6dd3-42cb-bea4-1880e5774a1b`. |
 | Cloud Run deployment | Done | Production URL `https://head-developer-api-jq6oo2ormq-uc.a.run.app` is on revision `head-developer-api-00063-g8x` with Firestore state, Vertex/Gemini provider indicators, amd64 API/worker images, and public `allUsers` invoker access per user approval. |
 | Git repo / PR orchestration | Design documented, implementation gap | Local git init, Docker worker branches, and worktrees exist. Durable GKE output artifacts, remote repo creation, branch push, PR creation, conflict resolution, and approval-gated merge remain unimplemented. |
@@ -53,7 +53,7 @@ Next implementation priorities:
 
 1. Implement durable repo/branch/PR lifecycle for GKE and cloud workers: signed artifact bundles, branch materialization, conflict detection, integration validation, PR creation, and approval-gated push/merge.
 2. Request or work around the exact GKE scale-up quota: `SSD_TOTAL_GB` in `us-central1`, current limit `250`, current usage `200`; request at least `500` to allow several Autopilot worker nodes.
-3. Tune planner/task-split heuristics before larger GKE workloads so simple static apps stay one-node when appropriate and sequential nodes share consistent file ownership.
+3. Continue reducing wall-clock time by measuring live Vertex/GKE/Codex timings, keeping simple static single-surface work on one worker, and preserving real execution evidence.
 
 Git/PR orchestration requirements to add before claiming production multi-worker development:
 - Planner should decide when a new repo is needed, initialize it before worker launch, and record the repo/remote metadata on the project.
@@ -103,6 +103,25 @@ Verification:
 - After worker completion and validation, the orchestrator should commit each worker branch, push it to the remote, create a pull request, and record PR URL/status/checks.
 - A merge coordinator should review diffs, detect conflicts, run integration validation, merge in dependency order, and ask for approval before risky pushes or destructive conflict resolution.
 - Direct pushes to `main`/`master` must remain approval-gated; secrets must not be printed in PR bodies, logs, or command events.
+
+## 2026-05-28 - Speed optimization guardrails
+
+Scope:
+- Optimized real orchestration hot paths without adding mocks, fake worker output, prompt-name special cases, or hardcoded app artifacts.
+- Added a generic planner post-processing guard: if Vertex returns a serial or overlapping split for one static app surface, the controller collapses it to a one-worker static-app plan. Cloud worker modes still require approval before launch.
+- Added preview lookup caching by `preview_id` so repeated preview asset requests do not list every task/project in the state store.
+- Added artifact hydration caching keyed by project/workspace/update version and per-request stale-file replacement, so serving `index.html`, CSS, and JS does not rewrite every persisted artifact on every asset request.
+- Added `GET /projects/:project_id/artifacts/files?source=persisted` for GKE worker restore. GKE workers now restore the persisted artifact set directly instead of asking Cloud Run to merge persisted state with a filesystem walk.
+- Artifact upload now fetches existing artifact metadata once per upload and skips rewriting workspace files whose bytes are unchanged.
+
+Validation:
+- `npm run typecheck` passed.
+- Focused tests passed: `npx tsx --test --test-concurrency=1 codex-phone-supervisor/tests/agentic-planning.test.ts codex-phone-supervisor/tests/web-text-flow.test.ts`.
+- Full verification still needs to be rerun before committing/pushing this speed pass.
+
+Remaining speed risks:
+- Real wall-clock time is still dominated by Vertex planning latency, GKE Job scheduling, image pull/startup, and Codex execution. Those must be measured in live smokes rather than mocked.
+- Durable repo/branch/PR materialization is still pending; do not treat preview artifacts as the final production merge model.
 
 ## 2026-05-28 - GKE Job previewability fix in progress
 
