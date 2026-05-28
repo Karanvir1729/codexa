@@ -64,6 +64,12 @@ test("GCP scripts wire Codex home bundle auth without broad IAM or public Cloud 
   assert.match(deploy, /FIRESTORE_PROJECT_ID/);
   assert.match(deploy, /FIRESTORE_COLLECTION_PREFIX/);
   assert.match(deploy, /FIRESTORE_STATE_OPERATION_TIMEOUT_MS/);
+  assert.match(deploy, /HEAD_DEVELOPER_CLOUD_RUN_MIN_INSTANCES:-1/);
+  assert.match(deploy, /HEAD_DEVELOPER_CLOUD_RUN_MAX_INSTANCES:-5/);
+  assert.match(deploy, /HEAD_DEVELOPER_CLOUD_RUN_CONCURRENCY:-1/);
+  assert.match(deploy, /--min-instances="\$\{MIN_INSTANCES\}"/);
+  assert.match(deploy, /--max-instances="\$\{MAX_INSTANCES\}"/);
+  assert.match(deploy, /--concurrency="\$\{CONCURRENCY\}"/);
 
   const buildImages = fs.readFileSync(path.join(process.cwd(), "scripts", "gcp", "build-and-push-images.sh"), "utf8");
   assert.match(buildImages, /npm --prefix "\$\{ROOT_DIR\}" run build/);
@@ -177,4 +183,8 @@ test("worker Codex exec allows non-git VM workspaces", () => {
   const workerEntry = fs.readFileSync(path.join(process.cwd(), "codex-phone-supervisor", "backend", "src", "worker-entry.ts"), "utf8");
   assert.match(workerEntry, /"--skip-git-repo-check"/);
   assert.match(workerEntry, /"-s",\s*"workspace-write"/);
+  assert.match(workerEntry, /hasGitRepository \? "git" : "node"/);
+  assert.match(workerEntry, /\? \["status", "--short", "\."\]/);
+  assert.match(workerEntry, /: \["--version"\]/);
+  assert.match(workerEntry, /fs\.existsSync\(path\.join\(projectWorkspace, "\.git"\)\)/);
 });

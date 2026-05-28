@@ -396,6 +396,20 @@ export class FileStateStore extends MemoryStateStore {
     return this.createWorkerRuntimeCommandRequest(request);
   }
 
+  upsertProjectArtifactFile(record: Parameters<MemoryStateStore["upsertProjectArtifactFile"]>[0]) {
+    return this.mutate((state) => {
+      state.project_artifacts[record.artifact_id] = record;
+      return record;
+    });
+  }
+
+  listProjectArtifactFiles(projectId: string) {
+    return Object.values(this.readState().project_artifacts)
+      .filter((record) => record.project_id === projectId)
+      .map(clone)
+      .sort((a, b) => a.path.localeCompare(b.path));
+  }
+
   appendEvent(event: Parameters<MemoryStateStore["appendEvent"]>[0]) {
     return this.mutate((state) => {
       const redacted = redactSensitiveJson(event);

@@ -240,6 +240,14 @@ export function listWorkerRuntimeCommandRequests(filters: { workerId?: string; t
   return getStateStore().listWorkerRuntimeCommandRequests(filters);
 }
 
+export function upsertProjectArtifactFile(record: import("./types.js").ProjectArtifactFileRecord) {
+  return getStateStore().upsertProjectArtifactFile(record);
+}
+
+export function listProjectArtifactFiles(projectId: string) {
+  return getStateStore().listProjectArtifactFiles(projectId);
+}
+
 export function appendOrchestratorEvent(event: Omit<OrchestratorEvent, "event_id" | "created_at"> & { created_at?: string }) {
   const withId: OrchestratorEvent = redactSensitiveJson({
     ...event,

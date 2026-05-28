@@ -116,6 +116,13 @@ export function send_codex_instruction(sessionId: string, instruction: string) {
   }
   const cleaned = instruction.trim();
   if (!cleaned) return { error: "Missing instruction." };
+  const activeWorker = session.active_worker_id ? getWorker(session.active_worker_id) : null;
+  if (activeWorker && (activeWorker.type === "gcp_vm" || activeWorker.type === "gke_job")) {
+    return {
+      error: `The active task is running on a ${activeWorker.type} worker. Revise the pending plan or wait for the worker result; the Cloud Run control plane will not run local Codex instructions for cloud workers.`,
+      code: "CONTROL_PLANE_CODEX_DISABLED_FOR_CLOUD_WORKER",
+    };
+  }
 
   const approval = classifyApproval(cleaned);
   if (approval.requiresApproval) {
@@ -364,6 +371,70 @@ async function startWorkerBackedProject(input: {
       task_ids: started.graph.nodes.map((node) => node.task_id),
       worker_ids: started.assignments.map((item) => item.worker.worker_id),
       worker_type: decision.recommended_worker_mode,
+      selected_existing_project: input.selectedExistingProject,
+      planning_decision_id: decision.planning_decision_id,
+    };
+  }
+
+  if (workerType !== "local") {
+    const latest = getSession(session.session_id) ?? session;
+    const approvalReason = decision.approval_reason || `${workerModeLabel(workerType)} worker execution requires approval before launch.`;
+    const response = decision.proposed_task_split.length
+      ? plannerTaskSplitMessage({
+          ...decision,
+          requires_user_approval: true,
+          approval_reason: approvalReason,
+          recommended_worker_mode: decision.recommended_worker_mode || workerType,
+        })
+      : `${decision.user_visible_response} ${approvalReason} Reply \`approve\` to start, or tell me what to change.`;
+    setPendingAction(latest, {
+      type: "approve_task_split",
+      original_user_goal: description,
+      requested_kind: "app",
+      description,
+      action: "approve_planner_task_split",
+      reason: approvalReason,
+      risk_level: decision.risk_level,
+      worker_mode: decision.recommended_worker_mode || workerType,
+      target_project_id: project.project_id,
+      planning_decision_id: decision.planning_decision_id,
+      proposed_plan: {
+        ...decision,
+        requires_user_approval: true,
+        approval_reason: approvalReason,
+        execution_allowed: false,
+        next_action: "none",
+      },
+      user_approved_worker_count: null,
+      user_approved_worker_mode: null,
+      created_at: new Date().toISOString(),
+    });
+    latest.current_status = "waiting_for_approval";
+    latest.status = "waiting_for_approval";
+    latest.approval_status = "pending";
+    latest.latest_codex_message = response;
+    latest.latest_plan = decision.proposed_task_split.map((item) => item.goal);
+    latest.latest_summary = decision.requirements_summary;
+    latest.last_updated = new Date().toISOString();
+    upsertSession(latest);
+    appendOrchestratorEvent({
+      scope: "planning",
+      scope_id: decision.planning_decision_id ?? latest.session_id,
+      type: "planner.approval.requested",
+      message: response,
+      data: { session_id: latest.session_id, project_id: project.project_id, decision, pending_action: latest.pending_action },
+    });
+    return {
+      session_id: latest.session_id,
+      status: "waiting_for_approval" as const,
+      message: response,
+      project_name: displayName,
+      target_path: targetPath,
+      project_id: project.project_id,
+      task_graph_id: null,
+      task_ids: [],
+      worker_ids: [],
+      worker_type: decision.recommended_worker_mode || workerType,
       selected_existing_project: input.selectedExistingProject,
       planning_decision_id: decision.planning_decision_id,
     };
@@ -1536,6 +1607,14 @@ function requestedWorkerMode(text: string): WorkerType | null {
   return null;
 }
 
+function requestedWorkerCount(text: string) {
+  return /\b(use|make|run)\b[\s\S]*\b(one|1|single)\b[\s\S]*\bworker\b/i.test(text) ? 1 : null;
+}
+
+function isTaskSplitApproval(text: string) {
+  return /^(yes|approve|approved|go ahead|do it|confirm)\b/i.test(text.trim());
+}
+
 function workerModeLabel(mode: WorkerType) {
   if (mode === "docker_local") return "Docker local";
   if (mode === "gcp_vm") return "GCP VM";
@@ -1561,7 +1640,7 @@ function plannerDecisionForPending(session: SessionState, pending: PendingAction
   }
 }
 
-function updatePendingPlannerDecision(session: SessionState, pending: PendingAction, decision: PlannerDecision) {
+function updatePendingPlannerDecision(session: SessionState, pending: PendingAction, decision: PlannerDecision, originalUserGoal = pending.original_user_goal) {
   session.planner_output = decision;
   session.planning_decision_id = decision.planning_decision_id ?? session.planning_decision_id;
   session.requirement_summary = decision.requirements_summary;
@@ -1571,6 +1650,7 @@ function updatePendingPlannerDecision(session: SessionState, pending: PendingAct
   session.user_approved_worker_mode = decision.recommended_worker_mode;
   setPendingAction(session, {
     ...pending,
+    original_user_goal: originalUserGoal,
     planning_decision_id: decision.planning_decision_id,
     proposed_plan: decision,
     worker_mode: decision.recommended_worker_mode,
@@ -1578,6 +1658,45 @@ function updatePendingPlannerDecision(session: SessionState, pending: PendingAct
     user_approved_worker_mode: decision.recommended_worker_mode,
     created_at: pending.created_at,
   });
+}
+
+function appendPreApprovalUserUpdate(originalUserGoal: string, cleaned: string) {
+  const update = cleaned.trim();
+  if (!update) return originalUserGoal;
+  if (originalUserGoal.includes(update)) return originalUserGoal;
+  return `${originalUserGoal}\n\nPre-approval user update: ${update}`;
+}
+
+function pendingRevisionPrompt(pending: PendingAction, decision: PlannerDecision | null, cleaned: string) {
+  return [
+    "The user is responding while an execution plan is pending approval.",
+    "Treat the message as either a clarification question or a plan/requirement revision.",
+    "Do not launch workers. Keep execution_allowed false until the user explicitly approves.",
+    `Original request and accepted pre-approval updates:\n${pending.original_user_goal}`,
+    decision?.requirements_summary ? `Current requirement summary: ${decision.requirements_summary}` : "",
+    decision?.proposed_design ? `Current proposed design: ${decision.proposed_design}` : "",
+    decision?.proposed_task_split.length ? `Current task split: ${decision.proposed_task_split.map((item) => `${item.title}: ${item.goal}`).join(" | ")}` : "",
+    `New user message: ${cleaned}`,
+  ].filter(Boolean).join("\n");
+}
+
+function pendingRevisionResponse(decision: PlannerDecision) {
+  const split = decision.proposed_task_split.map((item, index) => {
+    const files = item.expected_files.length ? ` Files: ${item.expected_files.join(", ")}.` : "";
+    const validation = item.validation.length ? ` Validation: ${item.validation.join(", ")}.` : "";
+    return `${index + 1}. ${item.title}: ${item.goal}.${files}${validation}`;
+  });
+  return [
+    "I updated the pending plan before approval.",
+    decision.user_visible_response && !/\b(starting|started|launching|launched)\b/i.test(decision.user_visible_response)
+      ? decision.user_visible_response
+      : "",
+    decision.requirements_summary ? `Updated requirements: ${decision.requirements_summary}` : "",
+    decision.proposed_design ? `Technical direction: ${decision.proposed_design}` : "",
+    `Worker plan: ${decision.recommended_worker_count} ${workerModeLabel(decision.recommended_worker_mode)} worker${decision.recommended_worker_count === 1 ? "" : "s"}.`,
+    split.length ? `Task plan: ${split.join(" ")}` : "",
+    "Reply `approve` to start this revised plan, or tell me what else to change.",
+  ].filter(Boolean).join(" ");
 }
 
 function answerConversationStateQuestion(session: SessionState, cleaned: string, channel?: Channel) {
@@ -1673,59 +1792,6 @@ async function handlePendingConversationAction(session: SessionState, cleaned: s
 
   if (pending.type === "approve_task_split") {
     const pendingDecision = plannerDecisionForPending(session, pending);
-    if (pendingDecision && /\b(use|make|run)\b[\s\S]*\b(one|1|single)\b[\s\S]*\bworker\b/i.test(cleaned)) {
-      const revised: PlannerDecision = {
-        ...pendingDecision,
-        decision_type: "revise_plan",
-        recommended_worker_count: 1,
-        requires_user_approval: true,
-        execution_allowed: false,
-        next_action: "none",
-        reason: "The user revised the plan to use one worker before approval.",
-        user_visible_response: "Revised to one worker. I will keep the approved requirements and run the task graph sequentially. Approve this one-worker plan?",
-        approval_reason: "The revised execution plan still needs approval before workers launch.",
-      };
-      updatePendingPlannerDecision(session, pending, revised);
-      session.latest_codex_message = revised.user_visible_response;
-      upsertSession(session);
-      appendOrchestratorEvent({
-        scope: "planning",
-        scope_id: revised.planning_decision_id ?? session.session_id,
-        type: "planner.plan.revised",
-        message: revised.user_visible_response,
-        data: { session_id: session.session_id, decision: revised },
-      });
-      return { response: revised.user_visible_response, session_id: session.session_id, handled: true, decision: revised };
-    }
-    const revisedMode = requestedWorkerMode(cleaned);
-    if (pendingDecision && revisedMode) {
-      const revisedModeNeedsCloudApproval = revisedMode === "gcp_vm" || revisedMode === "gke_job";
-      const revised: PlannerDecision = {
-        ...pendingDecision,
-        decision_type: "revise_plan",
-        recommended_worker_mode: revisedMode,
-        requires_user_approval: true,
-        execution_allowed: false,
-        next_action: "none",
-        reason: `The user revised the worker mode to ${revisedMode} before approval.`,
-        user_visible_response: revisedModeNeedsCloudApproval
-          ? `Revised to ${workerModeLabel(revisedMode)} workers. Cloud worker execution needs approval before launch. Approve this ${workerModeLabel(revisedMode)} worker plan?`
-          : `Revised to ${workerModeLabel(revisedMode)} worker mode. Approve this plan?`,
-        approval_reason: revisedModeNeedsCloudApproval ? `${workerModeLabel(revisedMode)} worker execution requires approval.` : "The revised execution plan needs approval before launch.",
-        risk_level: revisedModeNeedsCloudApproval ? "medium" : pendingDecision.risk_level,
-      };
-      updatePendingPlannerDecision(session, pending, revised);
-      session.latest_codex_message = revised.user_visible_response;
-      upsertSession(session);
-      appendOrchestratorEvent({
-        scope: "planning",
-        scope_id: revised.planning_decision_id ?? session.session_id,
-        type: "planner.plan.revised",
-        message: revised.user_visible_response,
-        data: { session_id: session.session_id, decision: revised },
-      });
-      return { response: revised.user_visible_response, session_id: session.session_id, handled: true, decision: revised };
-    }
     if (/^(explain first|explain|why|why first)$/i.test(cleaned)) {
       const graph = pending.target_task_graph_id ? await Promise.resolve(multiWorkerCoordinator.judge(pending.original_user_goal, pending.target_project_id ? getProject(pending.target_project_id) : null)) : null;
       const response = graph
@@ -1753,11 +1819,75 @@ async function handlePendingConversationAction(session: SessionState, cleaned: s
       });
       return { response, session_id: session.session_id, handled: true };
     }
-    if (!/^(yes|approve|approved|go ahead|do it|confirm)$/i.test(cleaned)) {
-      const response = "Task split approval is pending. Say \"approve\", \"reject\", or \"explain first\".";
-      session.latest_codex_message = response;
-      upsertSession(session);
-      return { response, session_id: session.session_id, handled: true };
+    if (!isTaskSplitApproval(cleaned)) {
+      const project = pending.target_project_id ? getProject(pending.target_project_id) : session.project_id ? getProject(session.project_id) : null;
+      const workerMode = requestedWorkerMode(cleaned)
+        ?? pendingDecision?.recommended_worker_mode
+        ?? pending.worker_mode
+        ?? session.preferred_worker_mode
+        ?? getOrchestratorSettings().default_worker_mode;
+      const workerCount = requestedWorkerCount(cleaned)
+        ?? pendingDecision?.recommended_worker_count
+        ?? null;
+      const updatedGoal = appendPreApprovalUserUpdate(pending.original_user_goal, cleaned);
+      let planning: Awaited<ReturnType<typeof agenticPlanningController.decide>>;
+      try {
+        planning = await agenticPlanningController.decide({
+          session,
+          userMessage: pendingRevisionPrompt({ ...pending, original_user_goal: updatedGoal }, pendingDecision, cleaned),
+          project,
+          workerMode,
+        });
+      } catch (error) {
+        const response = `I could not revise the pending plan because the Vertex/Gemini supervisor failed: ${error instanceof Error ? error.message : String(error)}`;
+        session.latest_codex_message = response;
+        upsertSession(session);
+        appendOrchestratorEvent({
+          scope: "planning",
+          scope_id: pending.planning_decision_id ?? session.session_id,
+          type: "planner.plan.revision_failed",
+          message: response,
+          data: { session_id: session.session_id, pending_action: pending.type },
+        });
+        return { response, session_id: session.session_id, handled: true };
+      }
+      const latest = getSession(session.session_id) ?? session;
+      const latestPending = latest.pending_action ?? pending;
+      const plannedDecision = planning.decision;
+      const revisedWorkerCount = workerCount ?? plannedDecision.recommended_worker_count;
+      const revised: PlannerDecision = {
+        ...plannedDecision,
+        decision_type: "revise_plan",
+        recommended_worker_count: revisedWorkerCount,
+        recommended_worker_mode: workerMode,
+        requires_user_approval: true,
+        execution_allowed: false,
+        next_action: "none",
+        reason: plannedDecision.reason || "The user revised or clarified the pending plan before approval.",
+        approval_reason: plannedDecision.approval_reason || "The revised execution plan still needs approval before workers launch.",
+        user_visible_response: pendingRevisionResponse({
+          ...plannedDecision,
+          decision_type: "revise_plan",
+          recommended_worker_count: revisedWorkerCount,
+          recommended_worker_mode: workerMode,
+          requires_user_approval: true,
+          execution_allowed: false,
+          next_action: "none",
+        }),
+      };
+      updatePendingPlannerDecision(latest, latestPending, revised, updatedGoal);
+      latest.current_status = "waiting_for_approval";
+      latest.status = "waiting_for_approval";
+      latest.latest_codex_message = revised.user_visible_response;
+      upsertSession(latest);
+      appendOrchestratorEvent({
+        scope: "planning",
+        scope_id: revised.planning_decision_id ?? latest.session_id,
+        type: "planner.plan.revised",
+        message: revised.user_visible_response,
+        data: { session_id: latest.session_id, decision: revised },
+      });
+      return { response: revised.user_visible_response, session_id: latest.session_id, handled: true, decision: revised };
     }
     if (!pending.target_task_graph_id) {
       const decision = pendingDecision;

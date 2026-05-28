@@ -13,6 +13,7 @@ import type {
   OrchestratorEvent,
   OrchestratorSettings,
   PersistedState,
+  ProjectArtifactFileRecord,
   ProjectRecord,
   RunSummaryRecord,
   SessionState,
@@ -37,6 +38,7 @@ export type FirestoreCollection =
   | "task_graphs"
   | "worker_context_packets"
   | "worker_runtime_command_requests"
+  | "project_artifacts"
   | "events"
   | "settings";
 
@@ -179,6 +181,15 @@ function indexForPayload(collection: FirestoreCollection, payload: unknown) {
         status: record.status,
         created_at: record.created_at,
       });
+    case "project_artifacts":
+      return compactIndex({
+        artifact_id: record.artifact_id,
+        project_id: record.project_id,
+        task_id: record.task_id,
+        worker_id: record.worker_id,
+        path: record.path,
+        updated_at: record.updated_at,
+      });
     case "events":
       return compactIndex({ event_id: record.event_id, scope_id: record.scope_id, scope: record.scope, type: record.type, created_at: record.created_at });
     case "active_codex_commands":
@@ -291,6 +302,7 @@ export class FirestoreStateStore implements StateStore {
         (collection === "task_graphs" ? record.task_graph_id : undefined) ??
         (collection === "worker_context_packets" ? record.context_packet_id : undefined) ??
         (collection === "worker_runtime_command_requests" ? record.request_id : undefined) ??
+        (collection === "project_artifacts" ? record.artifact_id : undefined) ??
         (collection === "events" ? record.event_id : undefined) ??
         (collection === "settings" ? "settings" : undefined);
       if (typeof documentId === "string" && documentId) this.documentCache.set(this.cacheKey(collection, documentId), clone(value));
@@ -343,6 +355,7 @@ export class FirestoreStateStore implements StateStore {
       task_graphs: Object.fromEntries(this.listDocs<TaskGraphRecord>("task_graphs").map((item) => [item.task_graph_id, item])),
       worker_context_packets: Object.fromEntries(this.listDocs<WorkerContextPacket>("worker_context_packets").map((item) => [item.context_packet_id, item])),
       worker_runtime_command_requests: Object.fromEntries(this.listDocs<WorkerRuntimeCommandRequest>("worker_runtime_command_requests").map((item) => [item.request_id, item])),
+      project_artifacts: Object.fromEntries(this.listDocs<ProjectArtifactFileRecord>("project_artifacts").map((item) => [item.artifact_id, item])),
     }, this.options.initialState);
   }
 
@@ -359,6 +372,7 @@ export class FirestoreStateStore implements StateStore {
     for (const item of Object.values(state.task_graphs)) this.createTaskGraph(item);
     for (const item of Object.values(state.worker_context_packets)) this.createWorkerContextPacket(item);
     for (const item of Object.values(state.worker_runtime_command_requests)) this.createWorkerRuntimeCommandRequest(item);
+    for (const item of Object.values(state.project_artifacts)) this.upsertProjectArtifactFile(item);
     for (const item of state.orchestrator_events) this.appendEvent(item);
     if (state.orchestrator_settings) this.updateSettings(state.orchestrator_settings);
   }
@@ -695,6 +709,16 @@ export class FirestoreStateStore implements StateStore {
       .filter((request) => !filters.status || request.status === filters.status)
       .sort((a, b) => a.created_at.localeCompare(b.created_at))
       .slice(0, limit);
+  }
+
+  upsertProjectArtifactFile(record: ProjectArtifactFileRecord) {
+    return this.putDoc("project_artifacts", record.artifact_id, record);
+  }
+
+  listProjectArtifactFiles(projectId: string) {
+    return this.queryDocs<ProjectArtifactFileRecord>("project_artifacts", [{ field: "project_id", value: projectId }], 100)
+      .filter((record) => record.project_id === projectId)
+      .sort((a, b) => a.path.localeCompare(b.path));
   }
 
   appendEvent(event: OrchestratorEvent) {

@@ -75,8 +75,23 @@ function isAppOutputNode(node: TaskGraphNode) {
 }
 
 function commandWasRun(events: CommandEventRecord[], expected: string) {
-  const normalized = expected.toLowerCase().replace(/\s+/g, " ").trim();
+  const normalized = normalizeValidationCommand(expected).toLowerCase().replace(/\s+/g, " ").trim();
+  if (!normalized) return false;
   return events.some((event) => event.exit_code === 0 && event.command.toLowerCase().replace(/\s+/g, " ").includes(normalized));
+}
+
+function normalizeValidationCommand(command: string) {
+  return command
+    .replace(/\s+when\b.*$/i, "")
+    .trim();
+}
+
+function isExecutableValidationCommand(command: string) {
+  const normalized = normalizeValidationCommand(command);
+  if (!normalized) return false;
+  if (/^(verify|ensure|confirm|check that|inspect|open|manual|look for)\b/i.test(normalized)) return false;
+  return /^(npm|pnpm|yarn|node|npx|bun|deno|python|python3|pytest|vitest|playwright|tsc|eslint|find|test|grep|rg|curl|git|docker)\b/i.test(normalized)
+    || /^[\w./-]+\s+(--?[\w-]+|\S+\.(?:js|ts|tsx|jsx|html|css|json|md)\b)/i.test(normalized);
 }
 
 export function evaluateTaskGraphNodeCompletion(input: {
@@ -91,7 +106,9 @@ export function evaluateTaskGraphNodeCompletion(input: {
   const appFiles = changedFiles.filter((file) => !isDocFile(file, node));
   const docsOnly = changedFiles.length > 0 && appFiles.length === 0;
   const required = unique([...(node.output_contract?.required_app_files ?? []), ...(node.required_app_files ?? [])]);
-  const validationCommands = unique([...(node.output_contract?.validation_commands ?? []), ...(node.validation_commands ?? [])]);
+  const validationCommands = unique([...(node.output_contract?.validation_commands ?? []), ...(node.validation_commands ?? [])])
+    .filter(isExecutableValidationCommand)
+    .map(normalizeValidationCommand);
   const validationCommandsRun = validationCommands.filter((command) => commandWasRun(events, command));
   const missingRequiredAppFiles = required.filter((pattern) => !appFiles.some((file) => matchesPattern(file, pattern)));
   const missingValidationCommands = validationCommands.filter((command) => !validationCommandsRun.includes(command));

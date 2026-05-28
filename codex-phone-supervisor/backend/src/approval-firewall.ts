@@ -23,6 +23,9 @@ const rules: Array<{ kind: ApprovalKind; risk: ApprovalRisk; pattern: RegExp; re
 ];
 
 export function classifyApproval(action: string): ApprovalClassification {
+  if (/\b(do not|don't|dont|never|avoid)\s+(deploy|deploying|deployment)\b/i.test(action) || /\b(no|without)\s+(app\s+)?deploy(ment)?\b/i.test(action)) {
+    return { requiresApproval: false };
+  }
   for (const rule of rules) {
     if (rule.pattern.test(action)) {
       return {

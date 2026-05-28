@@ -891,6 +891,69 @@ function listProjectFiles(root: string) {
   return files.sort();
 }
 
+function isArtifactFile(relativePath: string) {
+  const normalized = relativePath.replace(/\\/g, "/");
+  if (!normalized || normalized.startsWith("../") || path.isAbsolute(normalized)) return false;
+  const parts = normalized.split("/");
+  if (parts.some((part) => part === ".git" || part === "node_modules" || part === ".codex-vm-home" || part === ".codex-worker-home")) return false;
+  if (parts[0]?.startsWith(".") && parts[0] !== ".well-known") return false;
+  return /\.(html|css|js|mjs|cjs|json|svg|png|jpe?g|webp|ico|txt|md)$/i.test(normalized);
+}
+
+async function restoreProjectArtifacts(projectId: string, projectWorkspace: string) {
+  if (workerType !== "gke_job") return 0;
+  const payload = await get<{ files?: Array<{ path: string; content_base64: string }> }>(`/projects/${encodeURIComponent(projectId)}/artifacts/files`).catch((error) => {
+    process.stderr.write(`Project artifact restore skipped: ${error instanceof Error ? error.message : String(error)}\n`);
+    return null;
+  });
+  const files = payload?.files ?? [];
+  let restored = 0;
+  for (const file of files) {
+    if (!isArtifactFile(file.path)) continue;
+    const target = path.resolve(projectWorkspace, file.path);
+    const root = path.resolve(projectWorkspace);
+    if (target !== root && !target.startsWith(`${root}${path.sep}`)) continue;
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, Buffer.from(file.content_base64, "base64"));
+    restored += 1;
+  }
+  if (restored) process.stdout.write(`Restored ${restored} project artifact file(s) into ${projectWorkspace}.\n`);
+  return restored;
+}
+
+function collectProjectArtifacts(projectWorkspace: string, candidateFiles: string[]) {
+  const selected = [...new Set(candidateFiles.filter(isArtifactFile))].slice(0, 100);
+  const files: Array<{ path: string; content_base64: string; size_bytes: number }> = [];
+  let totalBytes = 0;
+  const maxBytes = 2 * 1024 * 1024;
+  for (const relativePath of selected) {
+    const absolute = path.resolve(projectWorkspace, relativePath);
+    const root = path.resolve(projectWorkspace);
+    if (absolute !== root && !absolute.startsWith(`${root}${path.sep}`)) continue;
+    if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) continue;
+    const data = fs.readFileSync(absolute);
+    if (totalBytes + data.length > maxBytes) continue;
+    totalBytes += data.length;
+    files.push({ path: relativePath, content_base64: data.toString("base64"), size_bytes: data.length });
+  }
+  return files;
+}
+
+async function persistProjectArtifacts(input: { workerId: string; taskId: string; projectId: string; projectWorkspace: string; changedFiles: string[]; allFiles: string[] }) {
+  if (workerType !== "gke_job") return { uploaded: 0, skipped: true };
+  const candidates = input.changedFiles.length ? input.changedFiles : input.allFiles;
+  const files = collectProjectArtifacts(input.projectWorkspace, candidates);
+  if (!files.length) return { uploaded: 0, skipped: true };
+  const payload = await post(`/workers/${encodeURIComponent(input.workerId)}/artifacts/files`, {
+    task_id: input.taskId,
+    project_id: input.projectId,
+    files,
+  }) as { artifact?: { files?: string[] } } | undefined;
+  const uploaded = payload?.artifact?.files?.length ?? files.length;
+  process.stdout.write(`Uploaded ${uploaded} project artifact file(s) for task ${input.taskId}.\n`);
+  return { uploaded, skipped: false };
+}
+
 async function runRuntimeCommandRequest(request: import("./types.js").WorkerRuntimeCommandRequest) {
   const runtimeMetadata = workerRuntimeMetadata(request.task_id, request.project_id);
   const { CommandRunner } = await import("./command-runner.js");
@@ -935,6 +998,7 @@ async function runAssignedTask(assignedWorkerId: string, assignedTaskId: string,
     get<ProjectPayload>(`/projects/${encodeURIComponent(assignedProjectId)}`),
   ]);
   const projectWorkspace = task.worktree_path || project.workspace_path || project.workspace_uri || workspacePath;
+  await restoreProjectArtifacts(assignedProjectId, projectWorkspace);
   const beforeFiles = new Set(listProjectFiles(projectWorkspace));
   const context = await loadWorkerContext(task);
   const { CommandRunner } = await import("./command-runner.js");
@@ -982,19 +1046,22 @@ async function runAssignedTask(assignedWorkerId: string, assignedTaskId: string,
 
   const afterFiles = listProjectFiles(projectWorkspace);
   const createdFiles = afterFiles.filter((file) => !beforeFiles.has(file));
+  const hasGitRepository = fs.existsSync(path.join(projectWorkspace, ".git"));
   const gitStatusEvent = await runner.run({
     task_id: assignedTaskId,
     project_id: assignedProjectId,
     worker_id: assignedWorkerId,
     ...commandRuntimeFields(runtimeMetadata),
-    command: "git",
-    args: ["status", "--short", "."],
+    command: hasGitRepository ? "git" : "node",
+    args: hasGitRepository
+      ? ["status", "--short", "."]
+      : ["--version"],
     cwd: projectWorkspace,
     workspace_path: projectWorkspace,
     timeout_ms: 60_000,
   });
   const reportedFiles = safeReportedFiles(extractFinalWorkerJson(commandStdout(codexEvent))?.files_modified, projectWorkspace);
-  const gitStatusFiles = extractGitStatusFiles(gitStatusEvent, projectWorkspace);
+  const gitStatusFiles = hasGitRepository ? extractGitStatusFiles(gitStatusEvent, projectWorkspace) : [];
   const changedFiles = [...new Set([...createdFiles, ...reportedFiles, ...gitStatusFiles])].sort();
   if (changedFiles.length) gitStatusEvent.summary = changedFiles.map((file) => `created: ${file}`).join("\n");
   await post(`/workers/${encodeURIComponent(assignedWorkerId)}/events`, gitStatusEvent);
@@ -1034,12 +1101,32 @@ async function runAssignedTask(assignedWorkerId: string, assignedTaskId: string,
   const materializationPassed = Boolean(materializeEvent && materializeEvent.exit_code === 0);
   const directWritePassed = !materializeEvent && changedFiles.length > 0;
   const outputWritesPassed = materializationPassed || directWritePassed;
-  const status = codexEvent.exit_code === 0 && outputWritesPassed && !failedValidation && outputValidation.passed && afterFiles.length > 0 ? "completed" : "failed";
+  const initialStatus = codexEvent.exit_code === 0 && outputWritesPassed && !failedValidation && outputValidation.passed && afterFiles.length > 0 ? "completed" : "failed";
+  let artifactResult: Awaited<ReturnType<typeof persistProjectArtifacts>> = { uploaded: 0, skipped: true };
+  if (initialStatus === "completed") {
+    artifactResult = await persistProjectArtifacts({
+      workerId: assignedWorkerId,
+      taskId: assignedTaskId,
+      projectId: assignedProjectId,
+      projectWorkspace,
+      changedFiles,
+      allFiles: afterFiles,
+    }).catch((error) => {
+      process.stderr.write(`Project artifact upload failed: ${error instanceof Error ? error.message : String(error)}\n`);
+      return { uploaded: 0, skipped: false };
+    });
+  }
+  const status = initialStatus === "completed" && workerType === "gke_job" && !artifactResult.skipped && artifactResult.uploaded <= 0 ? "failed" : initialStatus;
+  const artifactSummary = workerType === "gke_job"
+    ? artifactResult.skipped
+      ? "No project artifacts were uploaded."
+      : `Uploaded ${artifactResult.uploaded} project artifact file(s).`
+    : "";
   const summary = status === "completed"
     ? directWritePassed
-      ? `Codex wrote files directly for ${task.user_goal}; no materialization command was produced, but changed files were observed and validation passed. Changed files: ${changedFiles.join(", ")}. ${outputValidation.summary}`
-      : `Codex produced structured file contents for ${task.user_goal}; the worker materialized those contents through logged ${materializationSummary}. Changed files: ${(changedFiles.length ? changedFiles : afterFiles).join(", ")}. ${outputValidation.summary}`
-    : `Codex/materialization did not complete cleanly. Codex command ${codexEvent.event_id} exit: ${codexEvent.exit_code}; ${materializationSummary}; validation exit: ${failedValidation?.exit_code ?? "none"}; files: ${afterFiles.length}. ${outputValidation.summary}`;
+      ? `Codex wrote files directly for ${task.user_goal}; no materialization command was produced, but changed files were observed and validation passed. Changed files: ${changedFiles.join(", ")}. ${outputValidation.summary} ${artifactSummary}`.trim()
+      : `Codex produced structured file contents for ${task.user_goal}; the worker materialized those contents through logged ${materializationSummary}. Changed files: ${(changedFiles.length ? changedFiles : afterFiles).join(", ")}. ${outputValidation.summary} ${artifactSummary}`.trim()
+    : `Codex/materialization did not complete cleanly. Codex command ${codexEvent.event_id} exit: ${codexEvent.exit_code}; ${materializationSummary}; validation exit: ${failedValidation?.exit_code ?? "none"}; files: ${afterFiles.length}. ${outputValidation.summary} ${artifactSummary}`.trim();
   await post(`/workers/${encodeURIComponent(assignedWorkerId)}/heartbeat`, {
     ...workerRuntimeMetadata(assignedTaskId, assignedProjectId),
   });
@@ -1173,6 +1260,7 @@ async function main() {
     return;
   }
   await runAssignedTask(workerId, taskId, projectId);
+  if (workerType === "gcp_vm" || workerType === "gke_job") process.exit(0);
 }
 
 const isMainModule = process.argv[1] ? path.resolve(process.argv[1]) === fileURLToPath(import.meta.url) : false;

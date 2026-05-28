@@ -275,6 +275,7 @@ test("worker claim skips tasks whose task graph is already terminal", () => {
     task_graphs: { [graph.task_graph_id]: graph },
     worker_context_packets: {},
     worker_runtime_command_requests: {},
+    project_artifacts: {},
   } satisfies PersistedState;
 
   const result = claimWorkerTaskInState(state, {

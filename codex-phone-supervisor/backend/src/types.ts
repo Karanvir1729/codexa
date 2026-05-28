@@ -252,6 +252,18 @@ export interface PreviewMetadata {
   summary: string;
 }
 
+export interface ProjectArtifactFileRecord {
+  artifact_id: string;
+  project_id: string;
+  task_id: string;
+  worker_id: string;
+  path: string;
+  content_base64: string;
+  size_bytes: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export type WorkerType = "local" | "docker_local" | "gcp_vm" | "gke_job";
 
 export type WorkerStatus = "starting" | "idle" | "assigned" | "running" | "failed" | "stopping" | "stopped" | "expired";
@@ -857,6 +869,7 @@ export interface PersistedState {
   task_graphs: Record<string, TaskGraphRecord>;
   worker_context_packets: Record<string, WorkerContextPacket>;
   worker_runtime_command_requests: Record<string, WorkerRuntimeCommandRequest>;
+  project_artifacts: Record<string, ProjectArtifactFileRecord>;
 }
 
 export interface UserMessage {

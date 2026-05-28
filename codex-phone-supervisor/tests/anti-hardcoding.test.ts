@@ -170,6 +170,7 @@ test("summaries are grounded in command events and generated file paths", async 
     task_graphs: {},
     worker_context_packets: {},
     worker_runtime_command_requests: {},
+    project_artifacts: {},
   } satisfies PersistedState);
 
   const summary = generateRunSummary(taskId);

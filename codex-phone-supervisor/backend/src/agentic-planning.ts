@@ -98,6 +98,51 @@ function textArray(value: unknown) {
   return Array.isArray(value) ? value.map((item) => text(item)).filter(Boolean) : [];
 }
 
+function uniqueText(values: string[]) {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function isDocPath(file: string) {
+  return file.startsWith(".head-developer/");
+}
+
+function normalizeValidationCommand(command: string) {
+  return command
+    .replace(/\s+when\b.*$/i, "")
+    .trim();
+}
+
+function isExecutableValidationCommand(command: string) {
+  const normalized = normalizeValidationCommand(command);
+  if (!normalized) return false;
+  if (/^(verify|ensure|confirm|check that|inspect|open|manual|look for)\b/i.test(normalized)) return false;
+  return /^(npm|pnpm|yarn|node|npx|bun|deno|python|python3|pytest|vitest|playwright|tsc|eslint|find|test|grep|rg|curl|git|docker)\b/i.test(normalized)
+    || /^[\w./-]+\s+(--?[\w-]+|\S+\.(?:js|ts|tsx|jsx|html|css|json|md)\b)/i.test(normalized);
+}
+
+function validationCommandsForPlannerTask(item: PlannerTaskSplitItem) {
+  const fileChecks = item.expected_files
+    .filter((file) => !isDocPath(file) && /^[\w./-]+\.[\w-]+$/.test(file))
+    .map((file) => `test -f ${file}`);
+  const explicitCommands = item.validation
+    .filter(isExecutableValidationCommand)
+    .map(normalizeValidationCommand);
+  const jsChecks = item.expected_files
+    .filter((file) => !isDocPath(file) && /\.(?:mjs|cjs|js)$/i.test(file))
+    .map((file) => `node --check ${file}`);
+  return uniqueText([...fileChecks, ...jsChecks, ...explicitCommands]);
+}
+
+function acceptanceChecksForPlannerTask(item: PlannerTaskSplitItem) {
+  const humanChecks = item.validation.filter((check) => !isExecutableValidationCommand(check));
+  return uniqueText([
+    "Required files exist.",
+    "Validation commands run or blocker is recorded.",
+    "Worker handoff records changed files and validation.",
+    ...humanChecks,
+  ]);
+}
+
 function boundedNumber(value: unknown, fallback: number, min: number, max: number) {
   const number = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(number)) return fallback;
@@ -517,6 +562,8 @@ function plannerPrompt(input: PlannerInput) {
     "Decide the next orchestration move. Do not force every request through a fixed checklist.",
     "Ask clarification only when the implementation requirements are genuinely unclear.",
     "Simple concrete tasks may start with one worker. Multi-worker, GCP VM, GKE Job, deploy, secret, IAM, destructive, or public actions require approval.",
+    "Treat worker modes such as gke_job, gcp_vm, docker_local, and local as where Codex executes. Do not turn a worker-mode smoke into product deployment, containerization, or infrastructure work unless the user explicitly asks the generated app itself to be deployed.",
+    "For proposed_task_split.validation, prefer executable shell commands such as test -f index.html or node --check script.js. Put human review checks in the conversational response instead of pretending they are commands.",
     "When approval is required, make user_visible_response conversational: confirm what you understood, state key assumptions or technical choices, summarize the task split and validation, then ask the user to approve or revise.",
     "Return only JSON matching the schema. Do not include raw JSON in user_visible_response.",
     "",
@@ -669,6 +716,34 @@ function normalizeUserVisibleApprovalPrompt(decision: PlannerDecision) {
   };
 }
 
+function enforceExecutionSafety(decision: PlannerDecision) {
+  const cloudWorkerMode = decision.recommended_worker_mode === "gcp_vm" || decision.recommended_worker_mode === "gke_job";
+  const multiWorker = decision.recommended_worker_count > 1 || decision.decision_type === "start_multi_worker_task";
+  if (!decision.execution_allowed || (!cloudWorkerMode && !multiWorker)) return decision;
+
+  const workerLabel = decision.recommended_worker_mode === "gke_job"
+    ? "GKE Job"
+    : decision.recommended_worker_mode === "gcp_vm"
+      ? "GCP VM"
+      : decision.recommended_worker_mode;
+  const approvalReason = cloudWorkerMode
+    ? `${workerLabel} workers run outside the local process, so I need approval before launching them.`
+    : "Multi-worker execution needs approval of the task split before workers launch.";
+  const response = /\b(approve|approval|confirm)\b/i.test(decision.user_visible_response)
+    ? decision.user_visible_response
+    : `${decision.user_visible_response} ${approvalReason} Approve this plan before I launch workers?`;
+
+  return {
+    ...decision,
+    decision_type: cloudWorkerMode ? "request_user_approval" as const : "propose_task_split" as const,
+    requires_user_approval: true,
+    approval_reason: decision.approval_reason || approvalReason,
+    next_action: "none" as const,
+    execution_allowed: false,
+    user_visible_response: response,
+  };
+}
+
 export class AgenticPlanningController {
   constructor(private readonly model: PlannerModel = modelForConfig()) {}
 
@@ -701,6 +776,7 @@ export class AgenticPlanningController {
         "Do not change GCP IAM or secrets without explicit approval.",
         "Multi-worker execution requires approval of the split.",
         "GCP VM and GKE Job worker execution require approval before launch.",
+        "Worker mode is an execution backend, not an implicit request to deploy or containerize the generated app.",
         "Completion gates and output contracts remain mandatory for app nodes.",
       ],
     };
@@ -724,7 +800,7 @@ export class AgenticPlanningController {
       decision = parsePlannerDecision(await fallback.generatePlanningDecision(plannerInput));
       decision.reason = `Planner fallback used because ${error instanceof Error ? error.message : String(error)} ${decision.reason}`;
     }
-    decision = normalizeUserVisibleApprovalPrompt(decision);
+    decision = normalizeUserVisibleApprovalPrompt(enforceExecutionSafety(decision));
     const planningDecisionId = decision.planning_decision_id ?? `planning_${randomUUID()}`;
     decision.planning_decision_id = planningDecisionId;
     decision = redactSensitiveJson(decision);
@@ -805,42 +881,39 @@ export class AgenticPlanningController {
       should_split: shouldSplit,
       parallelizable: shouldSplit && decision.recommended_worker_count > 1 && split.some((item) => item.can_run_parallel),
       reason: decision.reason || fallback.reason,
-      suggested_subtasks: split.map((item) => ({
-        title: item.title,
-        goal: item.goal,
-        dependencies: item.depends_on,
-        outputs_expected: [`Completed ${item.title.toLowerCase()} with file and validation evidence.`],
-        files_expected: item.expected_files,
-        required_app_files: item.expected_files.filter((file) => !file.startsWith(".head-developer/")),
-        allowed_doc_files: [".head-developer/WORKER_HANDOFFS.md", ".head-developer/VALIDATION.md"],
-        expected_user_visible_output: [`User-visible ${item.title.toLowerCase()}`],
-        validation_commands: item.validation,
-        acceptance_checks: [
-          "Required files exist.",
-          "Validation commands run or blocker is recorded.",
-          "Worker handoff records changed files and validation.",
-        ],
-        completion_criteria: [
-          "Do not report complete if only .head-developer docs changed for app output.",
-          "Report incomplete work honestly with command evidence.",
-        ],
-        output_contract: {
-          required_app_files: item.expected_files.filter((file) => !file.startsWith(".head-developer/")),
+      suggested_subtasks: split.map((item) => {
+        const validationCommands = validationCommandsForPlannerTask(item);
+        const acceptanceChecks = acceptanceChecksForPlannerTask(item);
+        const requiredAppFiles = item.expected_files.filter((file) => !isDocPath(file));
+        return {
+          title: item.title,
+          goal: item.goal,
+          dependencies: item.depends_on,
+          outputs_expected: [`Completed ${item.title.toLowerCase()} with file and validation evidence.`],
+          files_expected: item.expected_files,
+          required_app_files: requiredAppFiles,
           allowed_doc_files: [".head-developer/WORKER_HANDOFFS.md", ".head-developer/VALIDATION.md"],
           expected_user_visible_output: [`User-visible ${item.title.toLowerCase()}`],
-          validation_commands: item.validation,
-          acceptance_checks: [
-            "Required files exist.",
-            "Validation commands run or blocker is recorded.",
-            "Worker handoff records changed files and validation.",
-          ],
+          validation_commands: validationCommands,
+          acceptance_checks: acceptanceChecks,
           completion_criteria: [
             "Do not report complete if only .head-developer docs changed for app output.",
             "Report incomplete work honestly with command evidence.",
           ],
-          docs_only_is_insufficient: item.expected_files.some((file) => !file.startsWith(".head-developer/")),
-        },
-      })),
+          output_contract: {
+            required_app_files: requiredAppFiles,
+            allowed_doc_files: [".head-developer/WORKER_HANDOFFS.md", ".head-developer/VALIDATION.md"],
+            expected_user_visible_output: [`User-visible ${item.title.toLowerCase()}`],
+            validation_commands: validationCommands,
+            acceptance_checks: acceptanceChecks,
+            completion_criteria: [
+              "Do not report complete if only .head-developer docs changed for app output.",
+              "Report incomplete work honestly with command evidence.",
+            ],
+            docs_only_is_insufficient: requiredAppFiles.length > 0,
+          },
+        };
+      }),
       dependency_graph: split.flatMap((item) => item.depends_on.map((dependency) => ({
         from: dependency,
         to: item.title,

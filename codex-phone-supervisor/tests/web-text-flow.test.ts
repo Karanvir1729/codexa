@@ -691,6 +691,155 @@ test("preview action serves a verified generated static app and adds flowchart p
   }
 });
 
+test("worker artifact file handoff persists app files into the project workspace", async () => {
+  const port = await freePort();
+  const storeDir = path.join(process.cwd(), "tmp", `artifact-handoff-test-store-${port}`);
+  const workspaceDir = path.join(process.cwd(), "tmp", `artifact-handoff-app-${port}`);
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  const child = spawnBackend(port, storeDir);
+
+  try {
+    await waitForHealth(port, child);
+    const attachResponse = await fetch(`http://127.0.0.1:${port}/projects`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspace_uri: workspaceDir }),
+    });
+    assert.ok([200, 201].includes(attachResponse.status));
+    const attachPayload = await attachResponse.json() as { project: { project_id: string } };
+
+    const taskResponse = await fetch(`http://127.0.0.1:${port}/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project_id: attachPayload.project.project_id, user_goal: "Create static app.", assign_worker: true }),
+    });
+    assert.equal(taskResponse.status, 201);
+    const taskPayload = await taskResponse.json() as { task: { task_id: string }; worker: { worker_id: string } };
+
+    const html = "<!doctype html><title>Artifact App</title><main>artifact handoff ok</main>";
+    const uploadResponse = await fetch(`http://127.0.0.1:${port}/workers/${taskPayload.worker.worker_id}/artifacts/files`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        task_id: taskPayload.task.task_id,
+        project_id: attachPayload.project.project_id,
+        files: [{ path: "index.html", content_base64: Buffer.from(html).toString("base64") }],
+      }),
+    });
+    assert.equal(uploadResponse.status, 202);
+    assert.equal(fs.readFileSync(path.join(workspaceDir, "index.html"), "utf8"), html);
+
+    const artifactResponse = await fetch(`http://127.0.0.1:${port}/projects/${attachPayload.project.project_id}/artifacts/files`);
+    assert.equal(artifactResponse.status, 200);
+    const artifactPayload = await artifactResponse.json() as { files: Array<{ path: string; content_base64: string }> };
+    const restored = artifactPayload.files.find((file) => file.path === "index.html");
+    assert.ok(restored);
+    assert.equal(Buffer.from(restored.content_base64, "base64").toString("utf8"), html);
+  } finally {
+    child.kill();
+  }
+});
+
+test("preview action restores persisted artifacts when the local workspace copy is missing", async () => {
+  const port = await freePort();
+  const storeDir = path.join(process.cwd(), "tmp", `preview-artifact-restore-store-${port}`);
+  const workspaceDir = path.join(process.cwd(), "tmp", `preview-artifact-restore-app-${port}`);
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  const child = spawnBackend(port, storeDir);
+
+  try {
+    await waitForHealth(port, child);
+    const attachResponse = await fetch(`http://127.0.0.1:${port}/projects`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspace_uri: workspaceDir }),
+    });
+    assert.equal(attachResponse.status, 201);
+    const attachPayload = await attachResponse.json() as { project: { project_id: string } };
+
+    const sessionResponse = await fetch(`http://127.0.0.1:${port}/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label: "artifact restore preview", channel: "web_text", user_id: "test-web-user", workspace_path: workspaceDir }),
+    });
+    assert.equal(sessionResponse.status, 201);
+    const sessionPayload = await sessionResponse.json() as { session: { session_id: string } };
+
+    const taskResponse = await fetch(`http://127.0.0.1:${port}/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: sessionPayload.session.session_id,
+        project_id: attachPayload.project.project_id,
+        user_goal: "Create a static artifact-backed preview app.",
+        assign_worker: true,
+        worker_type: "local",
+      }),
+    });
+    assert.equal(taskResponse.status, 201);
+    const taskPayload = await taskResponse.json() as { task: { task_id: string }; worker: { worker_id: string } };
+
+    const html = "<!doctype html><html><head><title>Restored</title><link rel=\"stylesheet\" href=\"styles.css\"></head><body><h1>restored artifact preview</h1><script src=\"script.js\"></script></body></html>";
+    const css = "body { font-family: sans-serif; }";
+    const js = "window.artifactPreviewLoaded = true;\n";
+    const uploadResponse = await fetch(`http://127.0.0.1:${port}/workers/${taskPayload.worker.worker_id}/artifacts/files`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        task_id: taskPayload.task.task_id,
+        project_id: attachPayload.project.project_id,
+        files: [
+          { path: "index.html", content_base64: Buffer.from(html).toString("base64") },
+          { path: "styles.css", content_base64: Buffer.from(css).toString("base64") },
+          { path: "script.js", content_base64: Buffer.from(js).toString("base64") },
+        ],
+      }),
+    });
+    assert.equal(uploadResponse.status, 202);
+    fs.rmSync(path.join(workspaceDir, "index.html"), { force: true });
+    fs.rmSync(path.join(workspaceDir, "styles.css"), { force: true });
+    fs.rmSync(path.join(workspaceDir, "script.js"), { force: true });
+
+    assert.equal((await fetch(`http://127.0.0.1:${port}/workers/${taskPayload.worker.worker_id}/result`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task_id: taskPayload.task.task_id, status: "completed", summary: "Artifact-backed app completed." }),
+    })).status, 200);
+
+    const previewResponse = await fetch(`http://127.0.0.1:${port}/sessions/${sessionPayload.session.session_id}/preview`, { method: "POST" });
+    assert.equal(previewResponse.status, 201);
+    const previewPayload = await previewResponse.json() as { preview: { preview_url: string; entry_file: string; asset_paths: string[] } };
+    assert.equal(previewPayload.preview.entry_file, "index.html");
+    assert.deepEqual(previewPayload.preview.asset_paths.sort(), ["script.js", "styles.css"]);
+    assert.equal(fs.readFileSync(path.join(workspaceDir, "index.html"), "utf8"), html);
+
+    const htmlResponse = await fetch(previewPayload.preview.preview_url);
+    assert.equal(htmlResponse.status, 200);
+    assert.match(await htmlResponse.text(), /restored artifact preview/);
+
+    const updatedJs = "window.artifactPreviewLoaded = 'fresh';\n";
+    const updateResponse = await fetch(`http://127.0.0.1:${port}/workers/${taskPayload.worker.worker_id}/artifacts/files`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        task_id: taskPayload.task.task_id,
+        project_id: attachPayload.project.project_id,
+        files: [{ path: "script.js", content_base64: Buffer.from(updatedJs).toString("base64") }],
+      }),
+    });
+    assert.equal(updateResponse.status, 202);
+    fs.writeFileSync(path.join(workspaceDir, "script.js"), "window.artifactPreviewLoaded = 'stale';\n");
+
+    const scriptResponse = await fetch(`${previewPayload.preview.preview_url}script.js`);
+    assert.equal(scriptResponse.status, 200);
+    assert.equal(await scriptResponse.text(), updatedJs);
+  } finally {
+    child.kill();
+    fs.rmSync(storeDir, { recursive: true, force: true });
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+  }
+});
+
 test("preview action refuses to fake a preview when no verified entry file exists", async () => {
   const port = await freePort();
   const storeDir = path.join(process.cwd(), "tmp", `preview-missing-entry-store-${port}`);

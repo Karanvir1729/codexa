@@ -121,6 +121,271 @@ test("agentic planner parses structured output and falls back safely on invalid 
   assert.equal(payload.noRawJson, true);
 });
 
+test("agentic planner converts human validation text into acceptance checks, not required commands", () => {
+  const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), "planner-validation-store-"));
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "planner-validation-root-"));
+  const script = `
+    ${bootstrapEnv(storeDir, workspaceRoot)}
+    const { AgenticPlanningController } = await import("./codex-phone-supervisor/backend/src/agentic-planning.ts");
+    const controller = new AgenticPlanningController({
+      modelName: "unused",
+      async generatePlanningDecision() {
+        throw new Error("not used");
+      }
+    });
+    const fallback = {
+      complexity: "simple",
+      recommended_worker_count: 1,
+      should_split: false,
+      parallelizable: false,
+      reason: "fallback",
+      suggested_subtasks: [],
+      dependency_graph: [],
+      risks: [],
+      approval_needed: false
+    };
+    const complexity = controller.decisionToComplexity({
+      decision_type: "start_simple_task",
+      confidence: 0.9,
+      reason: "clear",
+      user_visible_response: "Starting.",
+      requirements_summary: "Build a static form.",
+      open_questions: [],
+      assumptions: [],
+      proposed_design: "Static app.",
+      proposed_task_split: [{
+        title: "Build form",
+        goal: "Create a static form.",
+        can_run_parallel: false,
+        depends_on: [],
+        expected_files: ["index.html", "script.js"],
+        validation: ["Verify that the nonce appears in index.html.", "node --check script.js"]
+      }],
+      recommended_worker_count: 1,
+      recommended_worker_mode: "docker_local",
+      requires_user_approval: false,
+      approval_reason: "",
+      risk_level: "low",
+      next_action: "launch_workers",
+      execution_allowed: true
+    }, fallback);
+    const task = complexity.suggested_subtasks[0];
+    console.log(JSON.stringify({
+      validation: task.validation_commands,
+      acceptance: task.acceptance_checks
+    }));
+  `;
+  const result = runIsolated(script);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}") as { validation?: string[]; acceptance?: string[] };
+  assert.deepEqual(payload.validation, ["test -f index.html", "test -f script.js", "node --check script.js"]);
+  assert.ok(payload.acceptance?.includes("Verify that the nonce appears in index.html."));
+});
+
+test("agentic planner forces approval before cloud worker execution", () => {
+  const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), "planner-cloud-approval-store-"));
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "planner-cloud-approval-root-"));
+  const projectDir = path.join(workspaceRoot, "cloud-project");
+  fs.mkdirSync(projectDir, { recursive: true });
+  const script = `
+    ${bootstrapEnv(storeDir, workspaceRoot)}
+    process.env.WORKER_MODE = "gke_job";
+    process.env.DEFAULT_WORKER_MODE = "gke_job";
+    process.env.MAX_GKE_JOB_WORKERS = "2";
+    process.env.GCP_PROJECT_ID = "teamtiffy1729";
+    process.env.GCP_REGION = "us-central1";
+    process.env.HEAD_DEVELOPER_API_CALLBACK_URL = "https://head-developer-api.example.run.app";
+    process.env.HEAD_DEVELOPER_WORKER_IMAGE_URI = "us-central1-docker.pkg.dev/teamtiffy1729/head-developer/worker:test";
+    process.env.HEAD_DEVELOPER_CODEX_AUTH_METHOD = "codex_home_bundle";
+    process.env.HEAD_DEVELOPER_CODEX_HOME = "/codex-home";
+    process.env.HEAD_DEVELOPER_CODEX_HOME_BUNDLE_GCS_URI = "gs://teamtiffy1729-head-developer-artifacts/codex-auth/codex-vm-home-bundle.tgz";
+    process.env.HEAD_DEVELOPER_GKE_JOB_DRY_RUN = "1";
+    const { AgenticPlanningController } = await import("./codex-phone-supervisor/backend/src/agentic-planning.ts");
+    const { createSession } = await import("./codex-phone-supervisor/backend/src/session.ts");
+    const { getSession, listWorkers, upsertSession } = await import("./codex-phone-supervisor/backend/src/store.ts");
+    const { projectRecordForWorkspace, upsertProject } = await import("./codex-phone-supervisor/backend/src/project-store.ts");
+    const project = projectRecordForWorkspace(${JSON.stringify(projectDir)});
+    upsertProject(project);
+    const session = createSession("cloud approval", ${JSON.stringify(workspaceRoot)});
+    session.session_id = "session_cloud_approval";
+    session.project_id = project.project_id;
+    session.current_project_id = project.project_id;
+    session.project_discovery.status = "selected";
+    session.preferred_worker_mode = "gke_job";
+    upsertSession(session);
+    const permissiveModel = {
+      modelName: "permissive_test_model",
+      async generatePlanningDecision() {
+        return {
+          decision_type: "start_simple_task",
+          confidence: 0.9,
+          reason: "Simple app.",
+          user_visible_response: "I will build the app now.",
+          requirements_summary: "Build a small static app.",
+          open_questions: [],
+          assumptions: [],
+          proposed_design: "Static HTML, CSS, and JavaScript.",
+          proposed_task_split: [{ title: "Build app", goal: "Create files.", can_run_parallel: false, depends_on: [], expected_files: ["index.html"], validation: ["Open in browser"] }],
+          recommended_worker_count: 1,
+          recommended_worker_mode: "gke_job",
+          requires_user_approval: false,
+          approval_reason: "",
+          risk_level: "low",
+          next_action: "launch_workers",
+          execution_allowed: true
+        };
+      }
+    };
+    const controller = new AgenticPlanningController(permissiveModel);
+    const planned = await controller.decide({ session, userMessage: "Build a landing page.", project, workerMode: "gke_job" });
+    const latest = getSession(session.session_id);
+    console.log(JSON.stringify({
+      decisionType: planned.decision.decision_type,
+      approvalRequired: planned.decision.requires_user_approval,
+      executionAllowed: planned.decision.execution_allowed,
+      approvalStatus: latest.approval_status,
+      response: planned.decision.user_visible_response,
+      workers: listWorkers().length
+    }));
+  `;
+  const result = runIsolated(script);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}") as Record<string, unknown>;
+  assert.equal(payload.decisionType, "request_user_approval");
+  assert.equal(payload.approvalRequired, true);
+  assert.equal(payload.executionAllowed, false);
+  assert.equal(payload.approvalStatus, "pending");
+  assert.match(String(payload.response), /GKE Job workers run outside the local process|Approve this plan/i);
+  assert.equal(payload.workers, 0);
+});
+
+test("supervisor does not fall through to legacy autostart for GKE design decisions", () => {
+  const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), "planner-gke-fallback-store-"));
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "planner-gke-fallback-root-"));
+  const projectDir = path.join(workspaceRoot, "gke-selected-project");
+  fs.mkdirSync(projectDir, { recursive: true });
+  const script = `
+    ${bootstrapEnv(storeDir, workspaceRoot)}
+    process.env.WORKER_MODE = "gke_job";
+    process.env.DEFAULT_WORKER_MODE = "gke_job";
+    process.env.MAX_GKE_JOB_WORKERS = "2";
+    process.env.GCP_PROJECT_ID = "teamtiffy1729";
+    process.env.GCP_REGION = "us-central1";
+    process.env.HEAD_DEVELOPER_API_CALLBACK_URL = "https://head-developer-api.example.run.app";
+    process.env.HEAD_DEVELOPER_WORKER_IMAGE_URI = "us-central1-docker.pkg.dev/teamtiffy1729/head-developer/worker:test";
+    process.env.HEAD_DEVELOPER_CODEX_AUTH_METHOD = "codex_home_bundle";
+    process.env.HEAD_DEVELOPER_CODEX_HOME = "/codex-home";
+    process.env.HEAD_DEVELOPER_CODEX_HOME_BUNDLE_GCS_URI = "gs://teamtiffy1729-head-developer-artifacts/codex-auth/codex-vm-home-bundle.tgz";
+    process.env.HEAD_DEVELOPER_GKE_JOB_DRY_RUN = "1";
+    const { createSession } = await import("./codex-phone-supervisor/backend/src/session.ts");
+    const { handleSupervisorMessage } = await import("./codex-phone-supervisor/backend/src/supervisor-tools.ts");
+    const { getSession, listTaskGraphs, listWorkers, upsertSession } = await import("./codex-phone-supervisor/backend/src/store.ts");
+    const { projectRecordForWorkspace, upsertProject } = await import("./codex-phone-supervisor/backend/src/project-store.ts");
+    const project = projectRecordForWorkspace(${JSON.stringify(projectDir)});
+    project.display_name = "GKE Selected Project";
+    upsertProject(project);
+    const session = createSession("gke design no autostart", ${JSON.stringify(workspaceRoot)});
+    session.session_id = "session_gke_no_legacy_autostart";
+    session.channel = "web_text";
+    session.project_id = project.project_id;
+    session.current_project_id = project.project_id;
+    session.workspace_path = project.workspace_path;
+    session.project_discovery.status = "selected";
+    session.project_discovery.selected_workspace_path = project.workspace_path;
+    session.project_discovery.selected_project_name = project.display_name;
+    session.preferred_worker_mode = "gke_job";
+    upsertSession(session);
+    const response = await handleSupervisorMessage(session.session_id, "Make a quick static website for recording field notes.", "web_text");
+    const revision = await handleSupervisorMessage(session.session_id, "Use static HTML, CSS, and JavaScript with localStorage before approval.", "web_text");
+    const combinedRevision = await handleSupervisorMessage(session.session_id, "Use one GKE Job worker and do not deploy the generated app.", "web_text");
+    const latest = getSession(session.session_id);
+    console.log(JSON.stringify({
+      response: response.response,
+      revision: revision.response,
+      combinedRevision: combinedRevision.response,
+      pending: latest.pending_action?.type,
+      revisedGoal: latest.pending_action?.original_user_goal,
+      workerMode: latest.pending_action?.worker_mode,
+      workerCount: latest.pending_action?.user_approved_worker_count,
+      status: latest.current_status,
+      workers: listWorkers({ projectId: project.project_id }).length,
+      graphs: listTaskGraphs(project.project_id).length
+    }));
+  `;
+  const result = runIsolated(script);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}") as Record<string, unknown>;
+  assert.equal(payload.pending, "approve_task_split");
+  assert.equal(payload.status, "waiting_for_approval");
+  assert.equal(payload.workers, 0);
+  assert.equal(payload.graphs, 0);
+  assert.match(String(payload.response), /approve|approval|GKE Job/i);
+  assert.match(String(payload.revision), /updated the pending plan/i);
+  assert.match(String(payload.revision), /approve/i);
+  assert.match(String(payload.combinedRevision), /updated the pending plan/i);
+  assert.match(String(payload.revisedGoal), /localStorage/i);
+  assert.match(String(payload.revisedGoal), /do not deploy/i);
+  assert.equal(payload.workerMode, "gke_job");
+  assert.equal(payload.workerCount, 1);
+});
+
+test("pending task split accepts natural approval phrases", () => {
+  const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), "planner-natural-approval-store-"));
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "planner-natural-approval-root-"));
+  const projectDir = path.join(workspaceRoot, "natural-approval-project");
+  fs.mkdirSync(projectDir, { recursive: true });
+  const script = `
+    ${bootstrapEnv(storeDir, workspaceRoot)}
+    process.env.WORKER_MODE = "gke_job";
+    process.env.DEFAULT_WORKER_MODE = "gke_job";
+    process.env.MAX_GKE_JOB_WORKERS = "2";
+    process.env.GCP_PROJECT_ID = "teamtiffy1729";
+    process.env.GCP_REGION = "us-central1";
+    process.env.HEAD_DEVELOPER_API_CALLBACK_URL = "https://head-developer-api.example.run.app";
+    process.env.HEAD_DEVELOPER_WORKER_IMAGE_URI = "us-central1-docker.pkg.dev/teamtiffy1729/head-developer/worker:test";
+    process.env.HEAD_DEVELOPER_CODEX_AUTH_METHOD = "codex_home_bundle";
+    process.env.HEAD_DEVELOPER_CODEX_HOME = "/codex-home";
+    process.env.HEAD_DEVELOPER_CODEX_HOME_BUNDLE_GCS_URI = "gs://teamtiffy1729-head-developer-artifacts/codex-auth/codex-vm-home-bundle.tgz";
+    process.env.HEAD_DEVELOPER_GKE_JOB_DRY_RUN = "1";
+    const { createSession } = await import("./codex-phone-supervisor/backend/src/session.ts");
+    const { handleSupervisorMessage } = await import("./codex-phone-supervisor/backend/src/supervisor-tools.ts");
+    const { getSession, listTaskGraphs, listWorkers, upsertSession } = await import("./codex-phone-supervisor/backend/src/store.ts");
+    const { projectRecordForWorkspace, upsertProject } = await import("./codex-phone-supervisor/backend/src/project-store.ts");
+    const project = projectRecordForWorkspace(${JSON.stringify(projectDir)});
+    project.display_name = "Natural Approval Project";
+    upsertProject(project);
+    const session = createSession("natural approval", ${JSON.stringify(workspaceRoot)});
+    session.session_id = "session_natural_approval";
+    session.channel = "web_text";
+    session.project_id = project.project_id;
+    session.current_project_id = project.project_id;
+    session.workspace_path = project.workspace_path;
+    session.project_discovery.status = "selected";
+    session.project_discovery.selected_workspace_path = project.workspace_path;
+    session.project_discovery.selected_project_name = project.display_name;
+    session.preferred_worker_mode = "gke_job";
+    upsertSession(session);
+    await handleSupervisorMessage(session.session_id, "Make a quick static website for recording tick bites.", "web_text");
+    await handleSupervisorMessage(session.session_id, "Use one GKE Job worker and do not deploy the generated app.", "web_text");
+    const approval = await handleSupervisorMessage(session.session_id, "Approve the plan. Start the GKE Job worker now.", "web_text");
+    const latest = getSession(session.session_id);
+    console.log(JSON.stringify({
+      response: approval.response,
+      pending: latest.pending_action?.type ?? null,
+      status: latest.current_status,
+      workers: listWorkers({ projectId: project.project_id }).length,
+      graphs: listTaskGraphs(project.project_id).length
+    }));
+  `;
+  const result = runIsolated(script);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}") as Record<string, unknown>;
+  assert.equal(payload.pending, null);
+  assert.equal(payload.status, "running");
+  assert.equal(payload.workers, 1);
+  assert.match(String(payload.response), /started 1 worker/i);
+});
+
 test("agentic planning conversation handles clarification simple start approval revision GCP risk and flowchart", () => {
   const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), "planner-convo-store-"));
   const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "planner-convo-root-"));

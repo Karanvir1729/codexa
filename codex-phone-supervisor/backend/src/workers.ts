@@ -444,7 +444,7 @@ export function buildGkeJobManifest(worker: WorkerRecord, options: GkeJobManifes
   const envVars = [
     env("HEAD_DEVELOPER_WORKER_ID", worker.worker_id),
     env("HEAD_DEVELOPER_WORKER_TYPE", "gke_job"),
-    env("HEAD_DEVELOPER_WORKER_POLL", "1"),
+    env("HEAD_DEVELOPER_WORKER_POLL", "0"),
     env("HEAD_DEVELOPER_TASK_ID", worker.task_id ?? ""),
     env("HEAD_DEVELOPER_PROJECT_ID", worker.project_id ?? ""),
     env("HEAD_DEVELOPER_WORKSPACE_PATH", "/workspace"),
@@ -488,6 +488,14 @@ export function buildGkeJobManifest(worker: WorkerRecord, options: GkeJobManifes
       backoffLimit: 0,
       ttlSecondsAfterFinished: options.ttlSecondsAfterFinished ?? config.gke.jobTtlSecondsAfterFinished,
       activeDeadlineSeconds: options.activeDeadlineSeconds ?? config.gke.jobActiveDeadlineSeconds,
+      podFailurePolicy: {
+        rules: [
+          {
+            action: "Ignore",
+            onPodConditions: [{ type: "DisruptionTarget" }],
+          },
+        ],
+      },
       template: {
         metadata: { labels },
         spec: {
@@ -867,6 +875,23 @@ export class GkeJobWorkerManager extends LocalWorkerManager {
     this.ensureCredentials();
     const selector = gkeJobLabelSelector({ workerId: worker.worker_id, taskId: worker.task_id, projectId: worker.project_id });
     return this.kubectl(["logs", "-l", selector, "--tail", String(tailLines)], 60_000);
+  }
+
+  override async handleTaskResult(result: { task_id: string; status: TaskRecord["status"]; summary?: string; next_steps?: string[] }) {
+    const task = await super.handleTaskResult(result);
+    if (!task?.worker_id) return task;
+    const worker = getWorker(task.worker_id);
+    if (!worker || worker.type !== "gke_job") return task;
+    worker.status = result.status === "completed" ? "stopped" : "failed";
+    upsertWorker(worker);
+    appendOrchestratorEvent({
+      scope: "worker",
+      scope_id: worker.worker_id,
+      type: result.status === "completed" ? "worker.gke_job.completed" : "worker.gke_job.failed",
+      message: `GKE Job worker ${worker.worker_id} finished task ${task.task_id} with status ${result.status}.`,
+      data: { worker_id: worker.worker_id, task_id: task.task_id, status: result.status },
+    });
+    return task;
   }
 
   override async stopWorker(worker_id: string) {

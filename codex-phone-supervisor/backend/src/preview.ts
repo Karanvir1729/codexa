@@ -8,6 +8,7 @@ import { getProject, listProjects, upsertProject } from "./project-store.js";
 import {
   appendOrchestratorEvent,
   getRunSummary,
+  listProjectArtifactFiles,
   getSession,
   getTask,
   listCommandEvents,
@@ -39,13 +40,20 @@ function configuredWorkspaceRoots() {
 }
 
 function ensureAllowedWorkspace(workspacePath: string) {
+  const roots = configuredWorkspaceRoots();
+  const resolvedWorkspace = path.resolve(workspacePath);
+  const existingWorkspace = realpathIfExists(workspacePath);
+  if (!existingWorkspace) {
+    if (!roots.some((root) => isWithinDirectory(resolvedWorkspace, root))) return null;
+    fs.mkdirSync(resolvedWorkspace, { recursive: true });
+  }
   const realWorkspace = realpathIfExists(workspacePath);
   if (!realWorkspace || !fs.statSync(realWorkspace).isDirectory()) return null;
-  return configuredWorkspaceRoots().some((root) => isWithinDirectory(realWorkspace, root)) ? realWorkspace : null;
+  return roots.some((root) => isWithinDirectory(realWorkspace, root)) ? realWorkspace : null;
 }
 
 function localPreviewBaseUrl() {
-  return `http://127.0.0.1:${config.port}`;
+  return (config.publicBaseUrl || `http://127.0.0.1:${config.port}`).replace(/\/$/, "");
 }
 
 function normalizedMessage(text: string) {
@@ -85,6 +93,15 @@ function safeRelativePath(value: string) {
   const cleaned = value.split("#")[0].split("?")[0].trim();
   if (!cleaned || cleaned.startsWith("http://") || cleaned.startsWith("https://") || cleaned.startsWith("data:") || cleaned.startsWith("mailto:") || cleaned.startsWith("tel:")) return "";
   return cleaned.replace(/^\.?\//, "");
+}
+
+const restorableArtifactExtensions = new Set([".html", ".css", ".js", ".mjs", ".cjs", ".json", ".svg", ".png", ".jpg", ".jpeg", ".webp", ".ico", ".txt", ".md"]);
+
+function isRestorableArtifactPath(relativePath: string) {
+  const parts = relativePath.split("/");
+  if (parts.some((part) => part === ".git" || part === "node_modules" || part === ".codex-vm-home" || part === ".codex-worker-home")) return false;
+  if (parts[0]?.startsWith(".") && parts[0] !== ".well-known") return false;
+  return restorableArtifactExtensions.has(path.extname(relativePath).toLowerCase());
 }
 
 function findIndexHtmlCandidates(workspacePath: string, task: TaskRecord) {
@@ -133,6 +150,23 @@ function detectPreviewEntry(workspacePath: string, task: TaskRecord) {
     };
   }
   return null;
+}
+
+function restoreArtifactFiles(projectId: string, workspacePath: string) {
+  const artifacts = listProjectArtifactFiles(projectId);
+  let restored = 0;
+  for (const artifact of artifacts) {
+    const relativePath = safeRelativePath(artifact.path);
+    if (!relativePath || !isRestorableArtifactPath(relativePath)) continue;
+    const target = path.resolve(workspacePath, relativePath);
+    if (!isWithinDirectory(target, workspacePath)) continue;
+    const data = Buffer.from(artifact.content_base64, "base64");
+    if (!data.length) continue;
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, data);
+    restored += 1;
+  }
+  return restored;
 }
 
 async function logPreviewInspection(preview: PreviewMetadata) {
@@ -193,7 +227,20 @@ export async function startPreviewForSession(sessionId: string): Promise<Preview
     return { ok: true, preview: task.latest_preview, task, project, reused: true };
   }
 
-  const entry = detectPreviewEntry(workspacePath, task);
+  let entry = detectPreviewEntry(workspacePath, task);
+  if (!entry) {
+    const restored = restoreArtifactFiles(project.project_id, workspacePath);
+    if (restored) {
+      appendOrchestratorEvent({
+        scope: "preview",
+        scope_id: task.task_id,
+        type: "preview.artifacts.restored",
+        message: `Restored ${restored} persisted artifact file(s) before preview.`,
+        data: { task_id: task.task_id, project_id: project.project_id, workspace_path: workspacePath, restored },
+      });
+      entry = detectPreviewEntry(workspacePath, task);
+    }
+  }
   if (!entry) {
     appendOrchestratorEvent({
       scope: "preview",
@@ -331,6 +378,7 @@ export function servePreviewAsset(previewId: string, requestPath: string, res: R
   const requested = requestPath && requestPath !== "/" ? requestPath.replace(/^\/+/, "") : record.preview.entry_file;
   const decoded = decodeURIComponent(requested);
   const target = path.resolve(workspacePath, decoded);
+  restoreArtifactFiles(record.preview.project_id, workspacePath);
   if (!isWithinDirectory(target, workspacePath) || !fs.existsSync(target) || !fs.statSync(target).isFile()) {
     res.status(404).json({ error: { code: "PREVIEW_ASSET_NOT_FOUND", message: "Preview asset not found." } });
     return;

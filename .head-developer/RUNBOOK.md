@@ -125,6 +125,17 @@ scripts/gcp/build-and-push-images.sh
 The script prints the non-secret `HEAD_DEVELOPER_API_IMAGE_URI` and `HEAD_DEVELOPER_WORKER_IMAGE_URI` exports to use with `scripts/gcp/deploy-cloud-run.sh`.
 It defaults to `HEAD_DEVELOPER_IMAGE_PLATFORM=linux/amd64` so images built from Apple Silicon hosts are accepted by Cloud Run and GKE.
 
+Cloud Run deploys should keep bounded scaling configured:
+
+```bash
+export HEAD_DEVELOPER_CLOUD_RUN_MIN_INSTANCES=1
+export HEAD_DEVELOPER_CLOUD_RUN_MAX_INSTANCES=5
+export HEAD_DEVELOPER_CLOUD_RUN_CONCURRENCY=1
+scripts/gcp/deploy-cloud-run.sh
+```
+
+The deploy script now passes those values to `gcloud run deploy`. Concurrency defaults to `1` because some control-plane paths still use synchronous child processes; adjust max instances before larger GKE worker callback loads.
+
 ## GCP VM Codex home bundle auth
 
 Primary GCP VM Codex auth uses a dedicated ChatGPT-login Codex home bundle. Do not use OpenClaw as the primary auth solution, and do not use the OpenAI API-key path for live VM Codex smokes unless explicitly approved.
@@ -152,7 +163,7 @@ Expected: the VM fetches the bundle, `codex login status` passes inside `/codex-
 
 ## GKE Job worker prototype
 
-`gke_job` is an approved prototype backend and does not replace `gcp_vm`. It uses GKE Autopilot Jobs, Workload Identity Federation, the existing worker image, and the same `codex_home_bundle` auth path.
+`gke_job` is an approved prototype backend and does not replace `gcp_vm`. It uses one-shot GKE Autopilot Jobs, Workload Identity Federation, the existing worker image, and the same `codex_home_bundle` auth path.
 
 Config:
 
@@ -177,7 +188,7 @@ export WORKER_CALLBACK_URL=https://your-authenticated-control-plane
 scripts/gcp/run-gke-job-codex-home-smoke.sh
 ```
 
-Expected: the script creates or selects the Autopilot cluster, configures namespace/KSA/WIF/IAM, launches one Kubernetes Job, verifies `codex_home_bundle` auth and Codex execution inside the Pod, records command/validation events through authenticated Cloud Run callbacks, and deletes the Job. Private nodes still need Cloud NAT or equivalent external egress for Codex CLI network calls.
+Expected: the script creates or selects the Autopilot cluster, configures namespace/KSA/WIF/IAM, launches one Kubernetes Job, verifies `codex_home_bundle` auth and Codex execution inside the Pod, records command/validation events through authenticated Cloud Run callbacks, and deletes the Job. GKE workers restore current project app artifacts from the API before running and upload validated app files back after running; preview routes rehydrate persisted artifacts before serving each asset so stale Cloud Run instance-local copies do not override newer worker output. This is an interim preview handoff, not the durable repo/PR lifecycle. Private nodes still need Cloud NAT or equivalent external egress for Codex CLI network calls.
 
 ## Two-worker smoke still required
 

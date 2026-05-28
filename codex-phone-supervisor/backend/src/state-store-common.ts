@@ -41,6 +41,7 @@ export function emptyPersistedState(options: InitialStateOptions): PersistedStat
     task_graphs: {},
     worker_context_packets: {},
     worker_runtime_command_requests: {},
+    project_artifacts: {},
   };
 }
 
@@ -63,5 +64,6 @@ export function normalizePersistedState(parsed: Partial<PersistedState>, options
     task_graphs: parsed.task_graphs ?? {},
     worker_context_packets: parsed.worker_context_packets ?? {},
     worker_runtime_command_requests: parsed.worker_runtime_command_requests ?? {},
+    project_artifacts: parsed.project_artifacts ?? {},
   };
 }

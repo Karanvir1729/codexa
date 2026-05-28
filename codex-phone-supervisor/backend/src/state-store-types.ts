@@ -6,6 +6,7 @@ import type {
   OrchestratorEvent,
   OrchestratorSettings,
   PersistedState,
+  ProjectArtifactFileRecord,
   ProjectRecord,
   RunSummaryRecord,
   SessionState,
@@ -131,6 +132,9 @@ export interface StateStore {
   updateWorkerRuntimeCommandRequest(request: WorkerRuntimeCommandRequest): WorkerRuntimeCommandRequest;
   getWorkerRuntimeCommandRequest(requestId: string): WorkerRuntimeCommandRequest | null;
   listWorkerRuntimeCommandRequests(filters?: { workerId?: string; taskId?: string; status?: WorkerRuntimeCommandRequest["status"] }): WorkerRuntimeCommandRequest[];
+
+  upsertProjectArtifactFile(record: ProjectArtifactFileRecord): ProjectArtifactFileRecord;
+  listProjectArtifactFiles(projectId: string): ProjectArtifactFileRecord[];
 
   listEvents(scopeId?: string): OrchestratorEvent[];
   appendEvent(event: OrchestratorEvent): OrchestratorEvent;

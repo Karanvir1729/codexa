@@ -19,3 +19,8 @@ test("approval firewall allows simple status questions", () => {
   const classification = classifyApproval("what changed in this project?");
   assert.equal(classification.requiresApproval, false);
 });
+
+test("approval firewall does not gate negated deploy constraints", () => {
+  const classification = classifyApproval("Use static files only and do not deploy the generated app.");
+  assert.equal(classification.requiresApproval, false);
+});

@@ -98,7 +98,7 @@ test("GKE Job manifest includes required labels, env vars, callback auth, and no
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const manifest = JSON.parse(result.stdout) as {
     metadata: { namespace: string; labels: Record<string, string> };
-    spec: { backoffLimit: number; ttlSecondsAfterFinished: number; template: { spec: { serviceAccountName: string; containers: Array<{ env: Array<{ name: string; value?: string }>; volumeMounts: Array<{ mountPath: string }> }>; volumes: Array<{ name: string; emptyDir?: Record<string, never> }> } } };
+    spec: { backoffLimit: number; ttlSecondsAfterFinished: number; podFailurePolicy?: { rules: Array<{ action: string; onPodConditions?: Array<{ type: string }> }> }; template: { spec: { serviceAccountName: string; containers: Array<{ env: Array<{ name: string; value?: string }>; volumeMounts: Array<{ mountPath: string }> }>; volumes: Array<{ name: string; emptyDir?: Record<string, never> }> } } };
   };
   assert.equal(manifest.metadata.namespace, "head-developer-workers");
   assert.equal(manifest.metadata.labels.app, "head-developer");
@@ -106,6 +106,8 @@ test("GKE Job manifest includes required labels, env vars, callback auth, and no
   assert.equal(manifest.metadata.labels.task_id, "task_demo");
   assert.equal(manifest.metadata.labels.project_id, "project_demo");
   assert.equal(manifest.spec.backoffLimit, 0);
+  assert.equal(manifest.spec.podFailurePolicy?.rules[0]?.action, "Ignore");
+  assert.equal(manifest.spec.podFailurePolicy?.rules[0]?.onPodConditions?.[0]?.type, "DisruptionTarget");
   assert.ok(manifest.spec.ttlSecondsAfterFinished > 0);
   assert.equal(manifest.spec.template.spec.serviceAccountName, "head-developer-worker");
   const container = manifest.spec.template.spec.containers[0];
@@ -126,6 +128,7 @@ test("GKE Job manifest includes required labels, env vars, callback auth, and no
     assert.ok(envNames.has(name), `${name} should be present`);
   }
   assert.equal(container.env.find((item) => item.name === "WORKER_CALLBACK_AUTH")?.value, "google_id_token");
+  assert.equal(container.env.find((item) => item.name === "HEAD_DEVELOPER_WORKER_POLL")?.value, "0");
   assert.equal(container.env.find((item) => item.name === "HEAD_DEVELOPER_CODEX_AUTH_METHOD")?.value, "codex_home_bundle");
   assert.deepEqual(container.volumeMounts.map((item) => item.mountPath).sort(), ["/codex-home", "/state", "/workspace"]);
   assert.deepEqual(manifest.spec.template.spec.volumes.map((item) => item.name).sort(), ["codex-home", "state", "workspace"]);
@@ -138,6 +141,14 @@ test("GKE Job cleanup uses a worker label selector and scripts are present", () 
   assert.match(workers, /kubectl", \["-n", config\.gke\.namespace/);
   assert.match(workers, /"delete", "job", "-l", selector, "--ignore-not-found=true"/);
   assert.match(workers, /gkeJobLabelSelector/);
+  assert.match(workers, /worker\.gke_job\.completed/);
+
+  const workerEntry = fs.readFileSync(path.join(process.cwd(), "codex-phone-supervisor", "backend", "src", "worker-entry.ts"), "utf8");
+  assert.match(workerEntry, /restoreProjectArtifacts/);
+  assert.match(workerEntry, /persistProjectArtifacts/);
+  assert.match(workerEntry, /\/artifacts\/files/);
+  assert.match(workerEntry, /workerType === "gcp_vm" \|\| workerType === "gke_job"/);
+  assert.match(workerEntry, /process\.exit\(0\)/);
 
   const script = fs.readFileSync(path.join(process.cwd(), "scripts", "gcp", "run-gke-job-codex-home-smoke.sh"), "utf8");
   assert.match(script, /gcloud container clusters create-auto/);

@@ -131,8 +131,13 @@ Deploy Cloud Run only with an authenticated service:
 ```bash
 export HEAD_DEVELOPER_API_IMAGE_URI=REGION-docker.pkg.dev/PROJECT/REPO/api:TAG
 export HEAD_DEVELOPER_WORKER_IMAGE_URI=REGION-docker.pkg.dev/PROJECT/REPO/worker:TAG
+export HEAD_DEVELOPER_CLOUD_RUN_MIN_INSTANCES=1
+export HEAD_DEVELOPER_CLOUD_RUN_MAX_INSTANCES=5
+export HEAD_DEVELOPER_CLOUD_RUN_CONCURRENCY=1
 scripts/gcp/deploy-cloud-run.sh
 ```
+
+The deploy script passes the Cloud Run scaling settings above by default. Keep at least one warm instance for the Firestore-backed orchestrator. Concurrency defaults to `1` because some control-plane paths still use synchronous child processes; scale out with max instances rather than queueing unrelated requests behind one blocked event loop.
 
 Launch a worker VM smoke test:
 
@@ -154,7 +159,7 @@ scripts/gcp/run-codex-home-bundle-smoke.sh
 
 ## GKE Job worker prototype
 
-`gke_job` is a prototype alternative to raw `gcp_vm` workers. It does not replace `gcp_vm`. Each worker assignment is launched as one Kubernetes Job on GKE Autopilot, using the same worker image and the same `codex_home_bundle` auth path.
+`gke_job` is a prototype alternative to raw `gcp_vm` workers. It does not replace `gcp_vm`. Each worker assignment is launched as one one-shot Kubernetes Job on GKE Autopilot, using the same worker image and the same `codex_home_bundle` auth path.
 
 Required config:
 
@@ -179,7 +184,7 @@ export WORKER_CALLBACK_URL=https://your-authenticated-control-plane
 scripts/gcp/run-gke-job-codex-home-smoke.sh
 ```
 
-Expected proof: cluster, namespace, Job, Pod, worker image, Workload Identity mapping, GCS bundle URI, Codex login evidence, Codex command event ID, generated files, nonce evidence, validation result, and cleanup showing no leftover Job/Pod for the worker ID. Do not make Cloud Run public and do not make the bundle public. If private nodes are used, Cloud NAT or equivalent external egress is required for Codex CLI network calls; Private Google Access alone is not enough for non-Google endpoints.
+Expected proof: cluster, namespace, Job, Pod, worker image, Workload Identity mapping, GCS bundle URI, Codex login evidence, Codex command event ID, generated files, nonce evidence, validation result, and cleanup showing no leftover Job/Pod for the worker ID. The worker restores any current project app artifacts before execution and uploads validated app files back to the control plane after execution so sequential GKE Jobs can produce a previewable workspace. Preview routes rehydrate persisted artifacts before serving each asset, which avoids stale Cloud Run instance-local copies after a worker uploads a newer artifact. Do not make the bundle public. If private nodes are used, Cloud NAT or equivalent external egress is required for Codex CLI network calls; Private Google Access alone is not enough for non-Google endpoints.
 
 List and clean temporary workers:
 

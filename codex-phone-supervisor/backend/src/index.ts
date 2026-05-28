@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import express from "express";
 import http from "node:http";
 import { config } from "./config.js";
@@ -21,6 +22,7 @@ import {
   listApprovalRequests,
   listCommandEvents,
   listOrchestratorEvents,
+  listProjectArtifactFiles,
   listSessions,
   listTaskGraphs,
   listTasks,
@@ -30,6 +32,7 @@ import {
   stateStoreKind,
   upsertApprovalRequest,
   upsertCommandEvent,
+  upsertProjectArtifactFile,
   upsertWorkerRuntimeCommandRequest,
   updateOrchestratorSettings,
   upsertSession,
@@ -113,6 +116,87 @@ function parseWorkerType(value: unknown): WorkerType {
 function optionalBodyString(value: unknown) {
   const text = typeof value === "string" ? value.trim() : "";
   return text || undefined;
+}
+
+const artifactExtensions = new Set([
+  ".html",
+  ".css",
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".json",
+  ".svg",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".ico",
+  ".txt",
+  ".md",
+]);
+
+function normalizeArtifactRelativePath(value: unknown) {
+  const raw = String(value || "").replace(/\\/g, "/").trim();
+  const normalized = path.posix.normalize(raw);
+  if (!raw || normalized === "." || normalized.startsWith("../") || path.posix.isAbsolute(normalized)) {
+    throw new Error(`Invalid artifact path: ${raw || "(empty)"}`);
+  }
+  return normalized;
+}
+
+function isPersistableArtifactPath(relativePath: string) {
+  const parts = relativePath.split("/");
+  if (parts.some((part) => part === ".git" || part === "node_modules" || part === ".codex-vm-home" || part === ".codex-worker-home")) return false;
+  if (parts[0]?.startsWith(".") && parts[0] !== ".well-known") return false;
+  return artifactExtensions.has(path.extname(relativePath).toLowerCase());
+}
+
+function artifactWorkspaceForProject(projectId: string) {
+  const project = getProject(projectId);
+  if (!project) return null;
+  return { project, workspacePath: project.workspace_path };
+}
+
+function artifactIdFor(projectId: string, relativePath: string) {
+  const digest = createHash("sha256").update(`${projectId}:${relativePath}`).digest("hex").slice(0, 32);
+  return `artifact_${digest}`;
+}
+
+function listArtifactFiles(workspacePath: string, projectId?: string) {
+  const byPath = new Map<string, { path: string; content_base64: string; size_bytes: number }>();
+  if (projectId) {
+    for (const record of listProjectArtifactFiles(projectId)) {
+      if (!isPersistableArtifactPath(record.path)) continue;
+      byPath.set(record.path, {
+        path: record.path,
+        content_base64: record.content_base64,
+        size_bytes: record.size_bytes,
+      });
+    }
+  }
+  const maxFiles = 100;
+  const maxBytes = 2 * 1024 * 1024;
+  let totalBytes = [...byPath.values()].reduce((sum, file) => sum + file.size_bytes, 0);
+  function walk(dir: string) {
+    if (byPath.size >= maxFiles || !fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const absolute = path.join(dir, entry.name);
+      const relative = path.relative(workspacePath, absolute).replace(/\\/g, "/");
+      if (!relative || relative.startsWith("..")) continue;
+      if (entry.isDirectory()) {
+        if (isPersistableArtifactPath(`${relative}/placeholder.txt`) || (!relative.startsWith(".") && !relative.includes("node_modules") && !relative.includes(".git"))) walk(absolute);
+        continue;
+      }
+      if (!entry.isFile() || !isPersistableArtifactPath(relative)) continue;
+      const data = fs.readFileSync(absolute);
+      if (totalBytes + data.length > maxBytes) continue;
+      totalBytes += data.length;
+      byPath.set(relative, { path: relative, content_base64: data.toString("base64"), size_bytes: data.length });
+      if (byPath.size >= maxFiles) break;
+    }
+  }
+  walk(workspacePath);
+  return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
 }
 
 function workerRuntimeMetadataFromBody(body: Record<string, unknown>): WorkerRuntimeMetadata {
@@ -990,6 +1074,81 @@ app.post("/workers/:worker_id/events", async (req, res) => {
     upsertSession(session);
   }
   res.status(202).json({ event: stored });
+});
+
+app.get("/projects/:project_id/artifacts/files", (req, res) => {
+  const target = artifactWorkspaceForProject(req.params.project_id);
+  if (!target) return res.status(404).json(apiError("PROJECT_NOT_FOUND", "Project not found."));
+  const files = listArtifactFiles(target.workspacePath, target.project.project_id);
+  res.json({ project_id: target.project.project_id, files });
+});
+
+app.post("/workers/:worker_id/artifacts/files", (req, res) => {
+  const worker = getWorker(req.params.worker_id);
+  if (!worker) return res.status(404).json(apiError("WORKER_NOT_FOUND", "Worker not found."));
+  const body = req.body && typeof req.body === "object" ? req.body as Record<string, unknown> : {};
+  const taskId = String(body.task_id || worker.task_id || "").trim();
+  const projectId = String(body.project_id || worker.project_id || "").trim();
+  if (!taskId || !projectId || taskId !== worker.task_id || projectId !== worker.project_id) {
+    return res.status(400).json(apiError("ARTIFACT_SCOPE_INVALID", "Artifact upload must match the assigned worker task and project."));
+  }
+  const task = getTask(taskId);
+  const target = artifactWorkspaceForProject(projectId);
+  if (!task || !target) return res.status(404).json(apiError("ARTIFACT_TARGET_NOT_FOUND", "Artifact task or project not found."));
+  const rawFiles = Array.isArray(body.files) ? body.files : [];
+  if (!rawFiles.length) return res.status(400).json(apiError("ARTIFACT_FILES_REQUIRED", "At least one artifact file is required."));
+
+  const savedFiles: string[] = [];
+  let totalBytes = 0;
+  const maxBytes = 2 * 1024 * 1024;
+  const maxFileBytes = 512 * 1024;
+  fs.mkdirSync(target.workspacePath, { recursive: true });
+  for (const item of rawFiles) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const relativePath = normalizeArtifactRelativePath(record.path);
+    if (!isPersistableArtifactPath(relativePath)) continue;
+    const contentBase64 = String(record.content_base64 || "");
+    const data = Buffer.from(contentBase64, "base64");
+    if (!data.length) continue;
+    if (data.length > maxFileBytes) return res.status(413).json(apiError("ARTIFACT_FILE_TOO_LARGE", "A single artifact file is too large."));
+    totalBytes += data.length;
+    if (totalBytes > maxBytes) return res.status(413).json(apiError("ARTIFACT_TOO_LARGE", "Artifact upload is too large."));
+    const targetFile = path.join(target.workspacePath, relativePath);
+    const resolved = path.resolve(targetFile);
+    const resolvedRoot = path.resolve(target.workspacePath);
+    if (resolved !== resolvedRoot && !resolved.startsWith(`${resolvedRoot}${path.sep}`)) {
+      return res.status(400).json(apiError("ARTIFACT_PATH_INVALID", "Artifact path must stay inside the project workspace."));
+    }
+    fs.mkdirSync(path.dirname(targetFile), { recursive: true });
+    fs.writeFileSync(targetFile, data);
+    const now = new Date().toISOString();
+    const artifactId = artifactIdFor(target.project.project_id, relativePath);
+    const previous = listProjectArtifactFiles(target.project.project_id).find((artifact) => artifact.artifact_id === artifactId);
+    upsertProjectArtifactFile({
+      artifact_id: artifactId,
+      project_id: target.project.project_id,
+      task_id: task.task_id,
+      worker_id: worker.worker_id,
+      path: relativePath,
+      content_base64: data.toString("base64"),
+      size_bytes: data.length,
+      created_at: previous?.created_at ?? now,
+      updated_at: now,
+    });
+    savedFiles.push(relativePath);
+  }
+
+  target.project.updated_at = new Date().toISOString();
+  upsertProject(target.project);
+  appendOrchestratorEvent({
+    scope: "worker",
+    scope_id: worker.worker_id,
+    type: "worker.artifacts.persisted",
+    message: `Persisted ${savedFiles.length} artifact file(s) for task ${task.task_id}.`,
+    data: { worker_id: worker.worker_id, task_id: task.task_id, project_id: target.project.project_id, files: savedFiles },
+  });
+  res.status(202).json({ artifact: { project_id: target.project.project_id, task_id: task.task_id, worker_id: worker.worker_id, files: savedFiles } });
 });
 
 app.post("/workers/:worker_id/result", async (req, res) => {

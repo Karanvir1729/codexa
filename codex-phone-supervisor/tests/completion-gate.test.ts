@@ -96,6 +96,61 @@ test("completion gate passes when required app files and validation are evidence
   assert.deepEqual(result.app_files, ["index.html", "styles.css"]);
 });
 
+test("completion gate ignores natural-language planner validation as command evidence", () => {
+  const result = evaluateTaskGraphNodeCompletion({
+    node: appNode({
+      output_contract: {
+        required_app_files: ["index.html", "styles.css"],
+        allowed_doc_files: [".head-developer/WORKER_HANDOFFS.md"],
+        expected_user_visible_output: ["Visible landing page"],
+        validation_commands: [
+          "Verify that the nonce appears in index.html.",
+          "Ensure the form fields are present.",
+        ],
+        acceptance_checks: ["Nonce and form fields are present."],
+        completion_criteria: ["Docs-only output is insufficient"],
+        docs_only_is_insufficient: true,
+      },
+      validation_commands: [
+        "Verify that the nonce appears in index.html.",
+        "Ensure the form fields are present.",
+      ],
+    }),
+    commandEvents: [
+      command({ summary: "created: index.html\ncreated: styles.css" }),
+      command({ event_id: "command_validation", command: "node --check script.js", summary: "Command completed successfully." }),
+    ],
+  });
+
+  assert.equal(result.status, "passed");
+  assert.deepEqual(result.missing_validation_commands, []);
+});
+
+test("completion gate accepts conditional validation command evidence", () => {
+  const result = evaluateTaskGraphNodeCompletion({
+    node: appNode({
+      output_contract: {
+        required_app_files: ["index.html", "script.js"],
+        allowed_doc_files: [".head-developer/WORKER_HANDOFFS.md"],
+        expected_user_visible_output: ["Visible landing page"],
+        validation_commands: ["node --check script.js when script.js exists"],
+        acceptance_checks: ["JS validates when present."],
+        completion_criteria: ["Docs-only output is insufficient"],
+        docs_only_is_insufficient: true,
+      },
+      required_app_files: ["index.html", "script.js"],
+      validation_commands: ["node --check script.js when script.js exists"],
+    }),
+    commandEvents: [
+      command({ summary: "created: index.html\ncreated: script.js" }),
+      command({ event_id: "command_validation", command: "node --check script.js", summary: "Command completed successfully." }),
+    ],
+  });
+
+  assert.equal(result.status, "passed");
+  assert.deepEqual(result.validation_commands_run, ["node --check script.js"]);
+});
+
 test("completion gate does not require app output for documentation-only setup nodes", () => {
   const result = evaluateTaskGraphNodeCompletion({
     node: appNode({

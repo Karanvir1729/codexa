@@ -10,6 +10,7 @@ import type {
   OrchestratorEvent,
   OrchestratorSettings,
   PersistedState,
+  ProjectArtifactFileRecord,
   ProjectRecord,
   RunSummaryRecord,
   SessionState,
@@ -290,6 +291,18 @@ export class MemoryStateStore implements StateStore {
       .filter((request) => !filters.status || request.status === filters.status)
       .map(clone)
       .sort((a, b) => a.created_at.localeCompare(b.created_at));
+  }
+
+  upsertProjectArtifactFile(record: ProjectArtifactFileRecord) {
+    this.state.project_artifacts[record.artifact_id] = clone(record);
+    return record;
+  }
+
+  listProjectArtifactFiles(projectId: string) {
+    return Object.values(this.state.project_artifacts)
+      .filter((record) => record.project_id === projectId)
+      .map(clone)
+      .sort((a, b) => a.path.localeCompare(b.path));
   }
 
   appendEvent(event: OrchestratorEvent) {

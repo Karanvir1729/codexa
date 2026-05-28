@@ -16,19 +16,19 @@ Current phase status:
 | Firestore-backed Cloud Run state | Fixed, smoke passed | Firestore hot paths now use targeted gets/queries and bounded lists. Cloud Run revision `head-developer-api-00043-m44` passed bounded `/sessions`, `/projects`, `/tasks`, `/task-graphs`, worker callback, command-event, and GKE full-stack smokes with `HEAD_DEVELOPER_STATE_STORE=firestore`. |
 | Docker Local two-worker smoke | Done | `task_graph_cdc40b63-b53f-4779-805f-7249fa11e8e8` completed with two real app workers and validation. |
 | Conversation-only planner smoke | Done | Static SaaS dashboard prompt proposed 2 workers, waited for approval, created approved graph `task_graph_c2fbb5a8-c5af-4c12-a761-09787431d85e`, assigned 2 Docker Local workers, and showed planner/approval/execution flowchart nodes. |
-| Verification suite | Done | Latest documented pass: `npm run typecheck`, `npm test` with 164 passed / 1 skipped, `npm run build`, and Docker Compose config. |
+| Verification suite | Done | Latest documented pass: `npm run typecheck`, `npm test` with 173 passed / 1 skipped, `npm run build`, and Docker Compose config. |
 | Env staging risk | Done | `.env.codex-phone-supervisor` was removed from the git index and remains ignored/local-only as of 2026-05-26 21:10 EDT. |
 | GCP VM real Codex app build | In progress | Primary auth path is now the dedicated `codex_home_bundle` design. API-key auth is fallback-only. Local bundle creation and GCP VM Codex smoke still need proof from this branch. |
-| GKE Job worker backend | Firestore full-stack smoke passed with caveats | `gke_job` mode, manager, manifest generator, setup/smoke script, tests, Codex-home bundle auth, authenticated Cloud Run callbacks, and Firestore-backed full-stack conversation smoke passed in `teamtiffy1729`. GKE outputs are still Pod-local evidence, not durable repo branches. |
+| GKE Job worker backend | Artifact handoff fixed; graph-split caveat remains | `gke_job` mode, manager, manifest generator, setup/smoke script, tests, Codex-home bundle auth, authenticated Cloud Run callbacks, and Firestore-backed full-stack conversation smoke passed in `teamtiffy1729`. Jobs are one-shot and app-file artifacts are restored/uploaded for previewable Cloud Run workspaces. Preview serving now rehydrates persisted artifacts before serving each asset. Durable repo branches/PRs remain unimplemented. |
 | Full-stack local/GKE app smokes | Done with caveats | Docker Local and GKE Job both completed real Vertex-planned Wordle-style full-stack smokes. The latest GKE run used Firestore state and passed with graph `task_graph_a314e396-6dd3-42cb-bea4-1880e5774a1b`. |
-| Cloud Run deployment | Done | Production URL `https://head-developer-api-jq6oo2ormq-uc.a.run.app` is on revision `head-developer-api-00046-xp5` with Firestore state, Vertex/Gemini provider indicators, amd64 API/worker images, and public `allUsers` invoker access per user approval. |
+| Cloud Run deployment | Done | Production URL `https://head-developer-api-jq6oo2ormq-uc.a.run.app` is on revision `head-developer-api-00063-g8x` with Firestore state, Vertex/Gemini provider indicators, amd64 API/worker images, and public `allUsers` invoker access per user approval. |
 | Git repo / PR orchestration | Design documented, implementation gap | Local git init, Docker worker branches, and worktrees exist. Durable GKE output artifacts, remote repo creation, branch push, PR creation, conflict resolution, and approval-gated merge remain unimplemented. |
 
 Active branch/chat visibility:
 
 | Source | Status | Coordination note |
 | --- | --- | --- |
-| Current repo branch | Active | `karan-changes` tracks `origin/karan-changes` at `227b8da`; working tree has broad uncommitted restructuring and cleanup changes. |
+| Current repo branch | Active | `karan-changes` carries the Cloud Run/GKE production hardening and tick-bite smoke fixes; push the final verified commit before handing off. |
 | Git worktrees | None known | `git worktree list` shows only the main checkout. |
 | Parallel Codex chats | Unknown | Treat any incoming patch as external until its diff, tests, docs, architecture path, and secret handling are reviewed. |
 
@@ -51,17 +51,82 @@ Recommended merge order:
 
 Next implementation priorities:
 
-1. Implement durable repo/branch/PR lifecycle for GKE and cloud workers: artifact upload, branch materialization, conflict detection, integration validation, PR creation, and approval-gated push/merge.
+1. Implement durable repo/branch/PR lifecycle for GKE and cloud workers: signed artifact bundles, branch materialization, conflict detection, integration validation, PR creation, and approval-gated push/merge.
 2. Request or work around the exact GKE scale-up quota: `SSD_TOTAL_GB` in `us-central1`, current limit `250`, current usage `200`; request at least `500` to allow several Autopilot worker nodes.
-3. Fix worker process exit semantics for GKE Jobs so Kubernetes Job status matches orchestrator completion; the latest smoke passed in orchestrator state while completed worker Jobs still ended as `BackoffLimitExceeded`.
+3. Tune planner/task-split heuristics before larger GKE workloads so simple static apps stay one-node when appropriate and sequential nodes share consistent file ownership.
 
 Git/PR orchestration requirements to add before claiming production multi-worker development:
 - Planner should decide when a new repo is needed, initialize it before worker launch, and record the repo/remote metadata on the project.
 - Each worker task should use an isolated branch/worktree and an output contract that includes expected file ownership.
+
+## 2026-05-28 - Production tick-bite app smoke and preview hardening
+
+Scope:
+- Ran a production orchestrator conversation against `https://head-developer-api-jq6oo2ormq-uc.a.run.app` using real Vertex/Gemini planning and GKE Job Codex workers.
+- Conversation transcript: `tmp/tick-bite-prod-10msg-NONCE-TICK-BITE-PROD-1780000621501.jsonl` with 10 user messages plus orchestrator responses.
+- Project: `project_f877318d3b99c143`; task graph: `task_graph_f53969b4-b915-4535-b452-c47cef6109ea`; nonce: `NONCE-TICK-BITE-PROD-1780000621501`.
+- Preview URL tested: `https://head-developer-api-jq6oo2ormq-uc.a.run.app/previews/preview_5225450f-5209-48a2-ae5b-07e7e43ffd43/`.
+
+What was fixed:
+- Planner-created natural-language validation items such as "Verify that..." are no longer treated as required shell command strings by completion gates.
+- Planner task splits now convert expected files into concrete validation commands such as `test -f index.html` and `node --check script.js`, while retaining human checks as acceptance checks.
+- Preview artifact serving now restores persisted project artifacts before every preview asset response, preventing stale local Cloud Run instance files from overriding updated Firestore artifacts.
+- Persisted generated `script.js` was patched so date-only follow-up reminders render in local calendar time instead of drifting one day under timezone parsing.
+
+Smoke result:
+- The first GKE worker generated a runnable static HTML/CSS/JS tick-bite recorder with `index.html`, `style.css`, and `script.js`; output contracts and validation passed.
+- Browser/Computer Use visually confirmed the production preview rendered the app and nonce.
+- Playwright filled a fake tick-bite record, saved it, verified `localStorage`, refreshed the page, and verified the record persisted with the follow-up date shown as May 31, 2026 before and after reload.
+- Browser console errors: 0.
+- GKE cleanup succeeded; no `app=head-developer` Jobs/Pods remained after manual cleanup.
+
+Truthful caveat:
+- Vertex/Gemini over-split a simple one-worker static app into sequential setup/html/css/js graph nodes.
+- The HTML repair node completed and repaired the original failed HTML node after the validation fix.
+- The later CSS node failed because the worker produced `styles.css` while the node expected `style.css`; the final JS node was cancelled by graph failure.
+- The app is still runnable because the first completed worker produced the complete static app, and the preview artifact was patched/tested. The planner/task-split heuristic still needs tuning so simple static apps stay as one node or enforce consistent file ownership across sequential nodes.
+
+Production deployment:
+- API image: `us-central1-docker.pkg.dev/teamtiffy1729/head-developer/api:karan-preview-hydrate-20260528171630`.
+- Worker image: `us-central1-docker.pkg.dev/teamtiffy1729/head-developer/worker:karan-preview-hydrate-20260528171630`.
+- Cloud Run revision: `head-developer-api-00063-g8x`.
+- Provider indicators on `/ready`: Supervisor `Vertex/Gemini`, planner `Vertex/Gemini`, worker code model `Codex CLI`.
+- Public `allUsers` Cloud Run invoker binding was restored per user approval.
+
+Verification:
+- `npm run typecheck` passed.
+- `npm test` passed: 173 passed, 1 skipped.
+- `npm run build` passed.
+- `docker compose -f docker/docker-compose.local.yml config` passed.
+- `git diff --check` passed.
 - The orchestrator should detect overlapping file claims before parallel launch and either revise the split or force sequential execution.
 - After worker completion and validation, the orchestrator should commit each worker branch, push it to the remote, create a pull request, and record PR URL/status/checks.
 - A merge coordinator should review diffs, detect conflicts, run integration validation, merge in dependency order, and ask for approval before risky pushes or destructive conflict resolution.
 - Direct pushes to `main`/`master` must remain approval-gated; secrets must not be printed in PR bodies, logs, or command events.
+
+## 2026-05-28 - GKE Job previewability fix in progress
+
+Cause found during the tick-bite website smoke:
+- The production API initially timed out under callback load because two GKE worker Jobs stayed alive as infinite pollers. Deleting Jobs `hd-worker-399f5fbf` and `hd-worker-857543c9` restored `/ready` and `/projects`.
+- GKE Jobs were using Pod-local `/workspace` only. That meant sequential task-graph nodes did not share generated files and Cloud Run could not preview the app output after the Pod disappeared.
+- The first message in the smoke also showed a planner safety issue: a `gke_job` worker started immediately when the model returned `execution_allowed=true`. Cloud workers must require approval before launch.
+
+Patch direction:
+- GKE Job manifest now sets `HEAD_DEVELOPER_WORKER_POLL=0` so each Kubernetes Job runs its assigned task once and exits.
+- `GkeJobWorkerManager` marks completed GKE workers stopped without running blocking Kubernetes cleanup during the worker-result callback; Job TTL or smoke cleanup handles Kubernetes resources.
+- `AgenticPlanningController` now forces approval if a planner decision tries to launch GCP VM/GKE workers or multiple workers directly.
+- Worker control-plane `send_codex_instruction` refuses local Codex execution for active cloud-worker tasks instead of spawning `codex` inside Cloud Run.
+- Added interim app-file artifact endpoints: GKE workers restore current project app files before running and upload validated app files back to the Cloud Run project workspace after running. This supports previewable sequential GKE Jobs but is not the durable repo/PR lifecycle.
+
+Evidence so far:
+- Copied the earlier GKE-produced tick-bite app from Pod `hd-worker-857543c9-26nxk` before cleanup and tested it locally in Chrome via Computer Use at `http://127.0.0.1:4177`.
+- Browser test saved a local tick-bite entry with body location `left ankle`, exposure place `backyard garden`, and notes `Tick removed with tweezers. No fever. Watch for rash.` The entry appeared in the rendered Recent entries section.
+- That copied app was from the accidental pre-approval worker and did not include every later approved field requirement; rerun after deploy is required before calling the orchestrator-built tick-bite app accepted.
+
+Targeted verification:
+- `npm run typecheck` passed.
+- `node --import tsx --test --test-concurrency=1 --test-name-pattern='worker artifact file handoff persists app files into the project workspace' codex-phone-supervisor/tests/web-text-flow.test.ts` passed.
+- A broader `npm test -- --test-name-pattern=...` command unintentionally ran the full suite and failed once before the route test was corrected; rerun full suite before merge/deploy.
 
 ## 2026-05-28 - Docker Local browser cleanup and small full-stack notes smoke
 
