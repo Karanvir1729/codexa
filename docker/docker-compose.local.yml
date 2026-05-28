@@ -1,0 +1,144 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    ports:
+      - "4317:4317"
+    environment:
+      CODEX_PHONE_SUPERVISOR_HOST: "0.0.0.0"
+      CODEX_PHONE_SUPERVISOR_PORT: "4317"
+      CODEX_PHONE_SUPERVISOR_ALLOWED_ORIGINS: "http://127.0.0.1:4318,http://localhost:4318"
+      CODEX_PHONE_SUPERVISOR_CODEX_COMMAND: "codex"
+      CODEX_PHONE_SUPERVISOR_CODEX_HOME: "/codex-home"
+      CODEX_HOME: "/codex-home"
+      CODEX_PHONE_SUPERVISOR_WORKSPACE_PATH: "/generated-projects"
+      CODEX_PHONE_SUPERVISOR_NEW_PROJECTS_ROOT: "/generated-projects"
+      CODEX_PHONE_SUPERVISOR_PROJECT_ROOTS: "/generated-projects"
+      CODEX_PHONE_SUPERVISOR_TERMINAL_ENABLED: "0"
+      CODEX_PHONE_SUPERVISOR_DESKTOP_TERMINAL_ENABLED: "0"
+      CODEX_PHONE_SUPERVISOR_STORE_DIR: "/state"
+      CODEX_PHONE_SUPERVISOR_FRONTEND_DIST_DIR: "/app/codex-phone-supervisor/frontend/dist"
+      CODEX_PHONE_SUPERVISOR_LOCK_TIMEOUT_MS: "5000"
+      CODEX_PHONE_SUPERVISOR_LOCK_RETRY_MS: "25"
+      CODEX_PHONE_SUPERVISOR_PUBLIC_BASE_URL: ""
+      CODEX_PHONE_SUPERVISOR_TEST_MODE: "${CODEX_PHONE_SUPERVISOR_TEST_MODE:-0}"
+      SUPERVISOR_MODEL_PROVIDER: "${SUPERVISOR_MODEL_PROVIDER:-vertex}"
+      VERTEX_PROJECT_ID: "${VERTEX_PROJECT_ID:-}"
+      VERTEX_LOCATION: "${VERTEX_LOCATION:-}"
+      VERTEX_MODEL: "${VERTEX_MODEL:-}"
+      GOOGLE_APPLICATION_CREDENTIALS: "/gcp-adc/application_default_credentials.json"
+      TWILIO_CONVERSATION_RELAY_WS_URL: ""
+      TWILIO_SMS_ENABLED: "0"
+      TWILIO_VOICE_ENABLED: "0"
+      TWILIO_VALIDATE_SIGNATURES: "0"
+      TWILIO_AUTH_TOKEN: ""
+      HEAD_DEVELOPER_STATE_STORE: "file"
+      WORKER_MODE: "docker_local"
+      DEFAULT_WORKER_MODE: "docker_local"
+      HEAD_DEVELOPER_DEFAULT_WORKER_TYPE: "docker_local"
+      HEAD_DEVELOPER_API_CALLBACK_URL: "http://api:4317"
+      HEAD_DEVELOPER_WORKER_IMAGE_URI: "head-developer-worker:local"
+      MAX_GKE_JOB_WORKERS: "${MAX_GKE_JOB_WORKERS:-5}"
+      HEAD_DEVELOPER_GKE_CLUSTER_NAME: "${HEAD_DEVELOPER_GKE_CLUSTER_NAME:-head-developer-workers}"
+      HEAD_DEVELOPER_GKE_LOCATION: "${HEAD_DEVELOPER_GKE_LOCATION:-us-central1}"
+      HEAD_DEVELOPER_GKE_NAMESPACE: "${HEAD_DEVELOPER_GKE_NAMESPACE:-head-developer-workers}"
+      HEAD_DEVELOPER_GKE_KSA: "${HEAD_DEVELOPER_GKE_KSA:-head-developer-worker}"
+      HEAD_DEVELOPER_GKE_GSA: "${HEAD_DEVELOPER_GKE_GSA:-}"
+    volumes:
+      - ..:/workspace
+      - ../tmp/codex-phone-supervisor-projects:/generated-projects
+      - state:/state
+      - ${CODEX_HOME:-$HOME/.codex}:/codex-home:ro
+      - ${HEAD_DEVELOPER_GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH:-$HOME/.config/gcloud/application_default_credentials.json}:/gcp-adc/application_default_credentials.json:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4317/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    ports:
+      - "4318:4318"
+    environment:
+      CODEX_PHONE_SUPERVISOR_FRONTEND_PORT: "4318"
+      VITE_SUPERVISOR_API_BASE: "http://127.0.0.1:4317"
+      VITE_SUPERVISOR_WORKSPACE_PATH: "/generated-projects"
+      VITE_SUPERVISOR_USER_ID: "local-docker-user"
+      VITE_SUPERVISOR_TERMINAL_WS_URL: "ws://127.0.0.1:4317/terminal"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  dev-worker-base:
+    image: head-developer-dev-worker-base:local
+    profiles:
+      - dev-worker-base
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev-worker-base
+      args:
+        INSTALL_CODEX_CLI: "${INSTALL_CODEX_CLI:-0}"
+    command: ["true"]
+
+  worker:
+    image: head-developer-worker:local
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+      args:
+        INSTALL_CODEX_CLI: "${INSTALL_CODEX_CLI:-1}"
+    environment:
+      CODEX_PHONE_SUPERVISOR_HOST: "0.0.0.0"
+      CODEX_PHONE_SUPERVISOR_PORT: "4319"
+      CODEX_PHONE_SUPERVISOR_ALLOWED_ORIGINS: "http://127.0.0.1:4318,http://localhost:4318"
+      CODEX_PHONE_SUPERVISOR_CODEX_COMMAND: "codex"
+      CODEX_PHONE_SUPERVISOR_CODEX_HOME: "/codex-home"
+      CODEX_HOME: "/codex-home"
+      CODEX_PHONE_SUPERVISOR_WORKSPACE_PATH: "/generated-projects"
+      CODEX_PHONE_SUPERVISOR_NEW_PROJECTS_ROOT: "/generated-projects"
+      CODEX_PHONE_SUPERVISOR_PROJECT_ROOTS: "/generated-projects"
+      CODEX_PHONE_SUPERVISOR_TERMINAL_ENABLED: "0"
+      CODEX_PHONE_SUPERVISOR_DESKTOP_TERMINAL_ENABLED: "0"
+      CODEX_PHONE_SUPERVISOR_STORE_DIR: "/state"
+      CODEX_PHONE_SUPERVISOR_FRONTEND_DIST_DIR: "/worker/codex-phone-supervisor/frontend/dist"
+      CODEX_PHONE_SUPERVISOR_LOCK_TIMEOUT_MS: "5000"
+      CODEX_PHONE_SUPERVISOR_LOCK_RETRY_MS: "25"
+      CODEX_PHONE_SUPERVISOR_PUBLIC_BASE_URL: ""
+      CODEX_PHONE_SUPERVISOR_TEST_MODE: "${CODEX_PHONE_SUPERVISOR_TEST_MODE:-0}"
+      SUPERVISOR_MODEL_PROVIDER: "${SUPERVISOR_MODEL_PROVIDER:-vertex}"
+      VERTEX_PROJECT_ID: "${VERTEX_PROJECT_ID:-}"
+      VERTEX_LOCATION: "${VERTEX_LOCATION:-}"
+      VERTEX_MODEL: "${VERTEX_MODEL:-}"
+      GOOGLE_APPLICATION_CREDENTIALS: "/gcp-adc/application_default_credentials.json"
+      TWILIO_CONVERSATION_RELAY_WS_URL: ""
+      TWILIO_SMS_ENABLED: "0"
+      TWILIO_VOICE_ENABLED: "0"
+      TWILIO_VALIDATE_SIGNATURES: "0"
+      TWILIO_AUTH_TOKEN: ""
+      HEAD_DEVELOPER_STATE_STORE: "file"
+      HEAD_DEVELOPER_API_CALLBACK_URL: "http://api:4317"
+      HEAD_DEVELOPER_WORKSPACE_PATH: "/generated-projects"
+      HEAD_DEVELOPER_WORKER_POLL: "1"
+      HEAD_DEVELOPER_WORKER_IMAGE_URI: "head-developer-worker:local"
+      HEAD_DEVELOPER_MOUNTED_CODEX_HOME: "/codex-home-host"
+      HEAD_DEVELOPER_WORKER_CODEX_HOME_HOST_PATH: "${HEAD_DEVELOPER_WORKER_CODEX_HOME_HOST_PATH:-${PWD}/.codex-worker-home}"
+      CODEX_VISIBILITY_MIRROR: "${CODEX_VISIBILITY_MIRROR:-false}"
+    volumes:
+      - ..:/workspace
+      - ../tmp/codex-phone-supervisor-projects:/generated-projects
+      - state:/state
+      - ${HEAD_DEVELOPER_WORKER_CODEX_HOME_HOST_PATH:-../.codex-worker-home}:/codex-home
+      - ${CODEX_HOME:-$HOME/.codex}:/codex-home-host:ro
+      - ${HEAD_DEVELOPER_GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH:-$HOME/.config/gcloud/application_default_credentials.json}:/gcp-adc/application_default_credentials.json:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  state:

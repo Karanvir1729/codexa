@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "head-developer-product": {
+      "command": "npm",
+      "args": ["run", "mcp:server"],
+      "env": {
+        "CODEX_PHONE_SUPERVISOR_SKIP_ENV_FILES": "0"
+      }
+    },
+    "google-developer-knowledge": {
+      "type": "remote",
+      "url": "https://developerknowledge.googleapis.com/mcp"
+    },
+    "google-cloud-compute": {
+      "type": "remote",
+      "url": "https://compute.googleapis.com/mcp"
+    }
+  }
+}

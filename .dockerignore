@@ -1,17 +1,17 @@
+.git/
 .env
-.env.codex-phone-supervisor
+.env.*
+!.env.example
 node_modules/
-data/codex-phone-supervisor/
-data/voice_agent.sqlite3
-codex-phone-supervisor/frontend/dist/
-test-results/
+data/
 tmp/
 .playwright-mcp/
 .codex-worker-home/
 .codex-vm-home/
 .DS_Store
 
-# Generated smoke/test apps and local preview artifacts.
+# Local/generated apps and smoke artifacts.
+playing-chess-on-browser-website/
 chai-shop-landing-page/
 tea-shop-landing-page/
 neon-bicycle-repair-shop-landing-page/

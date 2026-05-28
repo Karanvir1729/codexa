@@ -1,0 +1,22 @@
+FROM node:22-bookworm-slim
+
+ARG INSTALL_CODEX_CLI=1
+ARG CODEX_NPM_PACKAGE=@openai/codex
+
+WORKDIR /worker
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates git openssh-client bash curl python3 make g++ \
+  && rm -rf /var/lib/apt/lists/* \
+  && mkdir -p /workspace /state /codex-home
+
+RUN if [ "$INSTALL_CODEX_CLI" = "1" ]; then npm install -g "$CODEX_NPM_PACKAGE"; fi
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY codex-phone-supervisor ./codex-phone-supervisor
+
+ENV HEAD_DEVELOPER_WORKSPACE_PATH=/workspace
+
+CMD ["npx", "tsx", "codex-phone-supervisor/backend/src/worker-entry.ts"]

@@ -1,0 +1,125 @@
+#!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
+import {
+  apiGet,
+  assertSmoke,
+  commandIdSummary,
+  defaultApiBase,
+  flowchart,
+  log,
+  printJsonSummary,
+  projectTasks,
+  repoRoot,
+  taskCommands,
+  waitForApi,
+  writeLatestResult,
+} from "./lib.mjs";
+
+const smokeName = "codex-history-smoke";
+const apiBase = defaultApiBase;
+const codexWorkerHome = process.env.SMOKE_CODEX_WORKER_HOME || path.join(repoRoot, ".codex-worker-home");
+const sessionsDir = path.join(codexWorkerHome, "sessions");
+
+assertSmoke(fs.existsSync(sessionsDir) && fs.statSync(sessionsDir).isDirectory(), `Codex worker sessions directory is missing: ${sessionsDir}`);
+const rolloutFiles = findJsonlFiles(sessionsDir).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+assertSmoke(rolloutFiles.length > 0, `No Codex rollout JSONL files found under ${sessionsDir}.`);
+
+await waitForApi(apiBase);
+const commands = await collectCommandEvents();
+const codexCommands = commands
+  .filter((command) => command.codex_history_kind || /\bcodex\s+exec\b/.test(command.command))
+  .sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)));
+assertSmoke(codexCommands.length > 0, "No Codex command events found in API state.");
+
+const command = codexCommands.find((item) => item.codex_history_kind && (item.codex_rollout_host_path || item.codex_rollout_relative_path || item.codex_rollout_path)) ?? codexCommands[0];
+assertSmoke(command.codex_history_kind, `Command ${command.event_id} is missing codex_history_kind metadata.`);
+assertSmoke(command.codex_history_confidence, `Command ${command.event_id} is missing codex_history_confidence metadata.`);
+
+const rolloutPath = resolveRolloutPath(command);
+assertSmoke(rolloutPath && fs.existsSync(rolloutPath), `Command ${command.event_id} rollout path is missing or not host-readable.`);
+assertSmoke(path.resolve(rolloutPath).startsWith(path.resolve(sessionsDir)), `Rollout path is outside .codex-worker-home/sessions: ${rolloutPath}`);
+
+const rolloutText = fs.readFileSync(rolloutPath, "utf8");
+assertSmoke(rolloutText.trim().length > 0, `Rollout file is empty: ${rolloutPath}`);
+if (command.codex_prompt_excerpt) {
+  const excerptNeedle = command.codex_prompt_excerpt.slice(0, 80);
+  assertSmoke(rolloutText.includes(excerptNeedle) || rolloutText.includes("Cloud Orchestrator worker"), `Rollout file does not contain expected prompt evidence for command ${command.event_id}.`);
+}
+
+const output = {
+  smoke: smokeName,
+  project_id: command.project_id,
+  task_id: command.task_id,
+  worker_id: command.worker_id,
+  command_id: command.event_id,
+  codex_session_id: command.codex_session_id ?? null,
+  codex_history_kind: command.codex_history_kind,
+  codex_history_confidence: command.codex_history_confidence,
+  rollout_path: rolloutPath,
+  rollout_relative_path: command.codex_rollout_relative_path ?? null,
+  codex_home_host_path: command.codex_home_host_path ?? codexWorkerHome,
+  safe_resume_command: command.codex_resume_command ?? null,
+  verification_command: command.codex_history_verification_command ?? null,
+  commands: commandIdSummary([command]),
+};
+
+if (command.codex_resume_command) {
+  log(`safe_resume_command=${command.codex_resume_command}`);
+} else {
+  log("safe_resume_command unavailable: Codex CLI did not emit a resumable session id for this command.");
+}
+
+writeLatestResult(smokeName, output);
+printJsonSummary("codex-history-smoke passed", output);
+
+function findJsonlFiles(root) {
+  const files = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile() && entry.name.endsWith(".jsonl")) files.push(full);
+    }
+  };
+  walk(root);
+  return files;
+}
+
+function resolveRolloutPath(command) {
+  const candidates = [
+    command.codex_rollout_host_path,
+    command.codex_rollout_relative_path ? path.join(repoRoot, command.codex_rollout_relative_path) : "",
+    command.codex_rollout_path?.startsWith("/codex-home/")
+      ? path.join(codexWorkerHome, command.codex_rollout_path.slice("/codex-home/".length))
+      : command.codex_rollout_path,
+  ].filter(Boolean);
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[0] ?? null;
+}
+
+async function collectCommandEvents() {
+  const byId = new Map();
+  try {
+    const projectsPayload = await apiGet(apiBase, "/projects");
+    for (const project of projectsPayload.projects ?? []) {
+      const tasks = await projectTasks(apiBase, project.project_id).catch(() => []);
+      for (const task of tasks) {
+        const commands = await taskCommands(apiBase, task.task_id).catch(() => []);
+        for (const command of commands) byId.set(command.event_id, command);
+      }
+    }
+  } catch {
+    // Fall back to flowchart below.
+  }
+  try {
+    const chart = await flowchart(apiBase);
+    for (const node of chart.nodes ?? []) {
+      if (node.type === "command" && node.detail?.command?.event_id) {
+        byId.set(node.detail.command.event_id, node.detail.command);
+      }
+    }
+  } catch {
+    // The project/task scan is enough when flowchart is unavailable.
+  }
+  return [...byId.values()];
+}

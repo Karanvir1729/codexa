@@ -1,0 +1,219 @@
+#!/usr/bin/env node
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import {
+  apiGet,
+  assertSmoke,
+  flowchart,
+  log,
+  printJsonSummary,
+  requireEnv,
+  runCommand,
+  sanitizeLabel,
+  sleep,
+  timestampId,
+  writeLatestResult,
+} from "./lib.mjs";
+
+const smokeName = "gcp-vm-safe-command-smoke";
+const gcpProjectId = requireEnv("GCP_PROJECT_ID");
+const region = process.env.GCP_REGION || "us-central1";
+const zone = process.env.GCP_ZONE || "us-central1-a";
+const workerImage = requireEnv("HEAD_DEVELOPER_WORKER_IMAGE_URI");
+const callbackUrl = process.env.HEAD_DEVELOPER_API_CALLBACK_URL || process.env.WORKER_CALLBACK_URL || "";
+assertSmoke(callbackUrl, "Missing required env: HEAD_DEVELOPER_API_CALLBACK_URL or WORKER_CALLBACK_URL");
+const callbackAuth = process.env.WORKER_CALLBACK_AUTH || "google_id_token";
+const callbackAudience = process.env.WORKER_CALLBACK_AUDIENCE || process.env.HEAD_DEVELOPER_API_CALLBACK_ID_TOKEN_AUDIENCE || callbackUrl;
+const stamp = timestampId();
+const workerId = process.env.WORKER_ID || `worker-gcp-smoke-${stamp}`;
+const taskId = process.env.TASK_ID || `task-gcp-smoke-${stamp}`;
+const smokeProjectId = process.env.PROJECT_ID || `project-gcp-smoke-${stamp}`;
+const vmName = sanitizeLabel(process.env.VM_NAME || `hd-safe-smoke-${stamp}-${workerId.slice(-6)}`);
+const machineType = process.env.HEAD_DEVELOPER_GCP_WORKER_MACHINE_TYPE || "e2-standard-2";
+const workerImageFamily = process.env.HEAD_DEVELOPER_GCP_WORKER_IMAGE_FAMILY || "cos-stable";
+const workerImageProject = process.env.HEAD_DEVELOPER_GCP_WORKER_IMAGE_PROJECT || "cos-cloud";
+const supervisorModelProvider = process.env.SUPERVISOR_MODEL_PROVIDER || "vertex";
+const vertexProjectId = process.env.VERTEX_PROJECT_ID || "";
+const vertexLocation = process.env.VERTEX_LOCATION || "";
+const vertexModel = process.env.VERTEX_MODEL || "";
+const startupScriptPath = path.join(os.tmpdir(), `${vmName}-startup.sh`);
+const apiBase = process.env.SMOKE_API_BASE || callbackUrl;
+let vmCreated = false;
+
+fs.writeFileSync(startupScriptPath, renderStartupScript(), { mode: 0o700 });
+
+try {
+  log(`Creating disposable no-public-IP worker VM ${vmName}...`);
+  await runCommand("gcloud", createVmArgs(), { timeoutMs: Number(process.env.SMOKE_GCP_CREATE_TIMEOUT_MS || "180000") });
+  vmCreated = true;
+
+  const verification = await waitForCallbackCommands();
+  assertSmoke(verification.commands.length === 2, `Expected pwd and node --version command callbacks; got ${verification.commands.length}.`);
+
+  const output = {
+    smoke: smokeName,
+    vm_name: vmName,
+    gcp_project_id: gcpProjectId,
+    region,
+    zone,
+    worker_id: workerId,
+    task_id: taskId,
+    project_id: smokeProjectId,
+    command_ids: verification.commands.map((command) => command.event_id),
+    commands: verification.commands.map((command) => ({
+      command_id: command.event_id,
+      command: command.command,
+      exit_code: command.exit_code,
+      worker_id: command.worker_id,
+      task_id: command.task_id,
+      project_id: command.project_id,
+    })),
+    cleanup: "verified",
+  };
+  writeLatestResult(smokeName, output);
+  printJsonSummary("gcp-vm-safe-command-smoke passed", output);
+} finally {
+  fs.rmSync(startupScriptPath, { force: true });
+  if (vmCreated) {
+    log(`Deleting disposable VM ${vmName}...`);
+    await runCommand("gcloud", [
+      "compute",
+      "instances",
+      "delete",
+      vmName,
+      `--project=${gcpProjectId}`,
+      `--zone=${zone}`,
+      "--quiet",
+    ], { timeoutMs: Number(process.env.SMOKE_GCP_DELETE_TIMEOUT_MS || "180000") }).catch((error) => {
+      log(`Cleanup delete failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    });
+    const describe = await runCommand("gcloud", [
+      "compute",
+      "instances",
+      "describe",
+      vmName,
+      `--project=${gcpProjectId}`,
+      `--zone=${zone}`,
+    ], { timeoutMs: 60_000 }).then(() => true).catch(() => false);
+    assertSmoke(!describe, `VM cleanup did not complete; ${vmName} still exists.`);
+  }
+}
+
+function createVmArgs() {
+  const labels = [
+    "app=head-developer",
+    "env=smoke",
+    "smoke=gcp-vm-safe-command",
+    `worker_id=${sanitizeLabel(workerId)}`,
+  ].join(",");
+  const args = [
+    "compute",
+    "instances",
+    "create",
+    vmName,
+    `--project=${gcpProjectId}`,
+    `--zone=${zone}`,
+    `--machine-type=${machineType}`,
+    `--image-family=${workerImageFamily}`,
+    `--image-project=${workerImageProject}`,
+    "--no-address",
+    "--scopes=https://www.googleapis.com/auth/cloud-platform",
+    `--metadata-from-file=startup-script=${startupScriptPath}`,
+    `--labels=${labels}`,
+  ];
+  if (process.env.HEAD_DEVELOPER_GCP_NETWORK) args.push(`--network=${process.env.HEAD_DEVELOPER_GCP_NETWORK}`);
+  if (process.env.HEAD_DEVELOPER_GCP_SUBNETWORK) args.push(`--subnet=${process.env.HEAD_DEVELOPER_GCP_SUBNETWORK}`);
+  if (process.env.HEAD_DEVELOPER_WORKER_SERVICE_ACCOUNT_EMAIL) args.push(`--service-account=${process.env.HEAD_DEVELOPER_WORKER_SERVICE_ACCOUNT_EMAIL}`);
+  return args;
+}
+
+async function waitForCallbackCommands() {
+  const timeoutMs = Number(process.env.SMOKE_GCP_CALLBACK_TIMEOUT_MS || "900000");
+  const started = Date.now();
+  let lastWorkerStatus = "";
+  while (Date.now() - started < timeoutMs) {
+    try {
+      const workerPayload = await apiGet(apiBase, `/workers/${encodeURIComponent(workerId)}`);
+      const worker = workerPayload.worker;
+      if (worker?.status && worker.status !== lastWorkerStatus) {
+        log(`worker_id=${workerId} status=${worker.status}`);
+        lastWorkerStatus = worker.status;
+      }
+      const chart = await flowchart(apiBase);
+      const commands = (chart.nodes ?? [])
+        .filter((node) => node.type === "command" && node.detail?.command?.worker_id === workerId)
+        .map((node) => node.detail.command)
+        .filter((command) => ["pwd", "node --version"].includes(command.command) && command.exit_code === 0);
+      const unique = [...new Map(commands.map((command) => [command.command, command])).values()];
+      if (unique.length === 2) return { worker, commands: unique.sort((a, b) => a.command.localeCompare(b.command)) };
+    } catch {
+      // The callback may not have happened yet.
+    }
+    await sleep(5000);
+  }
+  throw new Error(`Timed out waiting for safe command callbacks from worker ${workerId}.`);
+}
+
+function renderStartupScript() {
+  return `#!/usr/bin/env bash
+set -euo pipefail
+export HOME=/tmp/cos-docker-home
+export DOCKER_CONFIG=/tmp/cos-docker-home/.docker
+mkdir -p "$HOME"
+mkdir -p "$DOCKER_CONFIG"
+log() { printf '[gcp-vm-safe-command-smoke] %s\\n' "$*"; }
+if ! command -v docker >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update
+    apt-get install -y docker.io
+    systemctl enable --now docker || true
+  else
+    echo "Docker is required on the worker VM image but was not found." >&2
+    exit 1
+  fi
+fi
+log "Authenticating Docker to Artifact Registry."
+TOKEN_JSON="$(curl -fsS -H 'Metadata-Flavor: Google' http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token)"
+ACCESS_TOKEN="$(printf '%s' "$TOKEN_JSON" | sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p')"
+printf '%s' "$ACCESS_TOKEN" | docker login -u oauth2accesstoken --password-stdin https://${region}-docker.pkg.dev >/dev/null
+log "Pulling worker image."
+docker pull ${workerImage}
+VM_NAME="$(curl -fsS -H 'Metadata-Flavor: Google' http://metadata.google.internal/computeMetadata/v1/instance/name || true)"
+MACHINE_TYPE_FULL="$(curl -fsS -H 'Metadata-Flavor: Google' http://metadata.google.internal/computeMetadata/v1/instance/machine-type || true)"
+MACHINE_TYPE="\${MACHINE_TYPE_FULL##*/}"
+STARTUP_ATTEMPT_ID="${workerId}-$(date -u +%Y%m%d%H%M%S)"
+run_worker_command() {
+  local smoke_command="$1"
+  local suffix="$2"
+  log "Running safe command: \${smoke_command}"
+  docker run --rm --name "head-developer-worker-smoke-\${suffix}" \\
+    -e HEAD_DEVELOPER_WORKER_ID=${workerId} \\
+    -e HEAD_DEVELOPER_WORKER_TYPE=gcp_vm \\
+    -e HEAD_DEVELOPER_TASK_ID=${taskId} \\
+    -e HEAD_DEVELOPER_PROJECT_ID=${smokeProjectId} \\
+    -e HEAD_DEVELOPER_RECORDED_WORKER_IMAGE_URI=${workerImage} \\
+    -e HEAD_DEVELOPER_WORKER_IMAGE_URI=${workerImage} \\
+    -e HEAD_DEVELOPER_ACTUAL_WORKER_IMAGE_URI=${workerImage} \\
+    -e HEAD_DEVELOPER_WORKER_RUNTIME_IMAGE_URI=${workerImage} \\
+    -e HEAD_DEVELOPER_ACTUAL_VM_NAME="\${VM_NAME}" \\
+    -e HEAD_DEVELOPER_WORKER_VM_NAME="\${VM_NAME}" \\
+    -e HEAD_DEVELOPER_WORKER_MACHINE_TYPE="\${MACHINE_TYPE}" \\
+    -e HEAD_DEVELOPER_WORKER_STARTUP_ATTEMPT_ID="\${STARTUP_ATTEMPT_ID}" \\
+    -e HEAD_DEVELOPER_WORKER_RUN_ATTEMPT_ID="\${STARTUP_ATTEMPT_ID}-\${suffix}" \\
+    -e WORKER_CALLBACK_URL=${callbackUrl} \\
+    -e WORKER_CALLBACK_AUTH=${callbackAuth} \\
+    -e WORKER_CALLBACK_AUDIENCE=${callbackAudience} \\
+    -e SUPERVISOR_MODEL_PROVIDER=${supervisorModelProvider} \\
+    -e VERTEX_PROJECT_ID=${vertexProjectId} \\
+    -e VERTEX_LOCATION=${vertexLocation} \\
+    -e VERTEX_MODEL=${vertexModel} \\
+    -e HEAD_DEVELOPER_WORKER_COMMAND="\${smoke_command}" \\
+    ${workerImage}
+}
+run_worker_command "pwd" "pwd"
+run_worker_command "node --version" "node-version"
+log "Safe command callbacks complete."
+`;
+}

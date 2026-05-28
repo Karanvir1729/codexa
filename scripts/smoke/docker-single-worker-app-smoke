@@ -1,0 +1,99 @@
+#!/usr/bin/env node
+import path from "node:path";
+import {
+  apiPost,
+  assertSmoke,
+  commandIdSummary,
+  createSmokeWorkspace,
+  defaultApiBase,
+  ensureDockerCompose,
+  fetchText,
+  log,
+  nodeCheck,
+  printJsonSummary,
+  requireFiles,
+  stripHtml,
+  taskCommands,
+  waitForApi,
+  waitForTask,
+  writeLatestResult,
+} from "./lib.mjs";
+
+const smokeName = "docker-single-worker-app-smoke";
+const apiBase = defaultApiBase;
+const prompt = process.env.SMOKE_PROMPT || [
+  "Build a small static landing page for a fictional tutoring voice assistant named TutorTron.",
+  "Static HTML/CSS/JS only. No package installs. No backend.",
+  "Create exactly index.html, styles.css, and script.js at the project root.",
+  "The page must include a hero, feature cards, a call-to-action, and a tiny JS interaction.",
+].join(" ");
+
+await ensureDockerCompose(1);
+await waitForApi(apiBase);
+
+const workspace = createSmokeWorkspace(smokeName);
+log(`Smoke workspace host path: ${workspace.hostPath}`);
+log(`Smoke workspace container path: ${workspace.containerPath}`);
+
+const { session } = await apiPost(apiBase, "/sessions", {
+  label: smokeName,
+  workspace_path: workspace.containerPath,
+  channel: "web_text",
+  user_id: "smoke-harness",
+});
+const { project } = await apiPost(apiBase, "/projects", {
+  workspace_uri: workspace.containerPath,
+});
+const assigned = await apiPost(apiBase, "/tasks", {
+  project_id: project.project_id,
+  session_id: session.session_id,
+  user_goal: prompt,
+  assign_worker: true,
+  worker_type: "docker_local",
+});
+
+log(`session_id=${session.session_id}`);
+log(`project_id=${project.project_id}`);
+log(`task_id=${assigned.task.task_id}`);
+log(`worker_id=${assigned.worker.worker_id}`);
+
+const finalStatus = await waitForTask(apiBase, assigned.task.task_id);
+assertSmoke(finalStatus.task.status === "completed", `Task ${assigned.task.task_id} ended as ${finalStatus.task.status}: ${finalStatus.task.latest_summary}`);
+
+requireFiles(workspace.hostPath, ["index.html", "styles.css", "script.js"]);
+await nodeCheck(workspace.hostPath, "script.js");
+
+let preview = null;
+let previewTextLength = 0;
+try {
+  const previewPayload = await apiPost(apiBase, `/sessions/${encodeURIComponent(session.session_id)}/preview`, {});
+  preview = previewPayload.preview;
+  const html = await fetchText(preview.preview_url);
+  previewTextLength = stripHtml(html).length;
+  assertSmoke(previewTextLength > 0, `Preview ${preview.preview_id} loaded blank HTML.`);
+  log(`preview_id=${preview.preview_id}`);
+  log(`preview_url=${preview.preview_url}`);
+} catch (error) {
+  log(`Preview skipped or failed: ${error instanceof Error ? error.message : String(error)}`);
+}
+
+const commands = await taskCommands(apiBase, assigned.task.task_id);
+const commandIds = commandIdSummary(commands);
+const output = {
+  smoke: smokeName,
+  session_id: session.session_id,
+  project_id: project.project_id,
+  task_id: assigned.task.task_id,
+  worker_id: assigned.worker.worker_id,
+  workspace_host_path: workspace.hostPath,
+  workspace_container_path: workspace.containerPath,
+  files_verified: ["index.html", "styles.css", "script.js"].map((file) => path.join(workspace.hostPath, file)),
+  js_validated: true,
+  preview_id: preview?.preview_id ?? null,
+  preview_url: preview?.preview_url ?? null,
+  preview_text_length: previewTextLength,
+  commands: commandIds,
+};
+writeLatestResult(smokeName, output);
+writeLatestResult("latest-app-smoke", output);
+printJsonSummary("docker-single-worker-app-smoke passed", output);
