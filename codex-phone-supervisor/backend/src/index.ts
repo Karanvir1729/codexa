@@ -426,7 +426,7 @@ app.get("/sessions/:session_id/megaplan", (req, res) => {
   const session = getSession(req.params.session_id);
   if (!session) return res.status(404).json(apiError("SESSION_NOT_FOUND", "Session not found."));
   const megaplan = getMegaplanForSession(req.params.session_id);
-  if (!megaplan) return res.status(404).json(apiError("MEGAPLAN_NOT_FOUND", "Megaplan has not been created for this session yet."));
+  if (!megaplan) return res.json({ megaplan: null });
   res.json({ megaplan });
 });
 

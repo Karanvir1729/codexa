@@ -70,6 +70,18 @@ function uniquePlainText(values: string[]) {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
+function browserConversationTranscript(session: SessionState) {
+  return (session.recent_messages ?? [])
+    .slice(-30)
+    .map((message) => {
+      const role = message.role === "assistant" ? "Codex" : message.role === "user" ? "User" : "System";
+      const channel = message.channel ? ` (${message.channel})` : "";
+      return `${role}${channel}: ${message.text.trim().slice(0, 2000)}`;
+    })
+    .filter((line) => !/:\s*$/.test(line))
+    .join("\n");
+}
+
 function isWithinDirectory(candidate: string, parent: string) {
   const relative = path.relative(parent, candidate);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
@@ -276,6 +288,7 @@ export function buildLocalCodexImplementationPrompt(input: {
   requirementSummary?: string | null;
   approvedPlan?: ApprovedPlanRecord | null;
   plannerDecision?: PlannerDecision | null;
+  conversationTranscript?: string | null;
 }) {
   const proposedResponsibilities = input.approvedPlan?.proposed_task_split.length
     ? input.approvedPlan.proposed_task_split.map((item) => `${item.title}: ${item.goal}`).join("\n")
@@ -309,6 +322,7 @@ export function buildLocalCodexImplementationPrompt(input: {
     "",
     `Project: ${input.project.display_name}`,
     `Repo path: ${input.project.workspace_path}`,
+    input.conversationTranscript ? `Browser conversation with Codex before this implementation run:\n${input.conversationTranscript}` : "",
     input.requirementSummary ? `Requirement summary: ${input.requirementSummary}` : "",
     `User request: ${input.userGoal}`,
     proposedResponsibilities ? `Suggested responsibility areas from planning. You may change the number of internal subagents:\n${proposedResponsibilities}` : "",
@@ -330,6 +344,7 @@ function headDeveloperDocs(input: {
   userGoal: string;
   requirementSummary?: string | null;
   approvedPlan?: ApprovedPlanRecord | null;
+  conversationTranscript?: string | null;
 }) {
   const split = input.approvedPlan?.proposed_task_split ?? [];
   return {
@@ -353,6 +368,14 @@ function headDeveloperDocs(input: {
       split.length ? split.map((item, index) => `${index + 1}. ${item.title}: ${item.goal}`).join("\n") : "Codex will decide the internal responsibility split.",
     ].join("\n"),
     "ARCHITECTURE.md": "V1 uses a single local repository and one local Codex CLI orchestrator session. Legacy distributed worker infrastructure is not part of the main build path.\n",
+    "CONVERSATION.md": [
+      "# Browser Conversation",
+      "",
+      "This is the browser-to-Codex conversation context included in the implementation CLI prompt.",
+      "",
+      input.conversationTranscript || "No prior browser conversation transcript was recorded for this implementation run.",
+      "",
+    ].join("\n"),
     "WORKER_HANDOFFS.md": "No external worker handoffs for v1. Logical subagent breakdown is recorded in `.head-developer/state.json` after Codex reports it.\n",
     "FLOWCHART.md": "The browser flowchart is rendered from `.head-developer/flowchart.json`, generated from Codex progress summaries by a short-lived parallel Codex flowchart session.\n",
     "DECISIONS.md": "Decision: build locally with codex_session_local for v1; distributed worker paths remain experimental/legacy.\n",
@@ -411,6 +434,7 @@ function initializeHeadDeveloperDocs(input: {
   userGoal: string;
   requirementSummary?: string | null;
   approvedPlan?: ApprovedPlanRecord | null;
+  conversationTranscript?: string | null;
 }) {
   const docsDir = path.join(input.project.workspace_path, ".head-developer");
   fs.mkdirSync(docsDir, { recursive: true });
@@ -425,6 +449,7 @@ function initializeHeadDeveloperDocs(input: {
     status: "running",
     user_request: input.userGoal,
     requirement_summary: input.requirementSummary ?? null,
+    conversation_transcript: input.conversationTranscript ?? null,
     approved_plan: input.approvedPlan ?? null,
     started_at: input.task.created_at,
     message: "Built by one local Codex orchestrator session.",
@@ -1713,12 +1738,14 @@ export function startLocalCodexSession(input: {
   plannerDecision?: PlannerDecision | null;
   approvedPlan?: ApprovedPlanRecord | null;
 }) {
+  const conversationTranscript = browserConversationTranscript(input.session);
   const prompt = buildLocalCodexImplementationPrompt({
     userGoal: input.userGoal,
     project: input.project,
     requirementSummary: input.approvedPlan?.requirements_summary ?? input.plannerDecision?.requirements_summary ?? input.session.requirement_summary,
     approvedPlan: input.approvedPlan,
     plannerDecision: input.plannerDecision,
+    conversationTranscript,
   });
   const task = createTask(input.project, input.userGoal, prompt);
   const beforeFiles = listProjectFiles(input.project.workspace_path);
@@ -1728,6 +1755,7 @@ export function startLocalCodexSession(input: {
     userGoal: input.userGoal,
     requirementSummary: input.approvedPlan?.requirements_summary ?? input.plannerDecision?.requirements_summary ?? input.session.requirement_summary,
     approvedPlan: input.approvedPlan,
+    conversationTranscript,
   });
   upsertTask(task);
 

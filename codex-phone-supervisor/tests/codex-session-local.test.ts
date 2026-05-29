@@ -61,12 +61,17 @@ test("codex_session_local prompt names Codex as the direct CLI orchestrator", ()
     const { buildLocalCodexImplementationPrompt } = await import("./codex-phone-supervisor/backend/src/codex-session-local.ts");
     const { getOrchestratorSettings, stateStoreKind } = await import("./codex-phone-supervisor/backend/src/store.ts");
     const project = projectRecordForWorkspace(${JSON.stringify(projectDir)});
-    const prompt = buildLocalCodexImplementationPrompt({ userGoal: "Build a landing page for a chai shop.", project });
+    const prompt = buildLocalCodexImplementationPrompt({
+      userGoal: "Build a landing page for a chai shop.",
+      project,
+      conversationTranscript: "User: Build a landing page for a chai shop.\\nCodex: Approve the Megaplan?"
+    });
     console.log(JSON.stringify({
       defaultMode: getOrchestratorSettings().default_worker_mode,
       storeKind: stateStoreKind(),
       hasCodexOrchestrator: /You are Codex, the local orchestrator/.test(prompt),
       hasDirectCli: /talking to you directly through this CLI-backed session/.test(prompt),
+      includesBrowserTranscript: /Browser conversation with Codex before this implementation run/.test(prompt) && /Approve the Megaplan/.test(prompt),
       letsCodexChoose: /You choose how many logical subagents/.test(prompt),
       allowsPlugins: /tools, skills, plugins, and MCP servers available in this same local account/.test(prompt),
       hasFullAccess: /You have full local CLI access/.test(prompt),
@@ -82,6 +87,7 @@ test("codex_session_local prompt names Codex as the direct CLI orchestrator", ()
   assert.equal(payload.storeKind, "file");
   assert.equal(payload.hasCodexOrchestrator, true);
   assert.equal(payload.hasDirectCli, true);
+  assert.equal(payload.includesBrowserTranscript, true);
   assert.equal(payload.letsCodexChoose, true);
   assert.equal(payload.allowsPlugins, true);
   assert.equal(payload.hasFullAccess, true);
@@ -112,6 +118,8 @@ test("codex_session_local invokes Codex with same-account full access settings",
   assert.match(source, /Bugs Found/);
   assert.match(source, /Feature Ideas/);
   assert.match(source, /Needs User Decision/);
+  assert.match(source, /CONVERSATION\.md/);
+  assert.match(source, /Browser conversation with Codex before this implementation run/);
 });
 
 test("codex_session_local pipes real Codex CLI stdout and stderr into session events", () => {

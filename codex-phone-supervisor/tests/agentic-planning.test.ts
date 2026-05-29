@@ -518,6 +518,172 @@ process.stdin.on("end", () => {
   assert.equal(payload.megaplanExists, false);
 });
 
+test("pre-approval repo path correction updates the real project workspace", () => {
+  const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), "planner-path-correction-store-"));
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "planner-path-correction-root-"));
+  const desiredRepo = path.join(workspaceRoot, "custom-location", "x");
+  const fakeCodexPath = path.join(storeDir, "fake-codex-path-correction.cjs");
+  fs.writeFileSync(fakeCodexPath, `#!/usr/bin/env node
+const fs = require("node:fs");
+const desiredRepo = ${JSON.stringify(desiredRepo)};
+let input = "";
+process.stdin.on("data", (chunk) => input += chunk.toString());
+process.stdin.on("end", () => {
+  const allInput = process.argv.join(" ") + "\\n" + input;
+  function arg(name) {
+    const index = process.argv.indexOf(name);
+    return index === -1 ? "" : process.argv[index + 1] || "";
+  }
+  const finalPath = arg("--output-last-message");
+  let value;
+  if (/project-intake/i.test(allInput)) {
+    if (allInput.includes(desiredRepo)) {
+      value = {
+        action: "create_project",
+        assistant_message: "Creating X at the requested local repo path.",
+        project_name: "x",
+        workspace_path: desiredRepo,
+        description: "Create a Bash CLI number guessing game in " + desiredRepo + ".",
+        requested_kind: "game",
+        pending_action_type: null,
+        confidence: "high",
+        reason: "The user corrected the target repo path before approval."
+      };
+    } else if (/keep it as x for now/i.test(allInput)) {
+      value = {
+        action: "create_project",
+        assistant_message: "Creating X locally with Codex.",
+        project_name: "x",
+        workspace_path: null,
+        description: "can you make a cli game",
+        requested_kind: "game",
+        pending_action_type: null,
+        confidence: "high",
+        reason: "The user provided the project name."
+      };
+    } else {
+      value = {
+        action: "ask_user",
+        assistant_message: "What should I name the CLI game project?",
+        project_name: null,
+        workspace_path: null,
+        description: "can you make a cli game",
+        requested_kind: "game",
+        pending_action_type: "collect_project_name",
+        confidence: "high",
+        reason: "The request needs a project name."
+      };
+    }
+  } else {
+    const bashGameKnown = /number guessing game|Bash CLI/i.test(allInput);
+    value = bashGameKnown ? {
+      decision_type: "request_user_approval",
+      confidence: 0.9,
+      reason: "The Bash game shape is now clear and the Megaplan needs approval.",
+      user_visible_response: "Approve the local Bash number guessing game Megaplan?",
+      requirements_summary: "Create a Bash CLI number guessing game.",
+      open_questions: [],
+      assumptions: ["No persistence or external services."],
+      proposed_design: "One local Codex CLI session owns the repo and implements a Bash prompt-based number guessing game with docs and validation.",
+      proposed_task_split: [
+        {
+          title: "Build Bash Game",
+          goal: "Create the number guessing game script with validation, hints, attempts, and clean quit behavior.",
+          can_run_parallel: false,
+          depends_on: [],
+          expected_files: ["guess.sh"],
+          validation: ["bash -n guess.sh"]
+        },
+        {
+          title: "Document Usage",
+          goal: "Write concise usage documentation for running the game.",
+          can_run_parallel: true,
+          depends_on: [],
+          expected_files: ["README.md"],
+          validation: ["test -f README.md"]
+        }
+      ],
+      recommended_worker_count: 1,
+      recommended_worker_mode: "codex_session_local",
+      requires_user_approval: true,
+      approval_reason: "The Megaplan must be approved before the local Codex CLI implementation session starts.",
+      risk_level: "low",
+      next_action: "none",
+      execution_allowed: false
+    } : {
+      decision_type: "ask_clarification",
+      confidence: 0.9,
+      reason: "The CLI game needs a game type and runtime.",
+      user_visible_response: "What kind of CLI game should this be, and what language/runtime should Codex use?",
+      requirements_summary: "Create a CLI game.",
+      open_questions: ["What kind of CLI game should this be?", "What language/runtime should Codex use?"],
+      assumptions: [],
+      proposed_design: "",
+      proposed_task_split: [],
+      recommended_worker_count: 1,
+      recommended_worker_mode: "codex_session_local",
+      requires_user_approval: false,
+      approval_reason: "",
+      risk_level: "low",
+      next_action: "none",
+      execution_allowed: false
+    };
+  }
+  if (finalPath) fs.writeFileSync(finalPath, JSON.stringify(value));
+  console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: JSON.stringify(value) } }));
+});
+`);
+  fs.chmodSync(fakeCodexPath, 0o755);
+  const script = `
+    ${bootstrapEnv(storeDir, workspaceRoot)}
+    delete process.env.CODEX_PHONE_SUPERVISOR_TEST_SUPERVISOR_MODEL;
+    process.env.CODEX_PHONE_SUPERVISOR_CODEX_COMMAND = ${JSON.stringify(fakeCodexPath)};
+    process.env.WORKER_MODE = "codex_session_local";
+    process.env.DEFAULT_WORKER_MODE = "codex_session_local";
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const { createSession } = await import("./codex-phone-supervisor/backend/src/session.ts");
+    const { handleSupervisorMessage } = await import("./codex-phone-supervisor/backend/src/supervisor-tools.ts");
+    const { getSession, upsertSession } = await import("./codex-phone-supervisor/backend/src/store.ts");
+    const { getProject } = await import("./codex-phone-supervisor/backend/src/project-store.ts");
+    const { getMegaplanForSession } = await import("./codex-phone-supervisor/backend/src/megaplan.ts");
+    const session = createSession("path correction", ${JSON.stringify(workspaceRoot)});
+    session.session_id = "session_path_correction";
+    session.channel = "web_text";
+    session.workspace_path = ${JSON.stringify(workspaceRoot)};
+    session.preferred_worker_mode = "codex_session_local";
+    upsertSession(session);
+    await handleSupervisorMessage(session.session_id, "can you make a cli game", "web_text");
+    await handleSupervisorMessage(session.session_id, "keep it as x for now", "web_text");
+    await handleSupervisorMessage(session.session_id, "Um make it a number guessing game. a bash game", "web_text");
+    const correction = await handleSupervisorMessage(session.session_id, "No, make it in ${desiredRepo}. x is the new repo that you will make.", "web_text");
+    const latest = getSession(session.session_id);
+    const project = latest?.pending_action?.target_project_id ? getProject(latest.pending_action.target_project_id) : null;
+    const megaplan = getMegaplanForSession(session.session_id);
+    console.log(JSON.stringify({
+      correction: correction.response,
+      workspace: latest?.workspace_path ?? null,
+      pending: latest?.pending_action?.type ?? null,
+      pendingProjectPath: project?.workspace_path ?? null,
+      megaplanPath: megaplan?.path ?? null,
+      desiredExists: fs.existsSync(${JSON.stringify(desiredRepo)}),
+      desiredGitExists: fs.existsSync(path.join(${JSON.stringify(desiredRepo)}, ".git")),
+      oldGeneratedWorkspace: path.join(${JSON.stringify(workspaceRoot)}, "x")
+    }));
+  `;
+  const result = runIsolated(script);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}") as Record<string, unknown>;
+  assert.match(String(payload.correction), /MEGAPLAN\.md|Megaplan/i);
+  assert.equal(payload.workspace, fs.realpathSync(desiredRepo));
+  assert.equal(payload.pending, "approve_megaplan");
+  assert.equal(payload.pendingProjectPath, fs.realpathSync(desiredRepo));
+  assert.match(String(payload.megaplanPath), new RegExp(`${desiredRepo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  assert.equal(payload.desiredExists, true);
+  assert.equal(payload.desiredGitExists, true);
+  assert.notEqual(payload.workspace, payload.oldGeneratedWorkspace);
+});
+
 test("agentic planner converts human validation text into acceptance checks, not required commands", () => {
   const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), "planner-validation-store-"));
   const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "planner-validation-root-"));

@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { config } from "./config.js";
 import { getCodexAccessSummary, gitDiffSummary } from "./access.js";
 import { classifyApproval } from "./approval-firewall.js";
@@ -40,6 +42,7 @@ import {
   refreshProjectsFromConfiguredRoots,
   upsertProject,
 } from "./project-store.js";
+import { slugifyProjectName } from "./project-naming.js";
 import { cloudOrchestrator } from "./cloud-orchestrator.js";
 import { multiWorkerCoordinator } from "./multi-worker-coordinator.js";
 import { LOCAL_CODEX_BACKEND, startLocalCodexSession } from "./codex-session-local.js";
@@ -185,6 +188,65 @@ export function send_codex_instruction(sessionId: string, instruction: string) {
 
 function displayNameFromSlug(slug: string) {
   return slug.split("-").filter(Boolean).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+}
+
+function isWithinDirectory(candidate: string, parent: string) {
+  const relative = path.relative(parent, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function nearestExistingAncestor(candidate: string) {
+  let current = path.resolve(candidate);
+  while (!fs.existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) throw new Error(`No existing parent directory found for requested workspace: ${candidate}`);
+    current = parent;
+  }
+  if (!fs.statSync(current).isDirectory()) {
+    throw new Error(`Requested workspace parent is not a directory: ${current}`);
+  }
+  return current;
+}
+
+function resolveRequestedProjectWorkspacePath(rawWorkspacePath: string) {
+  const raw = rawWorkspacePath.trim();
+  if (!raw) throw new Error("Requested workspace path is empty.");
+  const requested = path.resolve(path.isAbsolute(raw) ? raw : path.join(config.defaultWorkspacePath, raw));
+  const ancestor = nearestExistingAncestor(requested);
+  const realAncestor = fs.realpathSync(ancestor);
+  const resolved = path.resolve(realAncestor, path.relative(ancestor, requested));
+  const allowedRoots = [...new Set([config.defaultWorkspacePath, ...config.projectRoots].map((root) => fs.realpathSync(root)))];
+  const allowed = allowedRoots.some((root) => isWithinDirectory(resolved, root));
+  if (!allowed) {
+    throw new Error(`Requested workspace path must stay inside an allowed project root: ${allowedRoots.join(", ")}`);
+  }
+  return resolved;
+}
+
+function ensureWorkspaceDirectory(workspacePath: string) {
+  if (fs.existsSync(workspacePath)) {
+    if (!fs.statSync(workspacePath).isDirectory()) {
+      throw new Error(`Requested workspace exists and is not a directory: ${workspacePath}`);
+    }
+  } else {
+    fs.mkdirSync(workspacePath, { recursive: true });
+  }
+  return fs.realpathSync(workspacePath);
+}
+
+function gitRepoRoot(workspacePath: string) {
+  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: workspacePath, encoding: "utf8" });
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
+function ensureGitRepository(workspacePath: string) {
+  const existingRoot = gitRepoRoot(workspacePath);
+  if (existingRoot) return { initialized: false, repoRoot: existingRoot };
+  const result = spawnSync("git", ["init"], { cwd: workspacePath, encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(`Could not initialize git repository at ${workspacePath}: ${(result.stderr || result.stdout || "").trim()}`);
+  }
+  return { initialized: true, repoRoot: gitRepoRoot(workspacePath) ?? workspacePath };
 }
 
 function describeNewProjectResult(result: Awaited<ReturnType<typeof create_project>>) {
@@ -690,7 +752,12 @@ async function startWorkerBackedProject(input: {
   };
 }
 
-export async function create_project(sessionId: string, projectName: string, description: string) {
+export async function create_project(
+  sessionId: string,
+  projectName: string,
+  description: string,
+  options: { workspacePath?: string | null } = {},
+) {
   const session = getSession(sessionId);
   if (!session) return { error: "Session not found.", code: "SESSION_NOT_FOUND" };
   const cleanedName = projectName.trim();
@@ -698,12 +765,29 @@ export async function create_project(sessionId: string, projectName: string, des
   if (!cleanedName) return { error: "Missing project name." };
   if (!cleanedDescription) return { error: "Missing project description." };
 
-  const { slug, target } = newProjectPathForName(cleanedName);
+  let requestedWorkspacePath: string | null = null;
+  try {
+    requestedWorkspacePath = options.workspacePath ? resolveRequestedProjectWorkspacePath(options.workspacePath) : null;
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error), code: "INVALID_WORKSPACE_PATH" };
+  }
+  const generatedTarget = requestedWorkspacePath ? null : newProjectPathForName(cleanedName);
+  const slug = requestedWorkspacePath ? slugifyProjectName(path.basename(requestedWorkspacePath) || cleanedName) : generatedTarget!.slug;
+  const target = requestedWorkspacePath ?? generatedTarget!.target;
   const displayName = displayNameFromSlug(slug);
   const now = new Date().toISOString();
   const selectedWorkerType = session.preferred_worker_mode ?? getOrchestratorSettings().default_worker_mode;
+  const requestedWorkspace = Boolean(requestedWorkspacePath);
 
   if (fs.existsSync(target) && fs.readdirSync(target).length > 0) {
+    let gitInitialized = false;
+    if (requestedWorkspacePath) {
+      try {
+        gitInitialized = ensureGitRepository(target).initialized;
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : String(error), code: "WORKSPACE_CREATE_FAILED" };
+      }
+    }
     const existingProject = findProjectByWorkspace(target) ?? projectRecordForWorkspace(target);
     existingProject.display_name = existingProject.display_name || displayName;
     existingProject.last_active_session_id = session.session_id;
@@ -718,7 +802,9 @@ export async function create_project(sessionId: string, projectName: string, des
     session.project_discovery.selected_workspace_path = existingProject.workspace_path;
     session.project_discovery.selected_project_name = existingProject.display_name;
     session.project_discovery.confidence = "high";
-    session.project_discovery.reason = "Selected existing project workspace for a repeated project request.";
+    session.project_discovery.reason = requestedWorkspace
+      ? "Selected the explicit workspace path requested by the user."
+      : "Selected existing project workspace for a repeated project request.";
     session.project_discovery.last_question = "";
     session.active_task = cleanedDescription;
     session.latest_codex_message = `Selected existing ${existingProject.display_name} at ${existingProject.workspace_path}.`;
@@ -728,7 +814,14 @@ export async function create_project(sessionId: string, projectName: string, des
       source: "system",
       type: "project.selected",
       message: `Selected ${existingProject.display_name} at ${existingProject.workspace_path}`,
-      data: { display_name: existingProject.display_name, slug, target_path: existingProject.workspace_path, worker_type: selectedWorkerType },
+      data: {
+        display_name: existingProject.display_name,
+        slug,
+        target_path: existingProject.workspace_path,
+        requested_workspace_path: requestedWorkspacePath,
+        git_initialized: gitInitialized,
+        worker_type: selectedWorkerType,
+      },
     });
     upsertSession(session);
 
@@ -767,6 +860,93 @@ export async function create_project(sessionId: string, projectName: string, des
       task_id: task.task_id,
       worker_type: selectedWorkerType,
       selected_existing_project: true,
+    };
+  }
+
+  if (requestedWorkspacePath) {
+    let workspacePath: string;
+    let gitInitialized = false;
+    try {
+      workspacePath = ensureWorkspaceDirectory(target);
+      gitInitialized = ensureGitRepository(workspacePath).initialized;
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error), code: "WORKSPACE_CREATE_FAILED" };
+    }
+    const project = projectRecordForWorkspace(workspacePath);
+    project.display_name = displayName;
+    project.last_active_session_id = session.session_id;
+    upsertProject(project);
+
+    session.workspace_path = project.workspace_path;
+    session.project_id = project.project_id;
+    session.current_project_id = project.project_id;
+    session.pending_action = null;
+    session.pending_action_payload = null;
+    session.project_discovery.status = "selected";
+    session.project_discovery.selected_workspace_path = project.workspace_path;
+    session.project_discovery.selected_project_name = displayName;
+    session.project_discovery.confidence = "high";
+    session.project_discovery.reason = "Creating or selecting the explicit workspace path requested by the user.";
+    session.project_discovery.last_question = "";
+    session.active_task = cleanedDescription;
+    session.latest_codex_message = `Starting ${selectedWorkerType} worker to create ${displayName} at ${project.workspace_path}.`;
+    session.last_updated = now;
+    pushSessionEvent(session, {
+      ts: now,
+      source: "system",
+      type: "project.create.requested",
+      message: `Create ${displayName} at ${project.workspace_path}`,
+      data: {
+        display_name: displayName,
+        slug,
+        target_path: project.workspace_path,
+        requested_workspace_path: requestedWorkspacePath,
+        git_initialized: gitInitialized,
+        worker_type: selectedWorkerType,
+      },
+    });
+    upsertSession(session);
+
+    appendOrchestratorEvent({
+      scope: "project",
+      scope_id: project.project_id,
+      type: "project.created",
+      message: `Created project workspace ${project.display_name}.`,
+      data: { project, session_id: session.session_id, requested_workspace_path: requestedWorkspacePath, git_initialized: gitInitialized },
+    });
+    appendOrchestratorEvent({
+      scope: "project",
+      scope_id: project.project_id,
+      type: "project.selected",
+      message: `Selected project ${project.display_name}.`,
+      data: { project, session_id: session.session_id, requested_workspace_path: requestedWorkspacePath },
+    });
+
+    if (selectedWorkerType !== "local") {
+      return await startWorkerBackedProject({
+        session,
+        project,
+        displayName,
+        targetPath: project.workspace_path,
+        description: cleanedDescription,
+        workerType: selectedWorkerType,
+      });
+    }
+
+    const task = cloudOrchestrator.createTask(project.project_id, cleanedDescription);
+    session.active_task_id = task.task_id;
+    session.latest_plan = task.plan;
+    session.latest_summary = task.latest_summary;
+    session.last_updated = new Date().toISOString();
+    upsertSession(session);
+    return {
+      session_id: sessionId,
+      status: "running" as const,
+      project_name: displayName,
+      target_path: project.workspace_path,
+      project_id: project.project_id,
+      task_id: task.task_id,
+      worker_type: selectedWorkerType,
     };
   }
 
@@ -1039,7 +1219,10 @@ async function executeSupervisorTool(session: SessionState, decision: Developmen
         eventType: "supervisor.development.question",
       };
     }
-    const result = await create_project(session.session_id, projectName, description);
+    const workspacePath = typeof decision.tool_arguments?.workspace_path === "string"
+      ? decision.tool_arguments.workspace_path
+      : null;
+    const result = await create_project(session.session_id, projectName, description, { workspacePath });
     return { response: describeNewProjectResult(result), result, eventType: "supervisor.development.sent_to_codex" };
   }
 
@@ -1508,12 +1691,18 @@ function clearPendingAction(session: SessionState) {
   session.pending_action_payload = null;
 }
 
-async function createProjectFromResolvedName(session: SessionState, cleaned: string, projectName: string, description: string) {
+async function createProjectFromResolvedName(
+  session: SessionState,
+  cleaned: string,
+  projectName: string,
+  description: string,
+  workspacePath?: string | null,
+) {
   appendProjectDiscoveryTurn(session, "user", cleaned, "project_discovery.user");
   clearPendingAction(session);
   upsertSession(session);
 
-  const result = await create_project(session.session_id, projectName, description);
+  const result = await create_project(session.session_id, projectName, description, { workspacePath });
   const response = describeNewProjectResult(result);
   const latest = getSession(session.session_id);
   if (latest) {
@@ -1603,6 +1792,7 @@ async function handleNewProjectIntent(session: SessionState, cleaned: string) {
     cleaned,
     decision.project_name ?? cleaned,
     decision.description || cleaned,
+    decision.workspace_path,
   );
 }
 
@@ -1626,7 +1816,9 @@ function requestedWorkerCount(text: string) {
 }
 
 function isTaskSplitApproval(text: string) {
-  return /^(yes|approve|approved|go ahead|do it|confirm)\b/i.test(text.trim());
+  const input = text.trim();
+  if (/^(yes|approve|approved|go ahead|do it|confirm|proceed|start)\b/i.test(input)) return true;
+  return /\b(go ahead|proceed|start)\b/i.test(input) && /\b(fine|ok|okay|yes|please|approved?)\b/i.test(input);
 }
 
 function workerModeLabel(mode: WorkerType) {
