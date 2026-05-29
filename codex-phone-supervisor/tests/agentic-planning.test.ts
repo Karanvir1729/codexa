@@ -221,6 +221,9 @@ process.stdin.on("end", () => {
     const second = await handleSupervisorMessage(session.session_id, "Make it full-stack with cart, checkout, inventory, auth, persistent data, and mocked payments.", "web_text");
     const afterSecond = getSession(session.session_id);
     const secondMegaplan = getMegaplanForSession(session.session_id);
+    const third = await handleSupervisorMessage(session.session_id, "No research needed before the Megaplan.", "web_text");
+    const afterThird = getSession(session.session_id);
+    const thirdMegaplan = getMegaplanForSession(session.session_id);
     const prompt = fs.readFileSync(${JSON.stringify(promptCapturePath)}, "utf8");
     const eventTypes = listOrchestratorEvents().map((event) => event.type);
     console.log(JSON.stringify({
@@ -230,6 +233,9 @@ process.stdin.on("end", () => {
       second: second.response,
       secondPending: afterSecond?.pending_action?.type ?? null,
       secondMegaplanText: secondMegaplan?.content ?? "",
+      third: third.response,
+      thirdPending: afterThird?.pending_action?.type ?? null,
+      thirdMegaplanText: thirdMegaplan?.content ?? "",
       prompt,
       eventTypes
     }));
@@ -241,14 +247,18 @@ process.stdin.on("end", () => {
   assert.match(String(payload.first), /cart|checkout|inventory|auth|payments|persistent data/i);
   assert.equal(payload.firstPending, "clarify_requirements");
   assert.equal(payload.firstMegaplanExists, false);
-  assert.match(String(payload.second), /Megaplan skill created MEGAPLAN\.md/);
-  assert.equal(payload.secondPending, "approve_megaplan");
-  assert.match(String(payload.secondMegaplanText), /## Technical Requirements/);
-  assert.match(String(payload.secondMegaplanText), /full-stack local commerce app/i);
-  assert.match(String(payload.secondMegaplanText), /cart|checkout|inventory|auth|persistent data|mocked payments/i);
-  assert.match(String(payload.secondMegaplanText), /npm run typecheck|npm test|npm run build/);
+  assert.match(String(payload.second), /should Codex conduct product, domain, UX, or technical research first/i);
+  assert.equal(payload.secondPending, "clarify_requirements");
+  assert.equal(String(payload.secondMegaplanText), "");
+  assert.match(String(payload.third), /Megaplan skill created MEGAPLAN\.md/);
+  assert.equal(payload.thirdPending, "approve_megaplan");
+  assert.match(String(payload.thirdMegaplanText), /## Technical Requirements/);
+  assert.match(String(payload.thirdMegaplanText), /full-stack local commerce app/i);
+  assert.match(String(payload.thirdMegaplanText), /cart|checkout|inventory|auth|persistent data|mocked payments/i);
+  assert.match(String(payload.thirdMegaplanText), /npm run typecheck|npm test|npm run build/);
   assert.match(String(payload.prompt), /For commerce or selling apps/i);
   assert.match(String(payload.prompt), /Do not create or approve a Megaplan until required technical direction is known/i);
+  assert.match(String(payload.prompt), /Conversation pressure:/i);
   assert.ok((payload.eventTypes as string[]).includes("planner.codex_cli.started"));
   assert.ok((payload.eventTypes as string[]).includes("planner.codex_cli.completed"));
 });
@@ -417,6 +427,88 @@ process.stdin.on("end", () => {
   assert.match(String(payload.prompt), /ask whether Codex should conduct product, domain, UX, or technical research before implementation/i);
   assert.match(String(payload.prompt), /keep asking concise follow-up technical questions/i);
   assert.match(String(payload.prompt), /Stop asking and choose reasonable defaults only when the user clearly is not entertaining more questions/i);
+});
+
+test("agentic planner reduces clarification loops when user shows discomfort", () => {
+  const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), "planner-discomfort-store-"));
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "planner-discomfort-root-"));
+  const projectDir = path.join(workspaceRoot, "candy-pressure");
+  fs.mkdirSync(projectDir, { recursive: true });
+  const script = `
+    ${bootstrapEnv(storeDir, workspaceRoot)}
+    const { AgenticPlanningController } = await import("./codex-phone-supervisor/backend/src/agentic-planning.ts");
+    const { createSession } = await import("./codex-phone-supervisor/backend/src/session.ts");
+    const { upsertSession } = await import("./codex-phone-supervisor/backend/src/store.ts");
+    const { projectRecordForWorkspace, upsertProject } = await import("./codex-phone-supervisor/backend/src/project-store.ts");
+    const project = projectRecordForWorkspace(${JSON.stringify(projectDir)});
+    upsertProject(project);
+    const session = createSession("discomfort", ${JSON.stringify(workspaceRoot)});
+    session.session_id = "session_discomfort";
+    session.project_id = project.project_id;
+    session.current_project_id = project.project_id;
+    session.project_discovery.status = "selected";
+    session.preferred_worker_mode = "codex_session_local";
+    session.pending_action = {
+      type: "clarify_requirements",
+      original_user_goal: "Build an app to sell candies.",
+      requested_kind: "app",
+      target_project_id: project.project_id,
+      created_at: new Date().toISOString()
+    };
+    session.recent_messages = [
+      { ts: new Date().toISOString(), role: "user", channel: "web_text", text: "Build an app to sell candies." },
+      { ts: new Date().toISOString(), role: "assistant", channel: "web_text", text: "Which stack, persistence, roles, checkout, and research do you want?" }
+    ];
+    upsertSession(session);
+    const model = {
+      modelName: "keeps_asking_model",
+      async generatePlanningDecision() {
+        return {
+          decision_type: "ask_clarification",
+          confidence: 0.9,
+          reason: "The request still has missing low-level details.",
+          user_visible_response: "Which exact database, auth provider, checkout API, and admin role matrix should Codex use?",
+          requirements_summary: "Build a candy selling app with pragmatic defaults.",
+          open_questions: ["Which exact database, auth provider, checkout API, and admin role matrix should Codex use?"],
+          assumptions: [],
+          proposed_design: "",
+          proposed_task_split: [],
+          recommended_worker_count: 1,
+          recommended_worker_mode: "codex_session_local",
+          requires_user_approval: false,
+          approval_reason: "",
+          risk_level: "low",
+          next_action: "none",
+          execution_allowed: false
+        };
+      }
+    };
+    const controller = new AgenticPlanningController(model);
+    const planned = await controller.decide({
+      session,
+      userMessage: "This is too much back and forth. Just pick defaults and make it accurate.",
+      project,
+      workerMode: "codex_session_local"
+    });
+    console.log(JSON.stringify({
+      type: planned.decision.decision_type,
+      approval: planned.decision.requires_user_approval,
+      openQuestions: planned.decision.open_questions,
+      response: planned.decision.user_visible_response,
+      design: planned.decision.proposed_design,
+      assumptions: planned.decision.assumptions,
+      pressure: planned.session.planner_output?.reason ?? ""
+    }));
+  `;
+  const result = runIsolated(script);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}") as Record<string, unknown>;
+  assert.equal(payload.type, "request_user_approval");
+  assert.equal(payload.approval, true);
+  assert.deepEqual(payload.openQuestions, []);
+  assert.match(String(payload.response), /stop expanding questions|pragmatic local defaults/i);
+  assert.match(String(payload.design), /stop expanding clarification questions/i);
+  assert.match(String((payload.assumptions as string[]).join(" ")), /sensible local defaults|without product\/domain research/i);
 });
 
 test("new project naming flow preserves Codex technical clarification response", () => {

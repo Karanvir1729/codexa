@@ -14,8 +14,11 @@ test("dashboard flowchart nodes are clickable and open the details panel", () =>
   assert.match(source, /Model:/);
   assert.match(source, /Fast planning:/);
   assert.match(source, /Access:/);
+  assert.match(source, /Skills:/);
+  assert.match(source, /skill_inventory/);
+  assert.match(source, /critical_missing/);
   assert.match(source, /Plugins:/);
-  assert.match(source, /same Codex account/);
+  assert.match(source, /account_config_plugins/);
   assert.match(source, /Browser chat resume:/);
   assert.match(source, /data-testid="codex-browser-chat-resume"/);
   assert.match(source, /Normal terminal chat resume:/);

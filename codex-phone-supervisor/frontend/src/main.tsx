@@ -86,6 +86,12 @@ type RuntimeSettings = {
   shell_environment: string;
   account_config_plugins: string;
   conversation_resume_mirror: string;
+  skill_inventory?: {
+    status: string;
+    total_discovered: number;
+    critical_present: string[];
+    critical_missing: string[];
+  };
 };
 
 type FlowchartVisualState = "idle" | "planning" | "waiting_for_approval" | "completed" | "failed" | "running" | "warning";
@@ -1046,7 +1052,11 @@ function App() {
           <div><strong>Model:</strong> {runtimeSettings?.model ?? "loading"}</div>
           <div><strong>Fast planning:</strong> {runtimeSettings ? `${runtimeSettings.planning_model} / ${runtimeSettings.planning_reasoning_effort}` : "loading"}</div>
           <div><strong>Access:</strong> {runtimeSettings?.access ?? "loading"}</div>
-          <div><strong>Plugins:</strong> same Codex account</div>
+          <div><strong>Skills:</strong> {runtimeSettings?.skill_inventory ? `${runtimeSettings.skill_inventory.status} (${runtimeSettings.skill_inventory.total_discovered})` : "checking"}</div>
+          {runtimeSettings?.skill_inventory?.critical_missing?.length ? (
+            <div style={{ color: "#b91c1c" }}><strong>Missing:</strong> {runtimeSettings.skill_inventory.critical_missing.join(", ")}</div>
+          ) : null}
+          <div><strong>Plugins:</strong> {runtimeSettings?.account_config_plugins ?? "loading"}</div>
           <div><strong>Browser chat resume:</strong> {runtimeSettings?.conversation_resume_mirror ?? "loading"}</div>
         </div>
       </header>

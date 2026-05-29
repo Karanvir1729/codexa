@@ -40,6 +40,8 @@ export interface PlannerInput {
     SessionState,
     | "session_id"
     | "current_status"
+    | "project_id"
+    | "current_project_id"
     | "active_task"
     | "active_task_id"
     | "active_worker_id"
@@ -65,6 +67,14 @@ export interface PlannerInput {
   };
   recent_command_events: ReturnType<typeof listCommandEvents>;
   known_constraints: string[];
+  conversation_pressure: ConversationPressure;
+}
+
+export interface ConversationPressure {
+  level: "none" | "mild" | "high";
+  reduce_clarifying_questions: boolean;
+  signals: string[];
+  summary: string;
 }
 
 export interface PlannerModel {
@@ -244,6 +254,139 @@ function normalized(value: string) {
 
 function includesAny(value: string, patterns: RegExp[]) {
   return patterns.some((pattern) => pattern.test(value));
+}
+
+function userConversationCorpus(input: Pick<PlannerInput, "user_message" | "session">) {
+  return [
+    ...(input.session.recent_messages ?? [])
+      .filter((message) => message.role === "user")
+      .slice(-6)
+      .map((message) => message.text),
+    input.user_message,
+  ].join("\n");
+}
+
+export function detectConversationPressure(input: Pick<PlannerInput, "user_message" | "session">): ConversationPressure {
+  const corpus = userConversationCorpus(input);
+  const value = normalized(corpus);
+  const signals: string[] = [];
+  const highPatterns: Array<[RegExp, string]> = [
+    [/\b(stop asking|no more questions|too many questions|too much back and forth|so much back and forth)\b/i, "user asked to reduce clarification loops"],
+    [/\b(just build it|just make it|just do it|go ahead|use defaults|you decide|pick defaults)\b/i, "user wants Codex to choose defaults"],
+    [/\b(i already told you|i told you|you are not listening|you're not listening|why (are|do) you keep)\b/i, "user indicates repeated misunderstanding"],
+    [/\b(frustrating|frustrated|annoying|ugh|wtf)\b/i, "user expressed frustration"],
+  ];
+  const mildPatterns: Array<[RegExp, string]> = [
+    [/\b(issue|glitch|for some reason|seems like|hmm)\b/i, "user is reporting a problem"],
+    [/\b(no,? (call|name|make|use)|actually|instead)\b/i, "user is correcting the plan"],
+  ];
+  for (const [pattern, signal] of highPatterns) {
+    if (pattern.test(value)) signals.push(signal);
+  }
+  const high = signals.length > 0;
+  if (!high) {
+    for (const [pattern, signal] of mildPatterns) {
+      if (pattern.test(value)) signals.push(signal);
+    }
+  }
+  const level = high ? "high" : signals.length ? "mild" : "none";
+  return {
+    level,
+    reduce_clarifying_questions: high,
+    signals: uniqueText(signals),
+    summary: level === "high"
+      ? "User appears impatient with more back-and-forth; ask only true blockers and otherwise choose local defaults."
+      : level === "mild"
+        ? "User is correcting or reporting a problem; acknowledge the correction and avoid repeating stale assumptions."
+        : "No user discomfort detected.",
+  };
+}
+
+function hasResearchDecision(input: PlannerInput) {
+  const value = normalized(userConversationCorpus(input));
+  return /\b(no research|skip research|without research|do not research|don't research|no need to research|no need for research|proceed without research)\b/i.test(value)
+    || /\b(research first|do research|conduct research|need research|needs research|look up|browse|search the web|investigate sources|compare current|current best practices)\b/i.test(value)
+    || /\b(you decide|codex decide|use defaults|pick defaults|just build it|just make it|just do it|go ahead|no more questions|keep it simple)\b/i.test(value);
+}
+
+function isResearchRelevantBuild(input: PlannerInput, decision: PlannerDecision) {
+  const value = normalized([
+    input.user_message,
+    input.session.requirement_summary ?? "",
+    decision.requirements_summary,
+    decision.proposed_design,
+    ...decision.proposed_task_split.flatMap((item) => [item.title, item.goal]),
+  ].join(" "));
+  if (!/\b(app|website|site|store|shop|commerce|marketplace|dashboard|saas|landing page|product|checkout|cart|customer|users?)\b/.test(value)) return false;
+  if (/\b(cli|bash|shell script|number guessing|toy script)\b/.test(value) && !/\b(website|app|store|shop|commerce|dashboard|saas|full[- ]?stack)\b/.test(value)) return false;
+  if (/\blanding page\b/.test(value) && !/\b(sell|selling|ecommerce|commerce|marketplace|checkout|cart|payment|inventory|regulated|current|latest|recommendations?)\b/.test(value)) return false;
+  return /\b(sell|selling|ecommerce|commerce|marketplace|checkout|cart|payment|inventory|regulated|current|latest|recommendations?|medical|healthcare|finance|legal|compliance)\b/.test(value);
+}
+
+function needsResearchClarification(input: PlannerInput, decision: PlannerDecision) {
+  if (decision.decision_type === "ask_clarification" || decision.decision_type === "wait_for_user" || decision.decision_type === "answer_status_question") return false;
+  if (input.conversation_pressure.reduce_clarifying_questions) return false;
+  if (hasResearchDecision(input)) return false;
+  if (!isResearchRelevantBuild(input, decision)) return false;
+  return decision.requires_user_approval || decision.execution_allowed || decision.next_action === "launch_workers" || decision.next_action === "create_task_graph";
+}
+
+function enforceResearchClarification(input: PlannerInput, decision: PlannerDecision) {
+  if (!needsResearchClarification(input, decision)) return decision;
+  const question = "Before I write the Megaplan, should Codex conduct product, domain, UX, or technical research first? If yes, tell me the topics or sources that matter; otherwise I will proceed without research.";
+  return {
+    ...decision,
+    decision_type: "ask_clarification" as const,
+    reason: `${decision.reason} Research preference is not recorded yet, and this product/app build may benefit from research before the Megaplan.`,
+    user_visible_response: question,
+    open_questions: [question],
+    assumptions: uniqueText([...decision.assumptions, "No research preference recorded yet."]),
+    requires_user_approval: false,
+    approval_reason: "",
+    next_action: "none" as const,
+    execution_allowed: false,
+  };
+}
+
+function adaptDecisionForConversationPressure(input: PlannerInput, decision: PlannerDecision) {
+  if (!input.conversation_pressure.reduce_clarifying_questions || decision.decision_type !== "ask_clarification") return decision;
+  if (!input.project && !input.session.project_id && !input.session.current_project_id) return decision;
+  const mode = plannerMode(input);
+  const fallbackSplit = input.complexity.suggested_subtasks.length
+    ? input.complexity.suggested_subtasks.slice(0, mode === "codex_session_local" ? 6 : 3).map((item) => ({
+      title: item.title,
+      goal: item.goal,
+      can_run_parallel: false,
+      depends_on: item.dependencies,
+      expected_files: item.files_expected,
+      validation: item.validation_commands,
+    }))
+    : oneWorkerLandingSplit(input.session.requirement_summary || input.user_message);
+  return {
+    ...decision,
+    decision_type: "request_user_approval" as const,
+    reason: `${decision.reason} User conversation pressure indicates Codex should stop expanding clarification questions and use conservative defaults.`,
+    user_visible_response: "Understood. I will stop expanding questions, use pragmatic local defaults from the conversation, and put that Megaplan in front of you for approval before Codex starts.",
+    requirements_summary: decision.requirements_summary || input.session.requirement_summary || input.user_message,
+    open_questions: [],
+    assumptions: uniqueText([
+      ...decision.assumptions,
+      "Use sensible local defaults for unspecified details.",
+      "Proceed without product/domain research unless the user asks for it before approval.",
+    ]),
+    proposed_design: decision.proposed_design || (mode === "codex_session_local"
+      ? "Codex will stop expanding clarification questions, use pragmatic local defaults from the conversation, then run one local Codex CLI session that owns the repo, chooses logical internal subagents, implements, and validates locally."
+      : "Codex will stop expanding clarification questions, use pragmatic local defaults from the conversation, then implement and validate locally."),
+    proposed_task_split: decision.proposed_task_split.length ? decision.proposed_task_split : fallbackSplit,
+    recommended_worker_count: mode === "codex_session_local" ? 1 : Math.max(1, Math.min(input.complexity.recommended_worker_count, 3)),
+    recommended_worker_mode: mode,
+    requires_user_approval: true,
+    approval_reason: mode === "codex_session_local"
+      ? "The Megaplan must be approved before the local Codex CLI implementation session starts."
+      : "The revised plan should be approved before execution starts.",
+    next_action: "none" as const,
+    execution_allowed: false,
+  };
 }
 
 function requestedWorkerMode(textValue: string): WorkerType | null {
@@ -678,10 +821,12 @@ function plannerPrompt(input: PlannerInput) {
     "For commerce or selling apps, do not assume fake checkout, real payments, inventory, auth, or persistence. If not specified, ask whether the user wants a static storefront mockup or a full-stack build with cart/checkout, inventory, auth, payments, and persistent data.",
     "Use multi-turn requirements gathering for product/app builds. After the user answers one technical question, keep asking concise follow-up technical questions when low-level details still materially affect the implementation, data model, API shape, validation, preview, or UX.",
     "For app/product builds, ask whether Codex should conduct product, domain, UX, or technical research before implementation, what topics or sources matter, or whether to proceed without research.",
+    "Research timing: ask about research before Megaplan approval for product, commerce, SaaS, dashboard, full-stack, high-stakes, or current-information-sensitive builds. Do not slow down tiny scripts or obvious simple local tasks with research unless research would materially change correctness.",
     "Useful low-level details include target stack, routing/runtime, core entities and fields, auth roles, session behavior, persistence mechanism, API boundaries, checkout/payment behavior, admin permissions, seed data, validation commands, local preview command, and research needs.",
     "Treat research as a user-controlled requirement. Do not assume research is needed or not needed unless the user answers, asks Codex to decide, or clearly wants to proceed without more questions.",
     "For follow-ups, prefer one compact batch of 3-7 specific questions. Do not proceed to Megaplan just because one architecture dimension was answered if important implementation details remain unclear.",
     "Stop asking and choose reasonable defaults only when the user clearly is not entertaining more questions, such as saying just build it, you decide, use defaults, keep it simple, no more questions, or approve.",
+    "If conversation pressure says the user is frustrated or tired of back-and-forth, acknowledge the correction briefly, ask only true blockers, choose conservative defaults where safe, and move to a Megaplan approval instead of another long questionnaire.",
     "When you ask clarification, set decision_type=ask_clarification, next_action=none, execution_allowed=false, requires_user_approval=false, and include the question in open_questions.",
     "Do not create or approve a Megaplan until required technical direction is known.",
     "If Pending action is clarify_requirements, treat User message as the user's answer to prior technical questions, then decide whether another low-level clarification round is needed before Megaplan.",
@@ -705,6 +850,7 @@ function plannerPrompt(input: PlannerInput) {
     `Complexity judge: ${input.complexity.complexity}; workers=${input.complexity.recommended_worker_count}; split=${input.complexity.should_split}; reason=${input.complexity.reason}`,
     `Suggested subtasks: ${input.complexity.suggested_subtasks.map((item) => `${item.title} -> ${item.files_expected.join(", ")}`).join(" | ") || "none"}`,
     `Risk policy: ${input.risk_policy.requires_approval ? "approval required" : "no approval required"}; ${input.risk_policy.reason}; risk=${input.risk_policy.risk_level}`,
+    `Conversation pressure: ${input.conversation_pressure.level}; reduce_questions=${input.conversation_pressure.reduce_clarifying_questions}; ${input.conversation_pressure.summary}; signals=${input.conversation_pressure.signals.join(" | ") || "none"}`,
     `Current task graph: ${input.current_task_graph?.task_graph_id ?? "none"}`,
     `Validation/output-contract state: ${input.current_task_graph?.nodes.map((node) => `${node.title}:${node.status}:${node.validation_commands.join(",")}`).join(" | ") || "none"}`,
     `Recent conversation: ${input.session.recent_messages.map((message) => `${message.role}: ${message.text}`).slice(-8).join(" | ") || "none"}`,
@@ -1036,6 +1182,7 @@ export class AgenticPlanningController {
   }): PlannerInput {
     const workerMode = currentWorkerMode(input.session, input.workerMode);
     const activeTask = activeTaskForSession(input.session);
+    const pressure = detectConversationPressure({ user_message: input.userMessage, session: input.session });
     return {
       user_message: input.userMessage,
       session: input.session,
@@ -1052,11 +1199,12 @@ export class AgenticPlanningController {
       worker_mode: workerMode,
       risk_policy: riskPolicy(input.userMessage),
       recent_command_events: activeTask ? listCommandEvents({ taskId: activeTask.task_id }).slice(-8) : [],
+      conversation_pressure: pressure,
       known_constraints: [
         "Do not print or request secrets.",
         "Do not change GCP IAM or secrets without explicit approval.",
-    "Complex local plans require approval before starting the single Codex CLI session.",
-    "Multi-worker legacy execution requires approval of the split.",
+        "Complex local plans require approval before starting the single Codex CLI session.",
+        "Multi-worker legacy execution requires approval of the split.",
         "GCP VM and GKE Job worker execution require approval before launch.",
         "Worker mode is an execution backend, not an implicit request to deploy or containerize the generated app.",
         "Completion gates and output contracts remain mandatory for app nodes.",
@@ -1082,7 +1230,7 @@ export class AgenticPlanningController {
       decision = parsePlannerDecision(await fallback.generatePlanningDecision(plannerInput));
       decision.reason = `Planner fallback used because ${error instanceof Error ? error.message : String(error)} ${decision.reason}`;
     }
-    decision = normalizeClarificationResponse(normalizeUserVisibleApprovalPrompt(enforceExecutionSafety(optimizePlannerDecisionForSpeed(plannerInput, decision))));
+    decision = normalizeClarificationResponse(normalizeUserVisibleApprovalPrompt(enforceExecutionSafety(enforceResearchClarification(plannerInput, adaptDecisionForConversationPressure(plannerInput, optimizePlannerDecisionForSpeed(plannerInput, decision))))));
     const planningDecisionId = decision.planning_decision_id ?? `planning_${randomUUID()}`;
     decision.planning_decision_id = planningDecisionId;
     decision = redactSensitiveJson(decision);

@@ -65,6 +65,7 @@ import { DesktopTerminalLaunchDisabledError, launchCodexInDesktopTerminal } from
 import { recordPreviewReport, servePreviewAsset, startPreviewForSession } from "./preview.js";
 import { resetSupervisorSession } from "./session-reset.js";
 import { getMegaplanForSession } from "./megaplan.js";
+import { getCodexSkillInventory } from "./codex-skills.js";
 import type { Channel, TaskStatus, WorkerType } from "./types.js";
 
 const app = express();
@@ -311,6 +312,7 @@ app.get("/health", (_req, res) => {
 });
 
 app.get("/ready", (_req, res) => {
+  const skillInventory = getCodexSkillInventory();
   res.json({
     ok: true,
     store: fs.existsSync(config.storePath),
@@ -323,6 +325,12 @@ app.get("/ready", (_req, res) => {
       shell_environment: config.localCodex.inheritShellEnvironment ? "inherited" : "codex default",
       account_config_plugins: "same local Codex account and CODEX_HOME configuration",
       conversation_resume_mirror: config.localCodex.mirrorBrowserConversationToResume ? "enabled" : "disabled",
+      skill_inventory: {
+        status: skillInventory.status,
+        total_discovered: skillInventory.total_discovered,
+        critical_present: skillInventory.critical_present,
+        critical_missing: skillInventory.critical_missing,
+      },
     },
     worker_image_uri: config.orchestrator.workerImageUri || null,
     worker_settings: getOrchestratorSettings(),
