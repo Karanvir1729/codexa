@@ -23,7 +23,7 @@ function bootstrapEnv(storeDir: string, workspaceRoot: string) {
     process.env.CODEX_PHONE_SUPERVISOR_PUBLIC_BASE_URL = "";
     process.env.CODEX_PHONE_SUPERVISOR_TERMINAL_ENABLED = "0";
     process.env.CODEX_PHONE_SUPERVISOR_DESKTOP_TERMINAL_ENABLED = "0";
-    process.env.SUPERVISOR_MODEL_PROVIDER = "vertex";
+    process.env.SUPERVISOR_MODEL_PROVIDER = "codex_cli";
     process.env.CODEX_PHONE_SUPERVISOR_TEST_SUPERVISOR_MODEL = "deterministic";
     process.env.TWILIO_SMS_ENABLED = "0";
     process.env.TWILIO_VOICE_ENABLED = "0";

@@ -5,6 +5,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+test("codex project selector permits configured non-git workspace roots", () => {
+  const source = fs.readFileSync(path.join(process.cwd(), "codex-phone-supervisor", "backend", "src", "project-selector.ts"), "utf8");
+  const supervisorSource = fs.readFileSync(path.join(process.cwd(), "codex-phone-supervisor", "backend", "src", "supervisor-tools.ts"), "utf8");
+  assert.match(source, /"--skip-git-repo-check"/);
+  assert.match(source, /"-s",\s*"read-only"/);
+  assert.match(supervisorSource, /latest\.errors = latest\.errors\.filter\(\(item\) => !\/\^Codex project selector failed\\b\/\.test\(item\)\)/);
+});
+
 test("project discovery hides an empty generated-projects container root", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "generated-projects-root-"));
   const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), "project-selector-store-"));
@@ -30,7 +38,7 @@ test("project discovery hides an empty generated-projects container root", () =>
     process.env.CODEX_PHONE_SUPERVISOR_LOCK_RETRY_MS = "25";
     process.env.CODEX_PHONE_SUPERVISOR_PUBLIC_BASE_URL = "";
     process.env.CODEX_PHONE_SUPERVISOR_TEST_MODE = "1";
-    process.env.SUPERVISOR_MODEL_PROVIDER = "vertex";
+    process.env.SUPERVISOR_MODEL_PROVIDER = "codex_cli";
     process.env.CODEX_PHONE_SUPERVISOR_TEST_SUPERVISOR_MODEL = "deterministic";
     process.env.TWILIO_CONVERSATION_RELAY_WS_URL = "";
     process.env.TWILIO_SMS_ENABLED = "0";

@@ -97,6 +97,114 @@ function preview(value: string, max = 160) {
   return cleaned.length > max ? `${cleaned.slice(0, max)}...` : cleaned;
 }
 
+function summaryText(value: string, max = 180) {
+  return preview(String(value || "")
+    .replace(/`[^`]*`/g, "implementation detail")
+    .replace(/(?:^|[\s(])(?:\.{1,2}\/|\/|~\/|[A-Za-z]:[\\/]|[\w.-]+\/)[^\s,;:)]+/g, " project file")
+    .replace(/\b[\w.-]+\.(?:tsx?|jsx?|mjs|cjs|json|html|css|md|svg|png|jpe?g|webp|gif|ico|yml|yaml)\b/gi, "project file")
+    .replace(/\\+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim(), max);
+}
+
+const localFlowchartSummaryKinds = new Set([
+  "user_request",
+  "requirement_summary",
+  "plan",
+  "codex_session",
+  "subagent",
+  "validation",
+  "preview",
+  "final_summary",
+]);
+
+function normalizeLocalFlowchartSummary(value: unknown): NonNullable<TaskRecord["codex_flowchart_summary"]> | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const nodes = Array.isArray(record.nodes)
+    ? record.nodes.map((item, index) => {
+      const node = item && typeof item === "object" ? item as Record<string, unknown> : {};
+      const kind = typeof node.kind === "string" && localFlowchartSummaryKinds.has(node.kind) ? node.kind : "subagent";
+      const id = summaryText(String(node.id || `${kind}-${index + 1}`), 64).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || `${kind}-${index + 1}`;
+      return {
+        id,
+        kind: kind as NonNullable<TaskRecord["codex_flowchart_summary"]>["nodes"][number]["kind"],
+        label: summaryText(String(node.label || kind.replace(/_/g, " ")), 64),
+        status: summaryText(String(node.status || "recorded"), 48),
+        summary: summaryText(String(node.summary || ""), 220),
+        depends_on: Array.isArray(node.depends_on)
+          ? node.depends_on.map((dependency) => String(dependency || "").trim()).filter(Boolean)
+          : [],
+      };
+    }).filter((node) => node.label)
+    : [];
+  if (!nodes.length) return null;
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const edges = Array.isArray(record.edges)
+    ? record.edges.map((item) => {
+      const edge = item && typeof item === "object" ? item as Record<string, unknown> : {};
+      return {
+        from: String(edge.from || "").trim(),
+        to: String(edge.to || "").trim(),
+        label: summaryText(String(edge.label || "next"), 32),
+      };
+    }).filter((edge) => nodeIds.has(edge.from) && nodeIds.has(edge.to))
+    : [];
+  return {
+    title: summaryText(String(record.title || "Codex implementation flow"), 120),
+    overview: summaryText(String(record.overview || ""), 500),
+    nodes,
+    edges,
+  };
+}
+
+function readLocalCodexFlowchartJson(task: TaskRecord) {
+  const flowchartJsonPath = task.codex_flowchart_json_path;
+  if (!flowchartJsonPath) return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(flowchartJsonPath, "utf8")) as { flowchart?: unknown };
+    return normalizeLocalFlowchartSummary(parsed.flowchart ?? parsed);
+  } catch {
+    return null;
+  }
+}
+
+function localCodexFlowchartSummary(task: TaskRecord) {
+  return readLocalCodexFlowchartJson(task) ?? task.codex_flowchart_summary ?? null;
+}
+
+function localSummaryNodeType(kind: string): FlowchartNode["type"] {
+  if (kind === "plan") return "codex_plan";
+  if (kind === "subagent") return "codex_subagent";
+  if (kind === "user_request") return "user_request";
+  if (kind === "requirement_summary") return "requirement_summary";
+  if (kind === "codex_session") return "codex_session";
+  if (kind === "validation") return "validation";
+  if (kind === "preview") return "preview";
+  if (kind === "final_summary") return "final_summary";
+  return "codex_subagent";
+}
+
+function localSummaryColumn(kind: string) {
+  if (kind === "user_request") return 2;
+  if (kind === "requirement_summary") return 3;
+  if (kind === "plan") return 4;
+  if (kind === "codex_session") return 5;
+  if (kind === "subagent") return 6;
+  if (kind === "validation") return 7;
+  if (kind === "preview") return 8;
+  if (kind === "final_summary") return 9;
+  return 6;
+}
+
+function localSummaryVisualState(status: string): FlowchartVisualState {
+  if (/fail|blocked/i.test(status)) return "failed";
+  if (/running|in progress|working/i.test(status)) return "running";
+  if (/waiting|approval/i.test(status)) return "waiting_for_approval";
+  if (/complete|done|pass|loaded|ready|received|summarized/i.test(status)) return "completed";
+  return "planning";
+}
+
 function addNode(nodes: FlowchartNode[], node: Omit<FlowchartNode, "position">, index: number, column: number) {
   if (nodes.some((existing) => existing.id === node.id)) return;
   nodes.push({
@@ -155,6 +263,7 @@ export function buildFlowchartState(): FlowchartState {
   const approvals = listApprovalRequests();
   const events = listOrchestratorEvents().slice(-100);
   const settings = getOrchestratorSettings();
+  const localCodexTasks = tasks.filter((task) => task.execution_backend === "codex_session_local");
   const nodes: FlowchartNode[] = [];
   const edges: FlowchartEdge[] = [];
 
@@ -182,22 +291,20 @@ export function buildFlowchartState(): FlowchartState {
   addNode(nodes, {
     id: "orchestrator:control-plane",
     type: "orchestrator",
-    label: "Cloud Orchestrator",
+    label: "Codex CLI Orchestrator",
     status: tasks.some((task) => task.status === "running") ? "running" : tasks.some((task) => task.status === "queued" || task.status === "planning") ? "planning" : "idle",
     visual_state: tasks.some((task) => task.status === "running") ? "running" : tasks.some((task) => task.status === "failed") ? "failed" : "planning",
-    badges: [config.modelProviders.supervisor_model_provider, "planner", config.modelProviders.worker_code_model],
-    summary: latestDecision?.message || "Waiting for runtime activity.",
+    badges: ["codex_session_local", "Codex CLI", "internal subagents"],
+    summary: localCodexTasks.length ? "Streaming a real local Codex CLI session. Subagent nodes are Codex-internal logical responsibilities." : latestDecision?.message || "Waiting for local Codex CLI activity.",
     detail: {
       latest_decision: latestDecision,
       current_plan: tasks[0]?.plan ?? [],
       active_sessions: sessions.map((session) => session.session_id),
       active_tasks: tasks.filter((task) => !["completed", "failed", "cancelled"].includes(task.status)).map((task) => task.task_id),
-      worker_counts: workers.reduce<Record<string, number>>((counts, worker) => {
-        counts[worker.type] = (counts[worker.type] ?? 0) + 1;
-        return counts;
-      }, {}),
-      worker_settings: settings,
-      model_providers: config.modelProviders,
+      local_codex_tasks: localCodexTasks.map((task) => task.task_id),
+      orchestrator: "Codex CLI",
+      subagents: "Codex internal logical subagents",
+      source_of_truth: "local repo",
     },
   }, 1, 1);
 
@@ -275,6 +382,26 @@ export function buildFlowchartState(): FlowchartState {
         addEdge(edges, decisionNodeId, designNodeId, "design");
       }
 
+      if (session.pending_action?.type === "approve_megaplan") {
+        const megaplanNodeId = `megaplan:${planningId}`;
+        addNode(nodes, {
+          id: megaplanNodeId,
+          type: "codex_plan",
+          label: "Megaplan",
+          status: "pending approval",
+          visual_state: "waiting_for_approval",
+          badges: ["megaplan skill", "approval gate"],
+          summary: "The Megaplan skill created the Markdown plan and Codex is waiting for approval.",
+          detail: {
+            session_id: session.session_id,
+            project_id: session.project_id ?? session.current_project_id,
+            kind: "megaplan",
+            status: "pending approval",
+          },
+        }, index * 8 + 3.5, 3);
+        addEdge(edges, decisionNodeId, megaplanNodeId, "megaplan");
+      }
+
       if (plannerDecision.proposed_task_split.length) {
         const splitNodeId = `task_split_proposal:${planningId}`;
         addNode(nodes, {
@@ -301,9 +428,9 @@ export function buildFlowchartState(): FlowchartState {
           visual_state: approvalStatus === "approved" || approvalStatus === "not_required" ? "completed" : approvalStatus === "rejected" ? "failed" : "waiting_for_approval",
           badges: [plannerDecision.requires_user_approval ? "required" : "not required", plannerDecision.risk_level],
           summary: session.pending_action?.reason ?? plannerDecision.approval_reason ?? approvalStatus,
-          detail: { pending_action: session.pending_action, approval_status: session.approval_status, planner_decision_id: planningId },
+          detail: { session_id: session.session_id, pending_action: session.pending_action, approval_status: session.approval_status, planner_decision_id: planningId },
         }, index * 8 + 5, 4);
-        addEdge(edges, decisionNodeId, approvalNodeId, "approval");
+        addEdge(edges, session.pending_action?.type === "approve_megaplan" ? `megaplan:${planningId}` : decisionNodeId, approvalNodeId, "approval");
       }
 
       if (session.approved_plan) {
@@ -415,7 +542,9 @@ export function buildFlowchartState(): FlowchartState {
       label: `Task ${task.task_id.slice(5, 13)}`,
       status: task.status,
       visual_state: statusVisualState(task.status),
-      badges: [task.worker_id ? "assigned" : "unassigned", `${task.command_count} commands`],
+      badges: task.execution_backend === "codex_session_local"
+        ? ["one local Codex orchestrator", `${task.command_count} commands`]
+        : [task.worker_id ? "assigned" : "unassigned", `${task.command_count} commands`],
       summary: task.user_goal,
       detail: {
         task,
@@ -425,6 +554,137 @@ export function buildFlowchartState(): FlowchartState {
     }, index, 3);
     addEdge(edges, "orchestrator:control-plane", taskNodeId, "task");
     addEdge(edges, `project:${task.project_id}`, taskNodeId, "latest task");
+  });
+
+  localCodexTasks.slice(0, 8).forEach((task, index) => {
+    const generatedSummary = localCodexFlowchartSummary(task);
+    if (generatedSummary?.nodes.length) {
+      const summary = generatedSummary;
+      const summaryNodeIds = new Set(summary.nodes.map((node) => node.id));
+      const perKindCount = new Map<string, number>();
+      const firstNode = summary.nodes[0];
+      summary.nodes.forEach((node, nodeIndex) => {
+        const kindIndex = perKindCount.get(node.kind) ?? 0;
+        perKindCount.set(node.kind, kindIndex + 1);
+        const nodeId = `codex_flow:${task.task_id}:${node.id}`;
+        addNode(nodes, {
+          id: nodeId,
+          type: localSummaryNodeType(node.kind),
+          label: summaryText(node.label, 64),
+          status: summaryText(node.status, 48),
+          visual_state: localSummaryVisualState(node.status),
+          badges: node.kind === "subagent" ? ["Codex-chosen subagent"] : [node.kind.replace(/_/g, " ")],
+          summary: summaryText(node.summary),
+          detail: {
+            kind: node.kind,
+            label: summaryText(node.label, 120),
+            status: summaryText(node.status, 80),
+            summary: summaryText(node.summary, 500),
+            flowchart_title: summaryText(summary.title, 120),
+            flowchart_overview: summaryText(summary.overview, 500),
+          },
+        }, index * 12 + kindIndex + nodeIndex * 0.01, localSummaryColumn(node.kind));
+      });
+      if (firstNode) addEdge(edges, "orchestrator:control-plane", `codex_flow:${task.task_id}:${firstNode.id}`, "Codex summary");
+      for (const node of summary.nodes) {
+        for (const dependency of node.depends_on) {
+          if (summaryNodeIds.has(dependency)) addEdge(edges, `codex_flow:${task.task_id}:${dependency}`, `codex_flow:${task.task_id}:${node.id}`, "next");
+        }
+      }
+      for (const edge of summary.edges) {
+        if (summaryNodeIds.has(edge.from) && summaryNodeIds.has(edge.to)) {
+          addEdge(edges, `codex_flow:${task.task_id}:${edge.from}`, `codex_flow:${task.task_id}:${edge.to}`, summaryText(edge.label, 32) || "next");
+        }
+      }
+      const liveSubagents = (task.codex_subagents ?? []).filter((subagent) => subagent.name?.trim());
+      if (liveSubagents.length && !summary.nodes.some((node) => node.kind === "subagent")) {
+        const codexSessionSummaryNode = summary.nodes.find((node) => node.kind === "codex_session");
+        const sessionNodeId = codexSessionSummaryNode
+          ? `codex_flow:${task.task_id}:${codexSessionSummaryNode.id}`
+          : `codex_flow:${task.task_id}:live-codex-session`;
+        if (!codexSessionSummaryNode) {
+          addNode(nodes, {
+            id: sessionNodeId,
+            type: "codex_session",
+            label: "Codex CLI session",
+            status: task.status,
+            visual_state: statusVisualState(task.status),
+            badges: ["live Codex updates"],
+            summary: "Codex has reported live internal subagent updates for this local session.",
+            detail: {
+              kind: "codex_session",
+              status: task.status,
+              summary: "Codex has reported live internal subagent updates for this local session.",
+            },
+          }, index * 12, 5);
+          if (firstNode) addEdge(edges, `codex_flow:${task.task_id}:${firstNode.id}`, sessionNodeId, "Codex session");
+        }
+        liveSubagents.forEach((subagent, subagentIndex) => {
+          const subagentId = summaryText(subagent.name, 48).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || `subagent-${subagentIndex + 1}`;
+          const nodeId = `codex_flow:${task.task_id}:live-${subagentId}`;
+          addNode(nodes, {
+            id: nodeId,
+            type: "codex_subagent",
+            label: summaryText(subagent.name, 64),
+            status: summaryText(subagent.status, 48),
+            visual_state: localSummaryVisualState(subagent.status),
+            badges: ["Codex-chosen subagent"],
+            summary: summaryText(subagent.summary || subagent.responsibility),
+            detail: {
+              kind: "subagent",
+              label: summaryText(subagent.name, 120),
+              status: summaryText(subagent.status, 80),
+              summary: summaryText(subagent.summary || subagent.responsibility, 500),
+            },
+          }, index * 12 + subagentIndex + 1, 6);
+          addEdge(edges, sessionNodeId, nodeId, "subagent");
+        });
+      }
+      return;
+    }
+
+    const sessionNodeId = `codex_flow_pending:${task.task_id}`;
+    const liveSubagents = (task.codex_subagents ?? []).filter((subagent) => subagent.name?.trim());
+    const pendingSummary = task.status === "running"
+      ? liveSubagents.length
+        ? "Live Codex subagent updates are visible while the parallel flowchart JSON is being regenerated."
+        : "A separate short-lived Codex session is generating this browser flowchart from live implementation updates."
+      : "This local Codex run does not have a generated flowchart summary yet.";
+    addNode(nodes, {
+      id: sessionNodeId,
+      type: "codex_session",
+      label: liveSubagents.length ? "Codex CLI session" : "Codex flowchart summary",
+      status: task.status === "running" ? liveSubagents.length ? "running" : "generating" : "summary pending",
+      visual_state: task.status === "running" ? "running" : "planning",
+      badges: [liveSubagents.length ? "live Codex updates" : "parallel Codex flowchart"],
+      summary: pendingSummary,
+      detail: {
+        kind: "codex_session",
+        status: task.status === "running" ? liveSubagents.length ? "running" : "generating" : "summary pending",
+        summary: pendingSummary,
+      },
+    }, index * 12, 5);
+    addEdge(edges, "orchestrator:control-plane", sessionNodeId, "parallel summary");
+    liveSubagents.forEach((subagent, subagentIndex) => {
+      const subagentId = summaryText(subagent.name, 48).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || `subagent-${subagentIndex + 1}`;
+      const nodeId = `codex_flow:${task.task_id}:live-${subagentId}`;
+      addNode(nodes, {
+        id: nodeId,
+        type: "codex_subagent",
+        label: summaryText(subagent.name, 64),
+        status: summaryText(subagent.status, 48),
+        visual_state: localSummaryVisualState(subagent.status),
+        badges: ["Codex-chosen subagent"],
+        summary: summaryText(subagent.summary || subagent.responsibility),
+        detail: {
+          kind: "subagent",
+          label: summaryText(subagent.name, 120),
+          status: summaryText(subagent.status, 80),
+          summary: summaryText(subagent.summary || subagent.responsibility, 500),
+        },
+      }, index * 12 + subagentIndex + 1, 6);
+      addEdge(edges, sessionNodeId, nodeId, "subagent");
+    });
   });
 
   taskGraphs.slice(0, 6).forEach((graph, index) => {
@@ -699,6 +959,9 @@ export function buildFlowchartState(): FlowchartState {
       },
     }, index, 7);
     addEdge(edges, `worker:${command.worker_id}`, commandNodeId, "runs");
+    if (command.worker_id === "codex_session_local" || command.worker_mode === "codex_session_local") {
+      addEdge(edges, `codex_session:${command.task_id}`, commandNodeId, "runs");
+    }
     const artifactNodeId = `artifact:${command.event_id}`;
     addNode(nodes, {
       id: artifactNodeId,

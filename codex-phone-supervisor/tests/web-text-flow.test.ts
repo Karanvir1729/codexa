@@ -59,7 +59,7 @@ function spawnBackend(port: number, storeDir: string) {
       CODEX_PHONE_SUPERVISOR_LOCK_RETRY_MS: "25",
       CODEX_PHONE_SUPERVISOR_PUBLIC_BASE_URL: "",
       CODEX_PHONE_SUPERVISOR_TEST_MODE: "1",
-      SUPERVISOR_MODEL_PROVIDER: "vertex",
+      SUPERVISOR_MODEL_PROVIDER: "codex_cli",
         CODEX_PHONE_SUPERVISOR_TEST_SUPERVISOR_MODEL: "deterministic",
       TWILIO_CONVERSATION_RELAY_WS_URL: "",
       TWILIO_SMS_ENABLED: "0",
@@ -341,7 +341,7 @@ test("web text vague game requests clarify before creating a project", async () 
     const firstStatus = await fetch(`http://127.0.0.1:${port}/codex/status?session_id=${firstPayload.sessionId}`);
     assert.equal(firstStatus.status, 200);
     const firstStatusPayload = await firstStatus.json() as { session: { pending_action?: { type?: string; original_user_goal?: string } | null } };
-    assert.equal(firstStatusPayload.session.pending_action, null);
+    assert.equal(firstStatusPayload.session.pending_action?.type, "collect_project_name");
 
     const namedProject = await fetch(`http://127.0.0.1:${port}/call/message`, {
       method: "POST",
@@ -368,6 +368,61 @@ test("web text vague game requests clarify before creating a project", async () 
     const createRequested = eventsPayload.events.find((event) => event.type === "project.create.requested") as { data?: { target_path?: string } } | undefined;
     assert.ok(createRequested, "expected deterministic create_project to run with required args");
     assert.match(createRequested.data?.target_path ?? "", new RegExp(`${expectedProjectSlug}$`));
+  } finally {
+    child.kill();
+  }
+});
+
+test("project intake uses Codex decision for follow-up project names", async () => {
+  const port = await freePort();
+  const storeDir = path.join(process.cwd(), "tmp", `web-text-project-intake-test-${port}`);
+  const child = spawnBackend(port, storeDir);
+
+  try {
+    await waitForHealth(port, child);
+    const firstMessage = await fetch(`http://127.0.0.1:${port}/call/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: "test-web-user",
+        channel: "web_text",
+        text: "Can you make a chess game",
+        timestamp: new Date().toISOString(),
+      }),
+    });
+    assert.equal(firstMessage.status, 200);
+    const firstPayload = await firstMessage.json() as { text: string; sessionId: string };
+    assert.match(firstPayload.text, /what should i call/i);
+
+    const status = await fetch(`http://127.0.0.1:${port}/codex/status?session_id=${firstPayload.sessionId}`);
+    assert.equal(status.status, 200);
+    const statusPayload = await status.json() as { session: { pending_action?: { type?: string; original_user_goal?: string } | null } };
+    assert.equal(statusPayload.session.pending_action?.type, "collect_project_name");
+    assert.match(statusPayload.session.pending_action?.original_user_goal ?? "", /chess game/i);
+
+    const namedProject = await fetch(`http://127.0.0.1:${port}/call/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: firstPayload.sessionId,
+        user_id: "test-web-user",
+        channel: "web_text",
+        text: "Yes please create a new project and call it jk",
+        timestamp: new Date().toISOString(),
+      }),
+    });
+    assert.equal(namedProject.status, 200);
+    const namedPayload = await namedProject.json() as { text: string; sessionId: string };
+    assert.match(namedPayload.text, /Creating Jk/i);
+    assert.doesNotMatch(namedPayload.text, /Project name: Yes please/i);
+    assert.doesNotMatch(namedPayload.text, /task graph|output-contract|one worker/i);
+
+    const events = await fetch(`http://127.0.0.1:${port}/codex/events?session_id=${namedPayload.sessionId}`);
+    assert.equal(events.status, 200);
+    const eventsPayload = await events.json() as { events: Array<{ type: string; message: string; data?: { decision?: { project_name?: string | null }; target_path?: string } }> };
+    assert.ok(eventsPayload.events.some((event) => event.type === "project_intake.codex_decision"), "expected Codex project-intake decision event");
+    assert.ok(eventsPayload.events.some((event) => event.type === "project.create.requested" && /\/jk$/.test(event.data?.target_path ?? "")));
+    assert.ok(!eventsPayload.events.some((event) => /yes-please-create-a-new-project/i.test(event.data?.target_path ?? "")));
   } finally {
     child.kill();
   }

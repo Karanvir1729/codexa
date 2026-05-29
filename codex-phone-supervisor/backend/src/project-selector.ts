@@ -197,7 +197,6 @@ function supervisorModelConfig(): SupervisorModelConfig {
     testDouble: config.testSupervisorModelDouble as "deterministic" | null,
     gcpConversationAi: config.gcpConversationAi,
     nvidiaNim: config.nvidiaNim,
-    vertex: config.vertex,
     openai: config.openai,
   };
 }
@@ -234,7 +233,6 @@ async function runConfiguredModelProjectSelection(session: SessionState, userTex
 export async function runProjectSelection(session: SessionState, userText: string) {
   const candidates = listProjectCandidates();
   if (
-    config.supervisorModelProvider === "vertex" ||
     config.supervisorModelProvider === "gcp_conversation_ai" ||
     config.supervisorModelProvider === "nvidia_nim"
   ) {
@@ -249,6 +247,7 @@ export async function runProjectSelection(session: SessionState, userText: strin
     schemaPath,
     "-C",
     config.defaultWorkspacePath,
+    "--skip-git-repo-check",
     "-s",
     "read-only",
     buildProjectSelectorPrompt(session, userText, candidates),

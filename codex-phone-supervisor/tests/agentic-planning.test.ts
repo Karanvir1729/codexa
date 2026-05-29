@@ -23,7 +23,7 @@ function bootstrapEnv(storeDir: string, workspaceRoot: string) {
     process.env.CODEX_PHONE_SUPERVISOR_PUBLIC_BASE_URL = "";
     process.env.CODEX_PHONE_SUPERVISOR_TERMINAL_ENABLED = "0";
     process.env.CODEX_PHONE_SUPERVISOR_DESKTOP_TERMINAL_ENABLED = "0";
-    process.env.SUPERVISOR_MODEL_PROVIDER = "vertex";
+    process.env.SUPERVISOR_MODEL_PROVIDER = "codex_cli";
     process.env.CODEX_PHONE_SUPERVISOR_TEST_SUPERVISOR_MODEL = "deterministic";
     process.env.TWILIO_SMS_ENABLED = "0";
     process.env.TWILIO_VOICE_ENABLED = "0";
@@ -119,6 +119,403 @@ test("agentic planner parses structured output and falls back safely on invalid 
   assert.equal(payload.fallbackType, "propose_task_split");
   assert.match(String(payload.fallbackModel), /deterministic_fallback/);
   assert.equal(payload.noRawJson, true);
+});
+
+test("Codex CLI planner asks technical requirements before Megaplan for underspecified commerce apps", () => {
+  const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), "planner-codex-cli-store-"));
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "planner-codex-cli-root-"));
+  const projectDir = path.join(workspaceRoot, "orange");
+  const fakeCodexPath = path.join(storeDir, "fake-codex-planner.cjs");
+  const promptCapturePath = path.join(storeDir, "planner-prompt.txt");
+  fs.mkdirSync(projectDir, { recursive: true });
+  fs.writeFileSync(fakeCodexPath, `#!/usr/bin/env node
+const fs = require("node:fs");
+let input = "";
+process.stdin.on("data", (chunk) => input += chunk.toString());
+process.stdin.on("end", () => {
+  fs.writeFileSync(${JSON.stringify(promptCapturePath)}, input);
+  function arg(name) {
+    const index = process.argv.indexOf(name);
+    return index === -1 ? "" : process.argv[index + 1] || "";
+  }
+  const finalPath = arg("--output-last-message");
+  const clarified = /Technical requirements from user:/i.test(input);
+  const value = clarified ? {
+    decision_type: "request_user_approval",
+    confidence: 0.91,
+    reason: "The user clarified the commerce app architecture and approval is needed before the local Codex session starts.",
+    user_visible_response: "I understand the candy app should be full-stack with cart, checkout, inventory, auth, persistent data, and mocked payments. Approve the Megaplan before I start Codex?",
+    requirements_summary: "Build a candy-selling app named Orange as a full-stack local app with storefront, cart, checkout, inventory, auth, persistent data, mocked payments, tests, README, validation, and preview instructions.",
+    open_questions: [],
+    assumptions: ["Payments are mocked locally, not live Stripe.", "Persistent data can use a local development store unless the repo already has a stronger pattern."],
+    proposed_design: "Full-stack local commerce app with browser storefront, backend API, shared commerce logic, inventory/admin surface, authentication flow, mocked checkout, tests, README, and local preview.",
+    proposed_task_split: [
+      {
+        title: "Commerce app architecture",
+        goal: "Create the full-stack candy storefront, cart, checkout, inventory, auth, and persistence plan in one repo.",
+        can_run_parallel: false,
+        depends_on: [],
+        expected_files: ["package.json", "README.md", "src"],
+        validation: ["npm run typecheck", "npm test", "npm run build"]
+      }
+    ],
+    recommended_worker_count: 1,
+    recommended_worker_mode: "codex_session_local",
+    requires_user_approval: true,
+    approval_reason: "The Megaplan must be approved before the local Codex CLI implementation session starts.",
+    risk_level: "low",
+    next_action: "none",
+    execution_allowed: false
+  } : {
+    decision_type: "ask_clarification",
+    confidence: 0.92,
+    reason: "The candy-selling app request is missing technical requirements that change the architecture.",
+    user_visible_response: "Should the candy-selling app be a static storefront mockup, or a full-stack app with cart/checkout, inventory, auth, payments, and persistent data?",
+    requirements_summary: "Make an app to sell candies.",
+    open_questions: ["Should the candy-selling app be a static storefront mockup, or a full-stack app with cart/checkout, inventory, auth, payments, and persistent data?"],
+    assumptions: [],
+    proposed_design: "",
+    proposed_task_split: [],
+    recommended_worker_count: 1,
+    recommended_worker_mode: "codex_session_local",
+    requires_user_approval: false,
+    approval_reason: "",
+    risk_level: "low",
+    next_action: "none",
+    execution_allowed: false
+  };
+  if (finalPath) fs.writeFileSync(finalPath, JSON.stringify(value));
+  console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: JSON.stringify(value) } }));
+});
+`);
+  fs.chmodSync(fakeCodexPath, 0o755);
+  const script = `
+    ${bootstrapEnv(storeDir, workspaceRoot)}
+    delete process.env.CODEX_PHONE_SUPERVISOR_TEST_SUPERVISOR_MODEL;
+    process.env.CODEX_PHONE_SUPERVISOR_CODEX_COMMAND = ${JSON.stringify(fakeCodexPath)};
+    process.env.WORKER_MODE = "codex_session_local";
+    process.env.DEFAULT_WORKER_MODE = "codex_session_local";
+    const fs = await import("node:fs");
+    const { createSession } = await import("./codex-phone-supervisor/backend/src/session.ts");
+    const { handleSupervisorMessage } = await import("./codex-phone-supervisor/backend/src/supervisor-tools.ts");
+    const { getSession, listOrchestratorEvents, upsertSession } = await import("./codex-phone-supervisor/backend/src/store.ts");
+    const { projectRecordForWorkspace, upsertProject } = await import("./codex-phone-supervisor/backend/src/project-store.ts");
+    const { getMegaplanForSession } = await import("./codex-phone-supervisor/backend/src/megaplan.ts");
+    const project = projectRecordForWorkspace(${JSON.stringify(projectDir)});
+    project.display_name = "Orange";
+    upsertProject(project);
+    const session = createSession("commerce clarification", ${JSON.stringify(workspaceRoot)});
+    session.session_id = "session_codex_cli_commerce_clarification";
+    session.channel = "web_text";
+    session.project_id = project.project_id;
+    session.current_project_id = project.project_id;
+    session.workspace_path = project.workspace_path;
+    session.project_discovery.status = "selected";
+    session.project_discovery.selected_workspace_path = project.workspace_path;
+    session.project_discovery.selected_project_name = project.display_name;
+    session.preferred_worker_mode = "codex_session_local";
+    upsertSession(session);
+    const first = await handleSupervisorMessage(session.session_id, "Make an app to sell candies.", "web_text");
+    const afterFirst = getSession(session.session_id);
+    const firstMegaplan = getMegaplanForSession(session.session_id);
+    const second = await handleSupervisorMessage(session.session_id, "Make it full-stack with cart, checkout, inventory, auth, persistent data, and mocked payments.", "web_text");
+    const afterSecond = getSession(session.session_id);
+    const secondMegaplan = getMegaplanForSession(session.session_id);
+    const prompt = fs.readFileSync(${JSON.stringify(promptCapturePath)}, "utf8");
+    const eventTypes = listOrchestratorEvents().map((event) => event.type);
+    console.log(JSON.stringify({
+      first: first.response,
+      firstPending: afterFirst?.pending_action?.type ?? null,
+      firstMegaplanExists: Boolean(firstMegaplan),
+      second: second.response,
+      secondPending: afterSecond?.pending_action?.type ?? null,
+      secondMegaplanText: secondMegaplan?.content ?? "",
+      prompt,
+      eventTypes
+    }));
+  `;
+  const result = runIsolated(script);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}") as Record<string, unknown>;
+  assert.match(String(payload.first), /static storefront mockup|full-stack app/i);
+  assert.match(String(payload.first), /cart|checkout|inventory|auth|payments|persistent data/i);
+  assert.equal(payload.firstPending, "clarify_requirements");
+  assert.equal(payload.firstMegaplanExists, false);
+  assert.match(String(payload.second), /Megaplan skill created MEGAPLAN\.md/);
+  assert.equal(payload.secondPending, "approve_megaplan");
+  assert.match(String(payload.secondMegaplanText), /## Technical Requirements/);
+  assert.match(String(payload.secondMegaplanText), /full-stack local commerce app/i);
+  assert.match(String(payload.secondMegaplanText), /cart|checkout|inventory|auth|persistent data|mocked payments/i);
+  assert.match(String(payload.secondMegaplanText), /npm run typecheck|npm test|npm run build/);
+  assert.match(String(payload.prompt), /For commerce or selling apps/i);
+  assert.match(String(payload.prompt), /Do not create or approve a Megaplan until required technical direction is known/i);
+  assert.ok((payload.eventTypes as string[]).includes("planner.codex_cli.started"));
+  assert.ok((payload.eventTypes as string[]).includes("planner.codex_cli.completed"));
+});
+
+test("Codex CLI planner can keep asking low-level technical requirements before Megaplan", () => {
+  const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), "planner-multiround-store-"));
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "planner-multiround-root-"));
+  const projectDir = path.join(workspaceRoot, "candy-lab");
+  const fakeCodexPath = path.join(storeDir, "fake-codex-multiround.cjs");
+  const promptCapturePath = path.join(storeDir, "planner-prompt.txt");
+  fs.mkdirSync(projectDir, { recursive: true });
+  fs.writeFileSync(fakeCodexPath, `#!/usr/bin/env node
+const fs = require("node:fs");
+let input = "";
+process.stdin.on("data", (chunk) => input += chunk.toString());
+process.stdin.on("end", () => {
+  fs.writeFileSync(${JSON.stringify(promptCapturePath)}, input);
+  function arg(name) {
+    const index = process.argv.indexOf(name);
+    return index === -1 ? "" : process.argv[index + 1] || "";
+  }
+  const finalPath = arg("--output-last-message");
+  const hasArchitecture = /Technical requirements from user:[\\s\\S]*full-stack/i.test(input);
+  const hasLowLevel = /Technical requirements from user:[\\s\\S]*(Next\\.js|SQLite|admin role|server actions|API routes|preview command)/i.test(input);
+  const value = !hasArchitecture ? {
+    decision_type: "ask_clarification",
+    confidence: 0.92,
+    reason: "The candy-selling app request is missing technical requirements that change the architecture.",
+    user_visible_response: "Should the candy app be a static storefront mockup, or a full-stack app with cart/checkout, inventory, auth, payments, and persistent data?",
+    requirements_summary: "Build an app to sell candies.",
+    open_questions: ["Should the candy app be static or full-stack?"],
+    assumptions: [],
+    proposed_design: "",
+    proposed_task_split: [],
+    recommended_worker_count: 1,
+    recommended_worker_mode: "codex_session_local",
+    requires_user_approval: false,
+    approval_reason: "",
+    risk_level: "low",
+    next_action: "none",
+    execution_allowed: false
+  } : !hasLowLevel ? {
+    decision_type: "ask_clarification",
+    confidence: 0.9,
+    reason: "The architecture is known, but low-level implementation choices still affect files, data, validation, and preview.",
+    user_visible_response: "A few low-level choices before the Megaplan.",
+    requirements_summary: "Build a full-stack candy-selling app with cart, checkout, inventory, auth, payments, and persistence.",
+    open_questions: [
+      "Which stack/runtime should Codex use?",
+      "What persistence should back products, carts, users, and orders?",
+      "Which user roles should exist?",
+      "Should checkout be API-based or local mocked flow?",
+      "Should Codex conduct product, domain, UX, or technical research before implementation, and if so what topics or sources matter?",
+      "What command should preview the app locally?"
+    ],
+    assumptions: [],
+    proposed_design: "",
+    proposed_task_split: [],
+    recommended_worker_count: 1,
+    recommended_worker_mode: "codex_session_local",
+    requires_user_approval: false,
+    approval_reason: "",
+    risk_level: "low",
+    next_action: "none",
+    execution_allowed: false
+  } : {
+    decision_type: "request_user_approval",
+    confidence: 0.91,
+    reason: "The product and low-level technical requirements are now specific enough for a Megaplan.",
+    user_visible_response: "I have enough technical detail for the Megaplan. Approve before I start Codex?",
+    requirements_summary: "Build Candy Lab as a full-stack Next.js candy shop with SQLite persistence, customer/admin roles, API-backed mocked checkout, local seed data, tests, and npm run dev preview.",
+    open_questions: [],
+    assumptions: ["Payments are mocked locally."],
+    proposed_design: "Next.js app with API routes, SQLite persistence, customer and admin roles, seeded products, mocked checkout, local validation, and npm run dev preview.",
+    proposed_task_split: [
+      {
+        title: "Full-stack candy shop",
+        goal: "Implement the agreed Next.js, SQLite, auth-role, cart, checkout, inventory, test, and preview requirements in one repo.",
+        can_run_parallel: false,
+        depends_on: [],
+        expected_files: ["package.json", "README.md", "src"],
+        validation: ["npm run typecheck", "npm test", "npm run build"]
+      }
+    ],
+    recommended_worker_count: 1,
+    recommended_worker_mode: "codex_session_local",
+    requires_user_approval: true,
+    approval_reason: "The Megaplan must be approved before the local Codex CLI implementation session starts.",
+    risk_level: "low",
+    next_action: "none",
+    execution_allowed: false
+  };
+  if (finalPath) fs.writeFileSync(finalPath, JSON.stringify(value));
+  console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: JSON.stringify(value) } }));
+});
+`);
+  fs.chmodSync(fakeCodexPath, 0o755);
+  const script = `
+    ${bootstrapEnv(storeDir, workspaceRoot)}
+    delete process.env.CODEX_PHONE_SUPERVISOR_TEST_SUPERVISOR_MODEL;
+    process.env.CODEX_PHONE_SUPERVISOR_CODEX_COMMAND = ${JSON.stringify(fakeCodexPath)};
+    process.env.WORKER_MODE = "codex_session_local";
+    process.env.DEFAULT_WORKER_MODE = "codex_session_local";
+    const fs = await import("node:fs");
+    const { createSession } = await import("./codex-phone-supervisor/backend/src/session.ts");
+    const { handleSupervisorMessage } = await import("./codex-phone-supervisor/backend/src/supervisor-tools.ts");
+    const { getSession, upsertSession } = await import("./codex-phone-supervisor/backend/src/store.ts");
+    const { projectRecordForWorkspace, upsertProject } = await import("./codex-phone-supervisor/backend/src/project-store.ts");
+    const { getMegaplanForSession } = await import("./codex-phone-supervisor/backend/src/megaplan.ts");
+    const project = projectRecordForWorkspace(${JSON.stringify(projectDir)});
+    project.display_name = "Candy Lab";
+    upsertProject(project);
+    const session = createSession("multi-round requirements", ${JSON.stringify(workspaceRoot)});
+    session.session_id = "session_multiround_requirements";
+    session.channel = "web_text";
+    session.project_id = project.project_id;
+    session.current_project_id = project.project_id;
+    session.workspace_path = project.workspace_path;
+    session.project_discovery.status = "selected";
+    session.project_discovery.selected_workspace_path = project.workspace_path;
+    session.project_discovery.selected_project_name = project.display_name;
+    session.preferred_worker_mode = "codex_session_local";
+    upsertSession(session);
+    const first = await handleSupervisorMessage(session.session_id, "Build an app to sell candies.", "web_text");
+    const afterFirst = getSession(session.session_id);
+    const firstMegaplan = getMegaplanForSession(session.session_id);
+    const second = await handleSupervisorMessage(session.session_id, "Make it full-stack with cart checkout, inventory admin, user accounts, mock payments, and persistent data.", "web_text");
+    const afterSecond = getSession(session.session_id);
+    const secondMegaplan = getMegaplanForSession(session.session_id);
+    const third = await handleSupervisorMessage(session.session_id, "Use Next.js with API routes, SQLite persistence, customer and admin roles, API-backed mock checkout, seeded candies, no research needed, npm run dev preview command.", "web_text");
+    const afterThird = getSession(session.session_id);
+    const thirdMegaplan = getMegaplanForSession(session.session_id);
+    const prompt = fs.readFileSync(${JSON.stringify(promptCapturePath)}, "utf8");
+    console.log(JSON.stringify({
+      first: first.response,
+      firstPending: afterFirst?.pending_action?.type ?? null,
+      firstMegaplanExists: Boolean(firstMegaplan),
+      second: second.response,
+      secondPending: afterSecond?.pending_action?.type ?? null,
+      secondMegaplanExists: Boolean(secondMegaplan),
+      third: third.response,
+      thirdPending: afterThird?.pending_action?.type ?? null,
+      thirdMegaplanText: thirdMegaplan?.content ?? "",
+      prompt
+    }));
+  `;
+  const result = runIsolated(script);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}") as Record<string, unknown>;
+  assert.match(String(payload.first), /static storefront mockup|full-stack/i);
+  assert.equal(payload.firstPending, "clarify_requirements");
+  assert.equal(payload.firstMegaplanExists, false);
+  assert.match(String(payload.second), /low-level choices/i);
+  assert.match(String(payload.second), /Which stack\/runtime should Codex use/i);
+  assert.match(String(payload.second), /What persistence should back products, carts, users, and orders/i);
+  assert.match(String(payload.second), /Which user roles should exist/i);
+  assert.match(String(payload.second), /Should Codex conduct product, domain, UX, or technical research before implementation/i);
+  assert.match(String(payload.second), /What command should preview the app locally/i);
+  assert.equal(payload.secondPending, "clarify_requirements");
+  assert.equal(payload.secondMegaplanExists, false);
+  assert.match(String(payload.third), /Megaplan skill created MEGAPLAN\.md/);
+  assert.equal(payload.thirdPending, "approve_megaplan");
+  assert.match(String(payload.thirdMegaplanText), /## Technical Requirements/);
+  assert.match(String(payload.thirdMegaplanText), /Next\.js app with API routes, SQLite persistence, customer and admin roles/i);
+  assert.match(String(payload.prompt), /Use multi-turn requirements gathering/i);
+  assert.match(String(payload.prompt), /ask whether Codex should conduct product, domain, UX, or technical research before implementation/i);
+  assert.match(String(payload.prompt), /keep asking concise follow-up technical questions/i);
+  assert.match(String(payload.prompt), /Stop asking and choose reasonable defaults only when the user clearly is not entertaining more questions/i);
+});
+
+test("new project naming flow preserves Codex technical clarification response", () => {
+  const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), "planner-new-project-clarify-store-"));
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "planner-new-project-clarify-root-"));
+  const fakeCodexPath = path.join(storeDir, "fake-codex-project-planner.cjs");
+  fs.writeFileSync(fakeCodexPath, `#!/usr/bin/env node
+const fs = require("node:fs");
+let input = "";
+process.stdin.on("data", (chunk) => input += chunk.toString());
+process.stdin.on("end", () => {
+  const allInput = process.argv.join(" ") + "\\n" + input;
+  function arg(name) {
+    const index = process.argv.indexOf(name);
+    return index === -1 ? "" : process.argv[index + 1] || "";
+  }
+  const finalPath = arg("--output-last-message");
+  let value;
+  if (/project-intake/i.test(allInput)) {
+    value = /name it candy clarify verify/i.test(allInput) ? {
+      action: "create_project",
+      assistant_message: "Creating Candy Clarify Verify locally with Codex.",
+      project_name: "Candy Clarify Verify",
+      description: "Make an app to sell candies.",
+      requested_kind: "app",
+      pending_action_type: null,
+      confidence: "high",
+      reason: "The user provided the project name."
+    } : {
+      action: "ask_user",
+      assistant_message: "What would you like to name the candy-selling app project?",
+      project_name: null,
+      description: "Make an app to sell candies.",
+      requested_kind: "app",
+      pending_action_type: "collect_project_name",
+      confidence: "high",
+      reason: "The project name is missing."
+    };
+  } else {
+    value = {
+      decision_type: "ask_clarification",
+      confidence: 0.92,
+      reason: "The candy-selling app request is missing technical requirements that change the architecture.",
+      user_visible_response: "Should the candy-selling app be a static storefront mockup, or a full-stack app with cart/checkout, inventory, auth, payments, and persistent data?",
+      requirements_summary: "Make an app to sell candies.",
+      open_questions: ["Should the candy-selling app be a static storefront mockup, or a full-stack app with cart/checkout, inventory, auth, payments, and persistent data?"],
+      assumptions: [],
+      proposed_design: "",
+      proposed_task_split: [],
+      recommended_worker_count: 1,
+      recommended_worker_mode: "codex_session_local",
+      requires_user_approval: false,
+      approval_reason: "",
+      risk_level: "low",
+      next_action: "none",
+      execution_allowed: false
+    };
+  }
+  if (finalPath) fs.writeFileSync(finalPath, JSON.stringify(value));
+  console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: JSON.stringify(value) } }));
+});
+`);
+  fs.chmodSync(fakeCodexPath, 0o755);
+  const script = `
+    ${bootstrapEnv(storeDir, workspaceRoot)}
+    delete process.env.CODEX_PHONE_SUPERVISOR_TEST_SUPERVISOR_MODEL;
+    process.env.CODEX_PHONE_SUPERVISOR_CODEX_COMMAND = ${JSON.stringify(fakeCodexPath)};
+    process.env.WORKER_MODE = "codex_session_local";
+    process.env.DEFAULT_WORKER_MODE = "codex_session_local";
+    const { createSession } = await import("./codex-phone-supervisor/backend/src/session.ts");
+    const { handleSupervisorMessage } = await import("./codex-phone-supervisor/backend/src/supervisor-tools.ts");
+    const { getSession, upsertSession } = await import("./codex-phone-supervisor/backend/src/store.ts");
+    const { getMegaplanForSession } = await import("./codex-phone-supervisor/backend/src/megaplan.ts");
+    const session = createSession("new project clarify", ${JSON.stringify(workspaceRoot)});
+    session.session_id = "session_new_project_clarify";
+    session.channel = "web_text";
+    session.workspace_path = ${JSON.stringify(workspaceRoot)};
+    upsertSession(session);
+    const first = await handleSupervisorMessage(session.session_id, "can you make an app to sell candies", "web_text");
+    const second = await handleSupervisorMessage(session.session_id, "name it candy clarify verify", "web_text");
+    const latest = getSession(session.session_id);
+    console.log(JSON.stringify({
+      first: first.response,
+      second: second.response,
+      pending: latest?.pending_action?.type ?? null,
+      latest: latest?.latest_codex_message ?? "",
+      megaplanExists: Boolean(getMegaplanForSession(session.session_id))
+    }));
+  `;
+  const result = runIsolated(script);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}") as Record<string, unknown>;
+  assert.match(String(payload.first), /What would you like to name/i);
+  assert.match(String(payload.second), /static storefront mockup|full-stack app/i);
+  assert.match(String(payload.second), /cart|checkout|inventory|auth|payments|persistent data/i);
+  assert.doesNotMatch(String(payload.second), /Codex CLI is running from the configured project root/i);
+  assert.equal(payload.pending, "clarify_requirements");
+  assert.equal(payload.latest, payload.second);
+  assert.equal(payload.megaplanExists, false);
 });
 
 test("agentic planner converts human validation text into acceptance checks, not required commands", () => {

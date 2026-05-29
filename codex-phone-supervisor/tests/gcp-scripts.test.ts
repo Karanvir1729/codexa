@@ -56,9 +56,6 @@ test("GCP scripts wire Codex home bundle auth without broad IAM or public Cloud 
   assert.match(deploy, /HEAD_DEVELOPER_CODEX_HOME_BUNDLE_SECRET/);
   assert.match(deploy, /HEAD_DEVELOPER_CODEX_HOME_BUNDLE_GCS_URI/);
   assert.match(deploy, /SUPERVISOR_MODEL_PROVIDER/);
-  assert.match(deploy, /VERTEX_PROJECT_ID/);
-  assert.match(deploy, /VERTEX_LOCATION/);
-  assert.match(deploy, /VERTEX_MODEL/);
   assert.match(deploy, /DEFAULT_WORKER_MODE/);
   assert.match(deploy, /HEAD_DEVELOPER_STATE_STORE/);
   assert.match(deploy, /FIRESTORE_PROJECT_ID/);
@@ -143,7 +140,6 @@ test("GCP worker VM smokes use a container-ready VM image by default", () => {
   assert.match(safeSmoke, /--image-family/);
   assert.match(safeSmoke, /HOME=\/tmp\/cos-docker-home/);
   assert.match(safeSmoke, /DOCKER_CONFIG=\/tmp\/cos-docker-home\/\.docker/);
-  assert.match(safeSmoke, /VERTEX_PROJECT_ID/);
   assert.match(safeSmoke, /Docker is required on the worker VM image/);
 
   const vmSmoke = fs.readFileSync(path.join(process.cwd(), "scripts", "gcp", "create-worker-vm-smoke.sh"), "utf8");
@@ -152,7 +148,6 @@ test("GCP worker VM smokes use a container-ready VM image by default", () => {
   assert.match(vmSmoke, /--image-family/);
   assert.match(vmSmoke, /HOME=\/tmp\/cos-docker-home/);
   assert.match(vmSmoke, /DOCKER_CONFIG=\/tmp\/cos-docker-home\/\.docker/);
-  assert.match(vmSmoke, /VERTEX_PROJECT_ID/);
 });
 
 test("GCP VM codex_home_bundle auth fails clearly when bundle source is missing", () => {

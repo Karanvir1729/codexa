@@ -349,11 +349,12 @@ export function classifyCommand(command: string, cwd: string, workspacePath: str
     /^git\s+checkout\s+-b\b/i,
     /^(npm|pnpm|yarn)\s+(test|run\s+(build|test|typecheck|lint)|build|test|lint)\b/i,
     /^python\s+-m\s+pytest\b/i,
+    /^python3?\s+-m\s+html\.parser\s+[\w./-]+$/i,
     /^node\s+--check\b/i,
     /^node\s+--version$/i,
     /^node\s+\/state\/runtime\/materialize-codex-files\.mjs\b/i,
     /^docker\s+(build|run)\b/i,
-    /^codex\s+exec\b/i,
+    /^(?:[\w./-]*\/)?codex\s+exec\b/i,
     /^gcloud\s+[\w-]+\s+(list|describe|get-iam-policy)\b/i,
     /^gcloud\s+(services\s+enable|artifacts\s+repositories\s+create|run\s+deploy|compute\s+instances\s+create|pubsub\s+(topics|subscriptions)\s+create|storage\s+(buckets\s+create|cp)|firestore\s+databases\s+create|tasks\s+queues\s+create)\b/i,
   ];

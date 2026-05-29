@@ -10,7 +10,6 @@
 - `pubsub.googleapis.com` - events, approvals, audit stream.
 - `firestore.googleapis.com` - project/session state option.
 - `storage.googleapis.com` - raw logs/artifacts/diffs.
-- `aiplatform.googleapis.com` - Vertex AI/Gemini supervisor model.
 - `cloudbuild.googleapis.com` - optional image build path.
 - `iam.googleapis.com` - service account and IAM inspection.
 
@@ -43,7 +42,6 @@ Secret names only:
 - `openai-api-key`
 - `codex-api-key`
 - `github-token`
-- `vertex-service-account-json` if not using workload identity
 - `nvidia-nim-api-key`
 - `ngc-api-key` if pulling NGC-hosted NIM containers
 

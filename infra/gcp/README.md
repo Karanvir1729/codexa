@@ -59,10 +59,9 @@ set explicitly.
 - Cloud Run service: backend API and Twilio webhooks.
 - Optional Cloud Run WebSocket/SSE endpoint: dashboard realtime updates.
 - Pub/Sub topics: Codex events, approvals, audit events.
-- Secret Manager: Twilio, Codex home bundle, Vertex, GitHub credentials.
+- Secret Manager: Twilio, Codex home bundle, GitHub credentials.
 - Firestore or Cloud SQL: sessions, projects, approvals, channel bindings.
 - Cloud Storage: raw Codex logs, artifacts, diffs.
-- Vertex AI/Gemini: project routing, summaries, risk classification.
 - Conversational Agents / Dialogflow CX: managed dialog, project-selection conversation, and summaries when explicitly configured.
 - Compute Engine GPU VM: optional self-hosted NVIDIA NIM/OpenAI-compatible inference endpoint for summaries, project routing, and risk classification.
 

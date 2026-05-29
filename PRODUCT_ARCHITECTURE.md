@@ -1,6 +1,6 @@
 # Product Architecture
 
-The product is a cloud AI Head Developer. All channels normalize into the same control plane:
+The product is a local-first AI Head Developer. All channels normalize into the same control plane:
 
 - Web text
 - Web voice
@@ -10,38 +10,75 @@ The product is a cloud AI Head Developer. All channels normalize into the same c
 
 ## Control Plane
 
-Cloud Run hosts the API and Cloud Orchestrator. The orchestrator owns session state, project selection, task records, worker assignment, command/event logs, approvals, and grounded summaries.
+For v1, the API and dashboard run locally. The orchestrator owns session state, project selection, task records, Codex session events, approvals, local validation, preview metadata, and grounded summaries.
 
 Key records are typed in `codex-phone-supervisor/backend/src/types.ts`: `SessionState`, `ProjectRecord`, `TaskRecord`, `WorkerRecord`, `CommandEventRecord`, `RunSummaryRecord`, and `ApprovalRequestRecord`.
 
-State access goes through the `StateStore` boundary. Local development defaults to `FileStateStore`; isolated tests can use `MemoryStateStore`; Cloud Run defaults to `FirestoreStateStore` so state survives service restarts. Schema details are documented in `docs/STATE_SCHEMA.md`.
+State access goes through the `StateStore` boundary. The v1 local path defaults to `FileStateStore` and writes project-local `.head-developer/state.json` metadata. Isolated tests can use `MemoryStateStore`. Firestore remains available for legacy/cloud experiments but is not required for local app building. Schema details are documented in `docs/STATE_SCHEMA.md`.
 
-Firestore production state must avoid whole-state scans on request hot paths. Sessions, projects, tasks, workers, task graphs, command events, approvals, summaries, worker context packets, runtime command requests, and orchestration events are written as typed documents with top-level query fields. Hot paths use direct document reads or single-field Firestore queries with bounded limits; broad list endpoints are paginated/bounded and are not used for worker callbacks or task graph advancement.
+The v1 source of truth is the selected local repo. There are no separate worker writes, no merge between worker worktrees, no GKE/VM cleanup loop, no worker callback hot path, and no Firestore dependency for local builds.
 
 ## AI Model Boundaries
 
-The user-facing supervisor and agentic planner use real GCP Vertex/Gemini by default. Runtime config defaults `SUPERVISOR_MODEL_PROVIDER` to `vertex`; `mock` is not a runtime provider and is rejected by config validation.
-
-Required runtime Vertex env vars are `VERTEX_PROJECT_ID`, `VERTEX_LOCATION`, and `VERTEX_MODEL`. Missing Vertex config fails clearly before orchestration can silently degrade.
+The user-facing supervisor and agentic planner default to the local Codex CLI path. Runtime config defaults `SUPERVISOR_MODEL_PROVIDER` to `codex_cli`; `mock` is not a runtime provider and is rejected by config validation.
 
 Planner output remains model-driven, but the controller applies generic safety/performance normalization after parsing: cloud and multi-worker execution still require approval, and serial or overlapping splits for one static app surface are collapsed to one worker so simple builds do not spend minutes running unnecessary sequential workers. This guard is based on task structure and file ownership, not prompt names or sample app strings.
 
 The dashboard exposes non-secret model indicators:
 
-- `supervisor_model_provider`: `Vertex/Gemini`
-- `planner_model_provider`: `Vertex/Gemini`
+- `supervisor_model_provider`: `Codex CLI`
+- `planner_model_provider`: `Codex CLI`
 - `worker_code_model`: `Codex CLI`
 
-Codex CLI is used only by workers for implementation/code generation. It is not the user-facing supervisor planner.
+Codex CLI is used by the single local orchestrator and implementation session. It is not a distributed worker fleet.
 
 ## Execution Plane
 
-Workers are isolated behind `WorkerManager` implementations:
+The preferred backend is `codex_session_local`.
+
+Responsibilities:
+
+1. Create or select the local project repo.
+2. Initialize `.head-developer` docs.
+3. Ask, propose, and approve requirements through conversation.
+4. Start one local Codex CLI orchestrator session with `codex exec --json`.
+5. Instruct Codex to choose how many internal logical subagents are useful.
+6. Keep all code in one repo/workspace.
+7. Capture Codex session/history metadata.
+8. Validate the final repo locally.
+9. Open a local preview when applicable.
+10. Render the flowchart from real events.
+
+The structured Codex prompt identifies Codex as the local orchestrator and implementation lead, then requires it to keep all work in one repo. It explicitly forbids disconnected workspaces, per-worker worktrees, external workers, Docker workers, GKE jobs, VM workers, Cloud Run orchestration, Firestore task state, Secret Manager Codex auth, GCS Codex bundles, and worker callbacks for the v1 path.
+
+Codex may report logical subagents such as frontend, backend, shared logic, tests, docs, integration, or validation, but it chooses the count and split. These are flowchart concepts derived from Codex output/events, not separate operating-system workers.
+
+## Flowchart
+
+The dashboard flowchart visualizes the local product path:
+
+- user request
+- requirement summary and clarification questions
+- approved plan
+- one Codex session node
+- logical subagent nodes reported by Codex
+- files changed
+- validation commands
+- preview node
+- final summary node
+
+The dashboard clearly labels this path: "Built by one local Codex orchestrator session."
+
+## Legacy Worker Experiments
+
+The older worker backends remain in the repo for experiments and regression coverage:
 
 - `LocalWorkerManager`
 - `DockerLocalWorkerManager`
 - `GcpVmWorkerManager`
 - `GkeJobWorkerManager`
+
+These modes are not the main v1 product path. Docker, GCP VMs, GKE Jobs, Cloud Run worker callbacks, Firestore worker state, per-worker worktrees, and cloud Codex auth bundles must not be required for local app building.
 
 The GCP VM worker path creates disposable Compute Engine VMs with no public IP by default. Each VM pulls an exact Artifact Registry worker image and runs the worker container with `task_id`, `worker_id`, API callback URL, workspace config, and runtime-only Codex auth metadata. Real `codex exec` on GCP uses `HEAD_DEVELOPER_CODEX_AUTH_METHOD=codex_home_bundle`: the VM fetches a dedicated ChatGPT-login Codex home bundle from Secret Manager or restricted GCS, extracts it into `/codex-home`, validates `codex login status`, and runs Codex CLI without dumping credential files. The OpenAI API-key method remains fallback-only and is disabled by default for live VM smokes.
 
@@ -51,7 +88,7 @@ Current GKE workers intentionally use Pod-local `/workspace` and therefore do no
 
 ## Durable Repo And PR Lifecycle Design
 
-The production parallel-development path should make worker outputs durable before claiming end-to-end multi-worker development:
+If the legacy parallel-development path is revived, it must make worker outputs durable before claiming end-to-end multi-worker development:
 
 1. Project repo creation: create or select a project repository before task graph execution and record repo URL, default branch, provider, and visibility on the project.
 2. File ownership planning: translate each task graph node output contract into explicit file ownership claims. Detect overlapping claims before parallel launch and either revise the split, request approval, or serialize conflicting work.
@@ -65,6 +102,8 @@ The production parallel-development path should make worker outputs durable befo
 Direct pushes to `main`/`master`, public deploys, secret changes, IAM changes, and destructive conflict resolution remain approval-gated.
 
 ## Worker Lifecycle
+
+This lifecycle applies only to legacy worker modes, not `codex_session_local`.
 
 1. Task is created from a user goal.
 2. Orchestrator selects a worker type.
@@ -82,6 +121,8 @@ All commands go through command classification. Low-risk workspace commands run 
 
 ## GCP Resources
 
+These resources are legacy/experimental and are not required for the v1 local Codex session path.
+
 - Cloud Run: API/control plane
 - Artifact Registry: worker images
 - Compute Engine: disposable workers
@@ -94,4 +135,4 @@ All commands go through command classification. Low-risk workspace commands run 
 
 ## Roadmap
 
-Next steps are implementing the durable repo/branch/PR lifecycle, raising or working around the `SSD_TOTAL_GB` GKE scale-up quota in `us-central1`, proving the Codex home bundle smoke end-to-end on disposable VMs, storing large command logs and worker artifacts in Cloud Storage, adding Firestore index/migration automation as query volume grows, and adding service-account/OIDC token exchange if Codex exposes a supported workload identity auth contract.
+Next steps are hardening the local Codex CLI orchestrator path, improving the flowchart event extraction, broadening local validation, and proving voice-driven plan/approval UX. Cloud worker durability, Firestore indexes, and GKE/VM auth remain experimental backlog items.

@@ -1,6 +1,10 @@
-# Cloud Orchestrator State Schema
+# State Schema
 
-The production state store is collection-oriented and migration-safe. Every record stores the typed payload used by the API plus stable IDs and timestamps. Firestore collections use `FIRESTORE_COLLECTION_PREFIX`, defaulting to `head_developer_<env>`.
+The v1 product path is local-first. `FileStateStore` stores the same typed records used by the API, and each generated repo also gets `.head-developer/state.json` with local Codex session metadata.
+
+The local repo is the source of truth for generated code. `.head-developer/state.json` records the Codex session ID when available, rollout/session path, resume command, prompt excerpt, timestamps, files changed, validation results, logical subagent breakdown, preview metadata, and final summary.
+
+Firestore remains supported for legacy/cloud experiments. Its collections are collection-oriented and migration-safe, with `FIRESTORE_COLLECTION_PREFIX` defaulting to `head_developer_<env>`.
 
 ## Collections
 
@@ -36,9 +40,11 @@ Worker payloads keep launch metadata and runtime metadata separately. `image_uri
 
 Local development uses `FileStateStore` by default and writes the same logical schema into `sessions.json`. Tests can use `FileStateStore` with a temp directory or `MemoryStateStore`.
 
+`codex_session_local` also writes project-local state into `.head-developer/state.json`. This file is deliberately simple JSON so the local Codex CLI session, validation, preview, and dashboard can agree on one local record without Firestore, GKE, VM callbacks, Docker workers, or distributed task claims.
+
 ## Cloud Run
 
-Cloud Run defaults to `FirestoreStateStore` when `K_SERVICE` is present. Set these env vars explicitly in production:
+Cloud Run/Firestore is a legacy cloud-worker path, not required for v1 local app building. When that path is enabled, Cloud Run defaults to `FirestoreStateStore` when `K_SERVICE` is present. Set these env vars explicitly:
 
 - `HEAD_DEVELOPER_STATE_STORE=firestore`
 - `FIRESTORE_PROJECT_ID=<gcp-project>`

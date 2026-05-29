@@ -213,7 +213,7 @@ test("multi-worker graph does not complete when an app node only reports docs", 
     process.env.TWILIO_VALIDATE_SIGNATURES = "0";
     process.env.TWILIO_AUTH_TOKEN = "";
     process.env.TWILIO_CONVERSATION_RELAY_WS_URL = "";
-    process.env.SUPERVISOR_MODEL_PROVIDER = "vertex";
+    process.env.SUPERVISOR_MODEL_PROVIDER = "codex_cli";
     process.env.CODEX_PHONE_SUPERVISOR_TEST_SUPERVISOR_MODEL = "deterministic";
     const { projectRecordForWorkspace, upsertProject } = await import("./codex-phone-supervisor/backend/src/project-store.ts");
     const { multiWorkerCoordinator } = await import("./codex-phone-supervisor/backend/src/multi-worker-coordinator.ts");
@@ -376,7 +376,7 @@ test("repair node completion clears the original needs_repair node", () => {
     process.env.TWILIO_VALIDATE_SIGNATURES = "0";
     process.env.TWILIO_AUTH_TOKEN = "";
     process.env.TWILIO_CONVERSATION_RELAY_WS_URL = "";
-    process.env.SUPERVISOR_MODEL_PROVIDER = "vertex";
+    process.env.SUPERVISOR_MODEL_PROVIDER = "codex_cli";
     process.env.CODEX_PHONE_SUPERVISOR_TEST_SUPERVISOR_MODEL = "deterministic";
     const { projectRecordForWorkspace, upsertProject } = await import("./codex-phone-supervisor/backend/src/project-store.ts");
     const { multiWorkerCoordinator } = await import("./codex-phone-supervisor/backend/src/multi-worker-coordinator.ts");

@@ -33,10 +33,7 @@ const vmName = sanitizeLabel(process.env.VM_NAME || `hd-safe-smoke-${stamp}-${wo
 const machineType = process.env.HEAD_DEVELOPER_GCP_WORKER_MACHINE_TYPE || "e2-standard-2";
 const workerImageFamily = process.env.HEAD_DEVELOPER_GCP_WORKER_IMAGE_FAMILY || "cos-stable";
 const workerImageProject = process.env.HEAD_DEVELOPER_GCP_WORKER_IMAGE_PROJECT || "cos-cloud";
-const supervisorModelProvider = process.env.SUPERVISOR_MODEL_PROVIDER || "vertex";
-const vertexProjectId = process.env.VERTEX_PROJECT_ID || "";
-const vertexLocation = process.env.VERTEX_LOCATION || "";
-const vertexModel = process.env.VERTEX_MODEL || "";
+const supervisorModelProvider = process.env.SUPERVISOR_MODEL_PROVIDER || "codex_cli";
 const startupScriptPath = path.join(os.tmpdir(), `${vmName}-startup.sh`);
 const apiBase = process.env.SMOKE_API_BASE || callbackUrl;
 let vmCreated = false;
@@ -206,9 +203,6 @@ run_worker_command() {
     -e WORKER_CALLBACK_AUTH=${callbackAuth} \\
     -e WORKER_CALLBACK_AUDIENCE=${callbackAudience} \\
     -e SUPERVISOR_MODEL_PROVIDER=${supervisorModelProvider} \\
-    -e VERTEX_PROJECT_ID=${vertexProjectId} \\
-    -e VERTEX_LOCATION=${vertexLocation} \\
-    -e VERTEX_MODEL=${vertexModel} \\
     -e HEAD_DEVELOPER_WORKER_COMMAND="\${smoke_command}" \\
     ${workerImage}
 }

@@ -288,11 +288,14 @@ function cachePreviewRecord(preview: PreviewMetadata, taskId: string, projectId:
   });
 }
 
-export async function startPreviewForSession(sessionId: string): Promise<PreviewStartResult> {
+export async function startPreviewForSession(sessionId: string, options: { taskId?: string; allowIncompleteTask?: boolean } = {}): Promise<PreviewStartResult> {
   const session = getSession(sessionId);
   if (!session) return { ok: false, code: "SESSION_NOT_FOUND", message: "Session not found.", status: 404 };
-  const task = latestCompletedTaskForSession(session);
+  const task = options.taskId ? getTask(options.taskId) : latestCompletedTaskForSession(session);
   if (!task) return { ok: false, code: "COMPLETED_TASK_NOT_FOUND", message: "No completed task is available to preview yet.", status: 409 };
+  if (task.status !== "completed" && !options.allowIncompleteTask) {
+    return { ok: false, code: "COMPLETED_TASK_NOT_FOUND", message: "No completed task is available to preview yet.", status: 409 };
+  }
   const project = getProject(task.project_id);
   if (!project) return { ok: false, code: "PROJECT_NOT_FOUND", message: "Project not found for the completed task.", status: 404 };
   const workspacePath = ensureAllowedWorkspace(project.workspace_path);

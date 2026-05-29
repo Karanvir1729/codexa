@@ -98,7 +98,7 @@ function setWorkerRuntimeDefaults() {
   setDefaultEnv("CODEX_PHONE_SUPERVISOR_LOCK_RETRY_MS", "25");
   setDefaultEnv("CODEX_PHONE_SUPERVISOR_PUBLIC_BASE_URL", "");
   setDefaultEnv("CODEX_PHONE_SUPERVISOR_TEST_MODE", "0");
-  setDefaultEnv("SUPERVISOR_MODEL_PROVIDER", "vertex");
+  setDefaultEnv("SUPERVISOR_MODEL_PROVIDER", "codex_cli");
   setDefaultEnv("TWILIO_CONVERSATION_RELAY_WS_URL", "");
   setDefaultEnv("TWILIO_SMS_ENABLED", "0");
   setDefaultEnv("TWILIO_VOICE_ENABLED", "0");

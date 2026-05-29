@@ -19,6 +19,12 @@ test("command policy keeps safe repo inspection commands low risk", () => {
   }
 });
 
+test("command policy allows static HTML parser validation", () => {
+  const decision = classifyCommand("python3 -m html.parser index.html", workspace, workspace);
+  assert.equal(decision.disposition, "allowed");
+  assert.equal(decision.risk_level, "low");
+});
+
 test("command policy allows internal Codex file materialization inside the workspace", () => {
   const decision = classifyCommand("node /state/runtime/materialize-codex-files.mjs /state/runtime/task.files-to-write.json", workspace, workspace);
   assert.equal(decision.disposition, "allowed");

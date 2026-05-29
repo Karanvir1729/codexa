@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import type { PersistedState } from "../backend/src/types.js";
-import { inferNewProjectSpec } from "../backend/src/project-naming.js";
 
 process.env.HEAD_DEVELOPER_STATE_STORE = "memory";
 
@@ -36,33 +35,12 @@ test("product logic does not special-case prior smoke prompts, ids, workspaces, 
   assert.deepEqual(hits, []);
 });
 
-test("randomized project requests route from prompt content, not fixed examples", () => {
-  const cases = [
-    {
-      prompt: "Build a simple landing page for a neon bicycle repair shop.",
-      required: ["neon", "bicycle", "repair"],
-    },
-    {
-      prompt: "Build a tiny website for a Punjabi tiffin service.",
-      required: ["punjabi", "tiffin"],
-    },
-    {
-      prompt: "Build a single-page site for a vintage camera rental business.",
-      required: ["vintage", "camera", "rental"],
-    },
-    {
-      prompt: "Build a landing page for an underwater chess tutoring service with exactly 3 pricing cards and a FAQ section.",
-      required: ["underwater", "chess", "tutoring"],
-    },
-  ];
-
-  for (const item of cases) {
-    const spec = inferNewProjectSpec(item.prompt);
-    assert.equal(spec?.needsName, false);
-    const slug = spec?.slug ?? "";
-    for (const token of item.required) assert.match(slug, new RegExp(token));
-    assert.doesNotMatch(slug, /\b(momo|chai|tea)\b/);
-  }
+test("project intake routes through Codex instead of prompt-specific name parsing", () => {
+  const supervisor = fs.readFileSync(path.join(process.cwd(), "codex-phone-supervisor", "backend", "src", "supervisor-tools.ts"), "utf8");
+  const naming = fs.readFileSync(path.join(process.cwd(), "codex-phone-supervisor", "backend", "src", "project-naming.ts"), "utf8");
+  assert.match(supervisor, /resolveProjectIntake/);
+  assert.doesNotMatch(supervisor, /inferNewProjectSpec/);
+  assert.doesNotMatch(naming, /inferNewProjectSpec|extractName|buildIntent|requestIntent/);
 });
 
 test("summaries are grounded in command events and generated file paths", async () => {

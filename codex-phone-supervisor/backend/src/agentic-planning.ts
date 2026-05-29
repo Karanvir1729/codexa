@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { GoogleAuth } from "google-auth-library";
+import fs from "node:fs";
+import path from "node:path";
+import { spawn } from "node:child_process";
 import { config } from "./config.js";
 import { classifyApproval } from "./approval-firewall.js";
 import { taskComplexityJudge } from "./task-complexity.js";
 import { multiWorkerCoordinator } from "./multi-worker-coordinator.js";
+import { extractFinalAgentText, parseCodexJsonl } from "./parser.js";
 import {
   appendOrchestratorEvent,
   getOrchestratorSettings,
@@ -16,7 +19,6 @@ import {
 } from "./store.js";
 import { getProject, upsertProject } from "./project-store.js";
 import { redactSensitiveJson } from "./redaction.js";
-import { vertexSupervisorConfigurationError } from "./model-provider.js";
 import type {
   ApprovedPlanRecord,
   Channel,
@@ -87,8 +89,9 @@ const decisionTypes: PlannerDecisionType[] = [
 ];
 
 const nextActions: PlannerNextAction[] = ["none", "create_project", "create_task_graph", "launch_workers", "answer_only"];
-const workerModes: WorkerType[] = ["local", "docker_local", "gcp_vm", "gke_job"];
+const workerModes: WorkerType[] = ["codex_session_local", "local", "docker_local", "gcp_vm", "gke_job"];
 const riskLevels: CommandRiskLevel[] = ["low", "medium", "high", "blocked"];
+const PLANNER_CODEX_TIMEOUT_MS = 60_000;
 
 function text(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
@@ -174,6 +177,18 @@ function extractJsonObject(value: string) {
   return JSON.parse(trimmed.slice(start, end + 1)) as unknown;
 }
 
+function safeRead(filePath: string) {
+  try {
+    return fs.readFileSync(filePath, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+function preview(value: string, max = 600) {
+  return value.replace(/\s+/g, " ").trim().slice(0, max);
+}
+
 export function parsePlannerDecision(value: unknown): PlannerDecision {
   const parsed = typeof value === "string" ? extractJsonObject(value) : value;
   if (!parsed || typeof parsed !== "object") {
@@ -234,6 +249,7 @@ function includesAny(value: string, patterns: RegExp[]) {
 function requestedWorkerMode(textValue: string): WorkerType | null {
   const value = normalized(textValue);
   if (/\b(docker local|docker_local|local docker)\b/.test(value)) return "docker_local";
+  if (/\b(codex session local|local codex session|one codex session|codex_session_local)\b/.test(value)) return "codex_session_local";
   if (/\b(gke|kubernetes|k8s)\b[\s\S]*\b(job|jobs|workers?)\b/.test(value) || /\bworkers?\b[\s\S]*\b(gke|kubernetes|k8s)\b/.test(value)) return "gke_job";
   if (/\b(gcp vm|compute engine)\b/.test(value) || /\b(gcp|cloud)\b[\s\S]*\bworkers?\b/.test(value) || /\bworkers?\b[\s\S]*\b(gcp|cloud)\b/.test(value)) return "gcp_vm";
   if (/\b(local mode|use local|local worker)\b/.test(value)) return "local";
@@ -318,12 +334,19 @@ function optimizePlannerDecisionForSpeed(input: PlannerInput, decision: PlannerD
       ? "GKE Job"
       : decision.recommended_worker_mode === "gcp_vm"
         ? "GCP VM"
+        : decision.recommended_worker_mode === "codex_session_local"
+          ? "local Codex CLI session"
         : "local";
+  const localCodexSession = decision.recommended_worker_mode === "codex_session_local";
   return {
     ...decision,
     decision_type: approvalIsRiskBased ? decision.decision_type : "start_simple_task" as const,
-    reason: `${decision.reason} Optimized the planner split to one worker because the proposed static-app tasks were serial or overlapped on one app surface.`,
-    user_visible_response: `I can keep this fast as one ${workerLabel} worker because the proposed static-app split is sequential or targets the same app surface. I will build the requested static app, validate the generated files, and report real command evidence.`,
+    reason: localCodexSession
+      ? `${decision.reason} Kept the static-app work in one local Codex CLI session because the planned areas overlap on one app surface.`
+      : `${decision.reason} Optimized the planner split to one worker because the proposed static-app tasks were serial or overlapped on one app surface.`,
+    user_visible_response: localCodexSession
+      ? "I can keep this fast as one local Codex CLI session. Codex will build the requested static app, validate the generated files, and report real command evidence."
+      : `I can keep this fast as one ${workerLabel} worker because the proposed static-app split is sequential or targets the same app surface. I will build the requested static app, validate the generated files, and report real command evidence.`,
     proposed_task_split: [
       {
         title: "Build static app",
@@ -396,8 +419,32 @@ export class DeterministicFallbackPlannerModel implements PlannerModel {
       });
     }
 
-    const vagueGame = /\b(build|make|create)\b[\s\S]*\bgame\b/.test(value) && !/\b(platformer|puzzle|card|board|word|arcade|racing|shooter|quiz|snake|tetris|chess|memory)\b/.test(value);
+    const vagueGame = /\b(build|make|create)\b[\s\S]*\bgame\b/.test(value) && !/\b(platformer|puzzle|card|board|word|wordle|arcade|racing|shooter|quiz|snake|tetris|chess|memory)\b/.test(value);
     const vagueBuild = /^(build|make|create)\s+(an?\s+)?(app|website|site|tool|game)\.?$/.test(value);
+    const underspecifiedCommerceApp = /\b(app|application)\b/.test(value)
+      && /\b(sell|selling|shop|store|commerce|checkout|cart|marketplace)\b/.test(value)
+      && !/\b(static|mock|prototype|frontend only|front-end only|no backend|full[- ]?stack|backend|api|database|db|stripe|payment|checkout|cart|inventory|auth|login)\b/.test(value);
+    if (underspecifiedCommerceApp) {
+      const question = "Should the selling app be a static storefront mockup, or a full-stack app with cart/checkout, inventory, auth, payments, and persistent data?";
+      return decision({
+        decision_type: "ask_clarification",
+        confidence: 0.86,
+        reason: "The request is for a commerce app, but the technical scope changes the architecture and validation plan.",
+        user_visible_response: question,
+        requirements_summary: input.user_message,
+        open_questions: [question],
+        assumptions: [],
+        proposed_design: "",
+        proposed_task_split: [],
+        recommended_worker_count: 1,
+        recommended_worker_mode: mode,
+        requires_user_approval: false,
+        approval_reason: "",
+        risk_level: "low",
+        next_action: "none",
+        execution_allowed: false,
+      });
+    }
     if (vagueGame || vagueBuild) {
       const question = vagueGame
         ? "What kind of game should I build, and should it be browser-based/static or use an existing game framework?"
@@ -487,11 +534,15 @@ export class DeterministicFallbackPlannerModel implements PlannerModel {
         decision_type: "start_simple_task",
         confidence: 0.82,
         reason: "The request is concrete enough for one worker and does not need a multi-worker approval loop.",
-        user_visible_response: `I will build this as a small static app, validate it, and keep the output contract grounded. Starting one ${mode} worker now.`,
+        user_visible_response: mode === "codex_session_local"
+          ? "I will build this locally in one repo with one Codex CLI session, validate it, and keep the output grounded."
+          : `I will build this as a small static app, validate it, and keep the output contract grounded. Starting one ${mode} worker now.`,
         requirements_summary: input.user_message,
         open_questions: [],
         assumptions: ["Use static HTML/CSS/JS unless the existing repo clearly indicates another stack."],
-        proposed_design: "One worker builds the requested page/app surface and runs local validation.",
+        proposed_design: mode === "codex_session_local"
+          ? "One local Codex CLI session owns the repo, implements the requested page/app surface, and runs local validation."
+          : "One worker builds the requested page/app surface and runs local validation.",
         proposed_task_split: oneWorkerLandingSplit(input.user_message),
         recommended_worker_count: 1,
         recommended_worker_mode: mode,
@@ -516,16 +567,22 @@ export class DeterministicFallbackPlannerModel implements PlannerModel {
         decision_type: "propose_task_split",
         confidence: 0.78,
         reason: input.complexity.reason,
-        user_visible_response: `I recommend ${input.complexity.recommended_worker_count} workers for this: ${subtasks.map((item) => item.title).join(" | ")}. Approve this plan before I launch workers?`,
+        user_visible_response: mode === "codex_session_local"
+          ? `This is complex enough to plan first. Proposed responsibility areas: ${subtasks.map((item) => item.title).join(" | ")}. Approve this plan before I start the local Codex CLI session?`
+          : `I recommend ${input.complexity.recommended_worker_count} workers for this: ${subtasks.map((item) => item.title).join(" | ")}. Approve this plan before I launch workers?`,
         requirements_summary: input.user_message,
         open_questions: [],
         assumptions: input.complexity.risks.length ? input.complexity.risks : [],
-        proposed_design: "Use the existing task graph infrastructure with output contracts and validation gates.",
+        proposed_design: mode === "codex_session_local"
+          ? "One local Codex CLI session owns the repo. Codex chooses the logical internal subagents and validates locally."
+          : "Use the existing task graph infrastructure with output contracts and validation gates.",
         proposed_task_split: subtasks,
-        recommended_worker_count: input.complexity.recommended_worker_count,
+        recommended_worker_count: mode === "codex_session_local" ? 1 : input.complexity.recommended_worker_count,
         recommended_worker_mode: mode,
         requires_user_approval: true,
-        approval_reason: "Multi-worker execution requires explicit approval of the task split.",
+        approval_reason: mode === "codex_session_local"
+          ? "Complex local work needs approval of the Megaplan before the Codex CLI session starts."
+          : "Multi-worker execution requires explicit approval of the task split.",
         risk_level: input.complexity.risks.length ? "medium" : "low",
         next_action: "none",
         execution_allowed: false,
@@ -536,11 +593,15 @@ export class DeterministicFallbackPlannerModel implements PlannerModel {
       decision_type: "start_simple_task",
       confidence: 0.7,
       reason: "The request is concrete and can be handled by one worker.",
-      user_visible_response: `I will run this as a one-worker implementation with validation and grounded progress updates. Starting one ${mode} worker now.`,
+      user_visible_response: mode === "codex_session_local"
+        ? "I will run this as one local Codex CLI session with validation and grounded progress updates."
+        : `I will run this as a one-worker implementation with validation and grounded progress updates. Starting one ${mode} worker now.`,
       requirements_summary: input.user_message,
       open_questions: [],
       assumptions: input.complexity.risks,
-      proposed_design: "One worker executes the task with existing output-contract and summary enforcement.",
+      proposed_design: mode === "codex_session_local"
+        ? "One local Codex CLI session owns the repo and reports grounded implementation, subagent, and validation evidence."
+        : "One worker executes the task with existing output-contract and summary enforcement.",
       proposed_task_split: subtasks.length ? subtasks.slice(0, 1) : oneWorkerLandingSplit(input.user_message),
       recommended_worker_count: 1,
       recommended_worker_mode: mode,
@@ -607,25 +668,26 @@ const plannerResponseSchema = {
   },
 };
 
-function vertexGenerateContentUrl(vertex: typeof config.vertex) {
-  return `https://${encodeURIComponent(vertex.location)}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(vertex.projectId)}/locations/${encodeURIComponent(vertex.location)}/publishers/google/models/${encodeURIComponent(vertex.model)}:generateContent`;
-}
-
-function extractVertexText(response: unknown) {
-  const candidates = (response as { candidates?: Array<{ content?: { parts?: Array<{ text?: unknown }> } }> }).candidates ?? [];
-  return candidates
-    .flatMap((candidate) => candidate.content?.parts ?? [])
-    .map((part) => (typeof part.text === "string" ? part.text : ""))
-    .join("")
-    .trim();
-}
-
 function plannerPrompt(input: PlannerInput) {
   return [
     "You are an engineering lead planning controller for Codex Phone Supervisor.",
     "Decide the next orchestration move. Do not force every request through a fixed checklist.",
     "Ask clarification only when the implementation requirements are genuinely unclear.",
-    "Simple concrete tasks may start with one worker. Multi-worker, GCP VM, GKE Job, deploy, secret, IAM, destructive, or public actions require approval.",
+    "For a new app where the answer changes architecture, ask one concise technical requirements question before creating a Megaplan or allowing implementation.",
+    "Examples of architecture-changing gaps: static mockup vs full-stack app, backend/API, database/persistence, auth/accounts, payments/checkout, inventory/admin, target stack, preview/runtime needs, or integrations.",
+    "For commerce or selling apps, do not assume fake checkout, real payments, inventory, auth, or persistence. If not specified, ask whether the user wants a static storefront mockup or a full-stack build with cart/checkout, inventory, auth, payments, and persistent data.",
+    "Use multi-turn requirements gathering for product/app builds. After the user answers one technical question, keep asking concise follow-up technical questions when low-level details still materially affect the implementation, data model, API shape, validation, preview, or UX.",
+    "For app/product builds, ask whether Codex should conduct product, domain, UX, or technical research before implementation, what topics or sources matter, or whether to proceed without research.",
+    "Useful low-level details include target stack, routing/runtime, core entities and fields, auth roles, session behavior, persistence mechanism, API boundaries, checkout/payment behavior, admin permissions, seed data, validation commands, local preview command, and research needs.",
+    "Treat research as a user-controlled requirement. Do not assume research is needed or not needed unless the user answers, asks Codex to decide, or clearly wants to proceed without more questions.",
+    "For follow-ups, prefer one compact batch of 3-7 specific questions. Do not proceed to Megaplan just because one architecture dimension was answered if important implementation details remain unclear.",
+    "Stop asking and choose reasonable defaults only when the user clearly is not entertaining more questions, such as saying just build it, you decide, use defaults, keep it simple, no more questions, or approve.",
+    "When you ask clarification, set decision_type=ask_clarification, next_action=none, execution_allowed=false, requires_user_approval=false, and include the question in open_questions.",
+    "Do not create or approve a Megaplan until required technical direction is known.",
+    "If Pending action is clarify_requirements, treat User message as the user's answer to prior technical questions, then decide whether another low-level clarification round is needed before Megaplan.",
+    "For implementation plans, include the local continuous-improvement expectation: Codex should look for bugs, optimizations, UX gaps, test gaps, and feature opportunities, record deferred ideas in .head-developer/IMPROVEMENTS.md, and avoid implementing scope-changing improvements without approval.",
+    "Simple concrete tasks may start with one local Codex CLI session. Multi-worker legacy modes, GCP VM, GKE Job, deploy, secret, IAM, destructive, or public actions require approval.",
+    "codex_session_local means one Codex CLI session in one repo; any subagents are logical internal Codex work, not OS workers or worktrees.",
     "Treat worker modes such as gke_job, gcp_vm, docker_local, and local as where Codex executes. Do not turn a worker-mode smoke into product deployment, containerization, or infrastructure work unless the user explicitly asks the generated app itself to be deployed.",
     "For proposed_task_split.validation, prefer executable shell commands such as test -f index.html or node --check script.js. Put human review checks in the conversational response instead of pretending they are commands.",
     "When approval is required, make user_visible_response conversational: confirm what you understood, state key assumptions or technical choices, summarize the task split and validation, then ask the user to approve or revise.",
@@ -636,6 +698,9 @@ function plannerPrompt(input: PlannerInput) {
     `Project: ${input.project?.display_name ?? "none"} ${input.project?.workspace_path ?? ""}`,
     `Worker mode: ${input.worker_mode}`,
     `Pending action: ${input.session.pending_action?.type ?? "none"}`,
+    `Prior requirements summary: ${input.session.requirement_summary || "none"}`,
+    `Prior open questions: ${input.session.planner_output?.open_questions?.join(" | ") || "none"}`,
+    `Prior assumptions: ${input.session.planner_output?.assumptions?.join(" | ") || "none"}`,
     `Pending approvals: ${input.session.pending_approvals.filter((approval) => approval.status === "pending").map((approval) => `${approval.kind}: ${approval.command}`).join(" | ") || "none"}`,
     `Complexity judge: ${input.complexity.complexity}; workers=${input.complexity.recommended_worker_count}; split=${input.complexity.should_split}; reason=${input.complexity.reason}`,
     `Suggested subtasks: ${input.complexity.suggested_subtasks.map((item) => `${item.title} -> ${item.files_expected.join(", ")}`).join(" | ") || "none"}`,
@@ -647,56 +712,160 @@ function plannerPrompt(input: PlannerInput) {
   ].join("\n");
 }
 
-export class GcpGeminiPlannerModel implements PlannerModel {
-  readonly modelName: string;
+function buildPlannerSchemaFile(sessionId: string) {
+  fs.mkdirSync(config.runtimeDir, { recursive: true });
+  const schemaPath = path.join(config.runtimeDir, `${sessionId}.planner.schema.json`);
+  const schema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "decision_type",
+      "confidence",
+      "reason",
+      "user_visible_response",
+      "requirements_summary",
+      "open_questions",
+      "assumptions",
+      "proposed_design",
+      "proposed_task_split",
+      "recommended_worker_count",
+      "recommended_worker_mode",
+      "requires_user_approval",
+      "approval_reason",
+      "risk_level",
+      "next_action",
+      "execution_allowed",
+    ],
+    properties: {
+      decision_type: { type: "string", enum: decisionTypes },
+      confidence: { type: "number" },
+      reason: { type: "string" },
+      user_visible_response: { type: "string" },
+      requirements_summary: { type: "string" },
+      open_questions: { type: "array", items: { type: "string" } },
+      assumptions: { type: "array", items: { type: "string" } },
+      proposed_design: { type: "string" },
+      proposed_task_split: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["title", "goal", "can_run_parallel", "depends_on", "expected_files", "validation"],
+          properties: {
+            title: { type: "string" },
+            goal: { type: "string" },
+            can_run_parallel: { type: "boolean" },
+            depends_on: { type: "array", items: { type: "string" } },
+            expected_files: { type: "array", items: { type: "string" } },
+            validation: { type: "array", items: { type: "string" } },
+          },
+        },
+      },
+      recommended_worker_count: { type: "number" },
+      recommended_worker_mode: { type: "string", enum: workerModes },
+      requires_user_approval: { type: "boolean" },
+      approval_reason: { type: "string" },
+      risk_level: { type: "string", enum: riskLevels },
+      next_action: { type: "string", enum: nextActions },
+      execution_allowed: { type: "boolean" },
+    },
+  };
+  fs.writeFileSync(schemaPath, JSON.stringify(schema, null, 2));
+  return schemaPath;
+}
 
-  constructor(private readonly vertex = config.vertex) {
-    this.modelName = `vertex:${vertex.model || "gemini"}`;
-  }
+function codexPlannerArgs() {
+  const args: string[] = [];
+  if (config.localCodex.model) args.push("--model", config.localCodex.model);
+  if (config.localCodex.profile) args.push("--profile", config.localCodex.profile);
+  if (config.localCodex.profileV2) args.push("--profile-v2", config.localCodex.profileV2);
+  if (config.localCodex.inheritShellEnvironment) args.push("-c", "shell_environment_policy.inherit=all");
+  return args;
+}
+
+export class CodexCliPlannerModel implements PlannerModel {
+  readonly modelName = "codex_cli";
 
   async generatePlanningDecision(input: PlannerInput): Promise<PlannerDecision> {
-    if (!this.vertex.projectId || !this.vertex.location || !this.vertex.model) {
-      throw new Error("Vertex planner requires VERTEX_PROJECT_ID, VERTEX_LOCATION, and VERTEX_MODEL.");
-    }
-    const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
-    const client = await auth.getClient();
-    const token = await client.getAccessToken();
-    if (!token.token) throw new Error("Google authentication did not return an access token.");
-    const requestBody = (includeSchema: boolean) => ({
-        systemInstruction: {
-          parts: [{ text: "You are a model-driven agentic planning controller. Return only structured JSON." }],
-        },
-        contents: [{ role: "user", parts: [{ text: plannerPrompt(input) }] }],
-        generationConfig: {
-          temperature: 0.1,
-          maxOutputTokens: 4096,
-          responseMimeType: "application/json",
-          ...(this.vertex.model.includes("2.5") ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
-          ...(includeSchema ? { responseSchema: plannerResponseSchema } : {}),
-        },
-      });
-    const callVertexPlanner = async (includeSchema: boolean) => {
-      const response = await fetch(vertexGenerateContentUrl(this.vertex), {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${token.token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(requestBody(includeSchema)),
-      });
-      const body = await response.text();
-      if (!response.ok) {
-        throw new Error(`Vertex planner failed with HTTP ${response.status}: ${body.slice(0, 500)}`);
-      }
-      return parsePlannerDecision(extractVertexText(JSON.parse(body)));
-    };
-    try {
-      return await callVertexPlanner(true);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (!/Planner response did not include a JSON object|Planner decision/i.test(message)) throw error;
-      return callVertexPlanner(false);
-    }
+    const schemaPath = buildPlannerSchemaFile(input.session.session_id);
+    const finalMessagePath = path.join(config.runtimeDir, `${input.session.session_id}.planner.final.json`);
+    const cwd = input.project?.workspace_path ?? config.defaultWorkspacePath;
+    const prompt = plannerPrompt(input);
+    const args = [
+      "exec",
+      ...codexPlannerArgs(),
+      "--json",
+      "--color",
+      "never",
+      "--output-schema",
+      schemaPath,
+      "--output-last-message",
+      finalMessagePath,
+      "-C",
+      cwd,
+      "--skip-git-repo-check",
+      "-s",
+      "read-only",
+      "-",
+    ];
+    appendOrchestratorEvent({
+      scope: "planning",
+      scope_id: input.session.session_id,
+      type: "planner.codex_cli.started",
+      message: "Started read-only Codex CLI planner session.",
+      data: {
+        session_id: input.session.session_id,
+        project_id: input.project?.project_id ?? null,
+        cwd,
+        model: config.localCodex.model || null,
+      },
+    });
+    const child = spawn(config.codexCommand, args, {
+      cwd,
+      env: {
+        ...process.env,
+        CODEX_HOME: config.codexHome,
+        NO_COLOR: "1",
+        FORCE_COLOR: "0",
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+    }, PLANNER_CODEX_TIMEOUT_MS);
+    child.stdin?.on("error", () => undefined);
+    child.stdin?.end(prompt);
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+      child.on("error", reject);
+      child.on("close", (code, signal) => resolve({ code, signal }));
+    });
+    clearTimeout(timer);
+    if (timedOut) throw new Error("Codex planner timed out.");
+    if (exit.code !== 0) throw new Error(`Codex planner exited with code ${exit.code ?? "null"}${stderr ? `: ${preview(stderr)}` : ""}`);
+    const finalText = extractFinalAgentText(parseCodexJsonl(`${stdout}\n${stderr}`)) || safeRead(finalMessagePath) || stdout;
+    const decision = parsePlannerDecision(finalText);
+    appendOrchestratorEvent({
+      scope: "planning",
+      scope_id: decision.planning_decision_id ?? input.session.session_id,
+      type: "planner.codex_cli.completed",
+      message: `${decision.decision_type}: ${decision.reason}`,
+      data: {
+        session_id: input.session.session_id,
+        project_id: input.project?.project_id ?? null,
+        decision,
+      },
+    });
+    return decision;
   }
 }
 
@@ -734,8 +903,8 @@ function currentWorkerMode(session: SessionState, explicit?: WorkerType | null) 
 
 function modelForConfig(): PlannerModel {
   if (config.testMode && config.testSupervisorModelDouble === "deterministic") return new DeterministicFallbackPlannerModel();
-  if (config.supervisorModelProvider === "vertex") return new GcpGeminiPlannerModel();
-  throw new Error(vertexSupervisorConfigurationError);
+  if (config.supervisorModelProvider === "codex_cli") return new CodexCliPlannerModel();
+  throw new Error("Agentic planning is local-first in v1. Set SUPERVISOR_MODEL_PROVIDER=codex_cli or enable the deterministic test planner.");
 }
 
 function recordProjectPlanning(project: ProjectRecord | null, decision: PlannerDecision, modelName: string) {
@@ -774,14 +943,34 @@ function recordProjectPlanning(project: ProjectRecord | null, decision: PlannerD
 function normalizeUserVisibleApprovalPrompt(decision: PlannerDecision) {
   if (!decision.requires_user_approval) return decision;
   if (/\b(approve|approval|confirm)\b/i.test(decision.user_visible_response)) return decision;
+  if (decision.recommended_worker_mode === "codex_session_local") {
+    return {
+      ...decision,
+      user_visible_response: `${decision.user_visible_response} Approve this plan before I start the local Codex CLI session?`,
+    };
+  }
   return {
     ...decision,
     user_visible_response: `${decision.user_visible_response} Approve this plan before I launch workers?`,
   };
 }
 
+function normalizeClarificationResponse(decision: PlannerDecision) {
+  if (decision.decision_type !== "ask_clarification" || !decision.open_questions.length) return decision;
+  if (decision.open_questions.length === 1 && /\?/.test(decision.user_visible_response)) return decision;
+  const visible = normalized(decision.user_visible_response);
+  const missingQuestions = decision.open_questions.filter((question) => !visible.includes(normalized(question)));
+  if (!missingQuestions.length) return decision;
+  const questions = missingQuestions.map((question, index) => `${index + 1}. ${question}`).join(" ");
+  return {
+    ...decision,
+    user_visible_response: `${decision.user_visible_response} ${questions}`.trim(),
+  };
+}
+
 function enforceExecutionSafety(decision: PlannerDecision) {
   const cloudWorkerMode = decision.recommended_worker_mode === "gcp_vm" || decision.recommended_worker_mode === "gke_job";
+  const localCodexSession = decision.recommended_worker_mode === "codex_session_local";
   const multiWorker = decision.recommended_worker_count > 1 || decision.decision_type === "start_multi_worker_task";
   if (!decision.execution_allowed || (!cloudWorkerMode && !multiWorker)) return decision;
 
@@ -789,13 +978,19 @@ function enforceExecutionSafety(decision: PlannerDecision) {
     ? "GKE Job"
     : decision.recommended_worker_mode === "gcp_vm"
       ? "GCP VM"
+      : localCodexSession
+        ? "local Codex CLI session"
       : decision.recommended_worker_mode;
   const approvalReason = cloudWorkerMode
     ? `${workerLabel} workers run outside the local process, so I need approval before launching them.`
+    : localCodexSession
+      ? "This is complex enough that I need approval of the local implementation plan before starting the single Codex CLI session."
     : "Multi-worker execution needs approval of the task split before workers launch.";
   const response = /\b(approve|approval|confirm)\b/i.test(decision.user_visible_response)
     ? decision.user_visible_response
-    : `${decision.user_visible_response} ${approvalReason} Approve this plan before I launch workers?`;
+    : localCodexSession
+      ? `${decision.user_visible_response} ${approvalReason} Approve this plan before I start the local Codex CLI session?`
+      : `${decision.user_visible_response} ${approvalReason} Approve this plan before I launch workers?`;
 
   return {
     ...decision,
@@ -838,7 +1033,8 @@ export class AgenticPlanningController {
       known_constraints: [
         "Do not print or request secrets.",
         "Do not change GCP IAM or secrets without explicit approval.",
-        "Multi-worker execution requires approval of the split.",
+    "Complex local plans require approval before starting the single Codex CLI session.",
+    "Multi-worker legacy execution requires approval of the split.",
         "GCP VM and GKE Job worker execution require approval before launch.",
         "Worker mode is an execution backend, not an implicit request to deploy or containerize the generated app.",
         "Completion gates and output contracts remain mandatory for app nodes.",
@@ -858,13 +1054,13 @@ export class AgenticPlanningController {
     try {
       decision = parsePlannerDecision(await this.model.generatePlanningDecision(plannerInput));
     } catch (error) {
-      if (!config.testMode) throw new Error(vertexSupervisorConfigurationError);
+      if (!config.testMode) throw new Error("Local planner failed.");
       const fallback = new DeterministicFallbackPlannerModel();
       modelName = `${fallback.modelName}:after_invalid_${this.model.modelName}`;
       decision = parsePlannerDecision(await fallback.generatePlanningDecision(plannerInput));
       decision.reason = `Planner fallback used because ${error instanceof Error ? error.message : String(error)} ${decision.reason}`;
     }
-    decision = normalizeUserVisibleApprovalPrompt(enforceExecutionSafety(optimizePlannerDecisionForSpeed(plannerInput, decision)));
+    decision = normalizeClarificationResponse(normalizeUserVisibleApprovalPrompt(enforceExecutionSafety(optimizePlannerDecisionForSpeed(plannerInput, decision))));
     const planningDecisionId = decision.planning_decision_id ?? `planning_${randomUUID()}`;
     decision.planning_decision_id = planningDecisionId;
     decision = redactSensitiveJson(decision);

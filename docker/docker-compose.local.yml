@@ -23,10 +23,7 @@ services:
       CODEX_PHONE_SUPERVISOR_LOCK_RETRY_MS: "25"
       CODEX_PHONE_SUPERVISOR_PUBLIC_BASE_URL: ""
       CODEX_PHONE_SUPERVISOR_TEST_MODE: "${CODEX_PHONE_SUPERVISOR_TEST_MODE:-0}"
-      SUPERVISOR_MODEL_PROVIDER: "${SUPERVISOR_MODEL_PROVIDER:-vertex}"
-      VERTEX_PROJECT_ID: "${VERTEX_PROJECT_ID:-}"
-      VERTEX_LOCATION: "${VERTEX_LOCATION:-}"
-      VERTEX_MODEL: "${VERTEX_MODEL:-}"
+      SUPERVISOR_MODEL_PROVIDER: "${SUPERVISOR_MODEL_PROVIDER:-codex_cli}"
       GOOGLE_APPLICATION_CREDENTIALS: "/gcp-adc/application_default_credentials.json"
       TWILIO_CONVERSATION_RELAY_WS_URL: ""
       TWILIO_SMS_ENABLED: "0"
@@ -34,9 +31,9 @@ services:
       TWILIO_VALIDATE_SIGNATURES: "0"
       TWILIO_AUTH_TOKEN: ""
       HEAD_DEVELOPER_STATE_STORE: "file"
-      WORKER_MODE: "docker_local"
-      DEFAULT_WORKER_MODE: "docker_local"
-      HEAD_DEVELOPER_DEFAULT_WORKER_TYPE: "docker_local"
+      WORKER_MODE: "codex_session_local"
+      DEFAULT_WORKER_MODE: "codex_session_local"
+      HEAD_DEVELOPER_DEFAULT_WORKER_TYPE: "codex_session_local"
       HEAD_DEVELOPER_API_CALLBACK_URL: "http://api:4317"
       HEAD_DEVELOPER_WORKER_IMAGE_URI: "head-developer-worker:local"
       MAX_GKE_JOB_WORKERS: "${MAX_GKE_JOB_WORKERS:-5}"
@@ -69,7 +66,6 @@ services:
       VITE_SUPERVISOR_API_BASE: "http://127.0.0.1:4317"
       VITE_SUPERVISOR_WORKSPACE_PATH: "/generated-projects"
       VITE_SUPERVISOR_USER_ID: "local-docker-user"
-      VITE_SUPERVISOR_TERMINAL_WS_URL: "ws://127.0.0.1:4317/terminal"
     depends_on:
       api:
         condition: service_healthy
@@ -87,6 +83,8 @@ services:
 
   worker:
     image: head-developer-worker:local
+    profiles:
+      - legacy-worker
     build:
       context: ..
       dockerfile: docker/Dockerfile.worker
@@ -110,10 +108,7 @@ services:
       CODEX_PHONE_SUPERVISOR_LOCK_RETRY_MS: "25"
       CODEX_PHONE_SUPERVISOR_PUBLIC_BASE_URL: ""
       CODEX_PHONE_SUPERVISOR_TEST_MODE: "${CODEX_PHONE_SUPERVISOR_TEST_MODE:-0}"
-      SUPERVISOR_MODEL_PROVIDER: "${SUPERVISOR_MODEL_PROVIDER:-vertex}"
-      VERTEX_PROJECT_ID: "${VERTEX_PROJECT_ID:-}"
-      VERTEX_LOCATION: "${VERTEX_LOCATION:-}"
-      VERTEX_MODEL: "${VERTEX_MODEL:-}"
+      SUPERVISOR_MODEL_PROVIDER: "${SUPERVISOR_MODEL_PROVIDER:-codex_cli}"
       GOOGLE_APPLICATION_CREDENTIALS: "/gcp-adc/application_default_credentials.json"
       TWILIO_CONVERSATION_RELAY_WS_URL: ""
       TWILIO_SMS_ENABLED: "0"

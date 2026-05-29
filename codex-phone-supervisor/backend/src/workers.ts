@@ -416,9 +416,6 @@ export interface GkeJobManifestOptions {
   callbackUrl?: string;
   callbackAudience?: string;
   gcpProjectId?: string;
-  vertexProjectId?: string;
-  vertexLocation?: string;
-  vertexModel?: string;
   codexHome?: string;
   codexHomeBundleGcsUri?: string;
   codexHomeBundleSecret?: string;
@@ -461,9 +458,6 @@ export function buildGkeJobManifest(worker: WorkerRecord, options: GkeJobManifes
     env("GCP_PROJECT_ID", gcpProjectId),
     env("GOOGLE_CLOUD_PROJECT", gcpProjectId),
     env("SUPERVISOR_MODEL_PROVIDER", config.supervisorModelProvider),
-    env("VERTEX_PROJECT_ID", options.vertexProjectId ?? config.vertex.projectId),
-    env("VERTEX_LOCATION", options.vertexLocation ?? config.vertex.location),
-    env("VERTEX_MODEL", options.vertexModel ?? config.vertex.model),
     env("CODEX_HOME", codexHome),
     env("HEAD_DEVELOPER_CODEX_AUTH_METHOD", "codex_home_bundle"),
     env("HEAD_DEVELOPER_CODEX_HOME", codexHome),
@@ -612,9 +606,6 @@ function startupScript(worker: WorkerRecord) {
     `  -e GCP_PROJECT_ID=${config.gcp.projectId} \\`,
     `  -e GOOGLE_CLOUD_PROJECT=${config.gcp.projectId} \\`,
     `  -e SUPERVISOR_MODEL_PROVIDER=${config.supervisorModelProvider} \\`,
-    `  -e VERTEX_PROJECT_ID=${config.vertex.projectId} \\`,
-    `  -e VERTEX_LOCATION=${config.vertex.location} \\`,
-    `  -e VERTEX_MODEL=${config.vertex.model} \\`,
     `  -e CODEX_HOME=${config.codexAuth.homePath} \\`,
     `  -e HEAD_DEVELOPER_CODEX_AUTH_METHOD=${config.codexAuth.method} \\`,
     `  -e HEAD_DEVELOPER_CODEX_HOME=${config.codexAuth.homePath} \\`,

@@ -23,7 +23,7 @@ function bootstrapEnv(storeDir: string, workspace: string) {
     process.env.CODEX_PHONE_SUPERVISOR_PUBLIC_BASE_URL = "";
     process.env.CODEX_PHONE_SUPERVISOR_TERMINAL_ENABLED = "0";
     process.env.CODEX_PHONE_SUPERVISOR_DESKTOP_TERMINAL_ENABLED = "0";
-    process.env.SUPERVISOR_MODEL_PROVIDER = "vertex";
+    process.env.SUPERVISOR_MODEL_PROVIDER = "codex_cli";
     process.env.CODEX_PHONE_SUPERVISOR_TEST_SUPERVISOR_MODEL = "deterministic";
     process.env.TWILIO_SMS_ENABLED = "0";
     process.env.TWILIO_VOICE_ENABLED = "0";
@@ -422,10 +422,12 @@ test("operator chat responses summarize state without raw JSON payloads", () => 
   assert.match(responses.preview, /Preview is ready at http:\/\/127\.0\.0\.1:0\/previews\//);
 });
 
-test("dashboard worker controls call the typed operator action API", () => {
+test("dashboard uses local Codex controls instead of legacy worker operator controls", () => {
   const source = fs.readFileSync(path.join(process.cwd(), "codex-phone-supervisor/frontend/src/main.tsx"), "utf8");
-  assert.match(source, /\/operator\/actions/);
-  assert.match(source, /Stop worker/);
-  assert.match(source, /Restart worker/);
-  assert.match(source, /Show Codex history/);
+  assert.match(source, /data-testid="codex-cli-stream"/);
+  assert.match(source, /Start Codex CLI/);
+  assert.doesNotMatch(source, /\/operator\/actions/);
+  assert.doesNotMatch(source, /Stop worker/);
+  assert.doesNotMatch(source, /Restart worker/);
+  assert.doesNotMatch(source, /Show Codex history/);
 });

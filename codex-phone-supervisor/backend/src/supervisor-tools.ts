@@ -6,8 +6,8 @@ import { classifyApproval } from "./approval-firewall.js";
 import { answerStateQuestion } from "./intent.js";
 import { runCodexSession } from "./codex.js";
 import { actionRouter, approveOperatorAction, rejectOperatorAction } from "./action-router.js";
-import { createSupervisorModel, vertexSupervisorConfigurationError, type DevelopmentTurnOutput, type SupervisorModelConfig, type SupervisorToolName } from "./model-provider.js";
-import { inferNewProjectSpec } from "./project-naming.js";
+import { createSupervisorModel, type DevelopmentTurnOutput, type SupervisorModelConfig, type SupervisorToolName } from "./model-provider.js";
+import { resolveProjectIntake } from "./project-intake.js";
 import {
   appendAuditEvent,
   appendOrchestratorEvent,
@@ -42,8 +42,10 @@ import {
 } from "./project-store.js";
 import { cloudOrchestrator } from "./cloud-orchestrator.js";
 import { multiWorkerCoordinator } from "./multi-worker-coordinator.js";
+import { LOCAL_CODEX_BACKEND, startLocalCodexSession } from "./codex-session-local.js";
 import { agenticPlanningController, parsePlannerDecision } from "./agentic-planning.js";
 import { answerPreviewQuestion, isPreviewQuestion, isPreviewRequest, previewChatResponse, startPreviewForSession } from "./preview.js";
+import { writeMegaplan, type MegaplanRecord } from "./megaplan.js";
 import type { Channel, PendingAction, PlannerDecision, SessionState, SupervisorEvent, SupervisorModelProvider, WorkerType } from "./types.js";
 
 export function list_projects() {
@@ -191,6 +193,9 @@ function describeNewProjectResult(result: Awaited<ReturnType<typeof create_proje
   if (result.status === "waiting_for_approval" && message) {
     return message;
   }
+  if (result.status === "idle" && message) {
+    return message;
+  }
   if ("task_graph_id" in result && result.task_graph_id && result.status === "waiting_for_approval") {
     return message ?? `This is a multi-part project. I prepared task graph ${result.task_graph_id}; approve the split to start workers.`;
   }
@@ -201,12 +206,24 @@ function describeNewProjectResult(result: Awaited<ReturnType<typeof create_proje
     return message ?? `Started task graph ${result.task_graph_id} with ${result.task_ids.length} subtasks through ${result.worker_type} worker mode.`;
   }
   if ("task_id" in result && result.task_id) {
+    if (result.worker_type === LOCAL_CODEX_BACKEND) {
+      return `Creating ${result.project_name} at ${result.target_path}. Task ${result.task_id} is running in one local Codex CLI orchestrator session.`;
+    }
     return `Creating ${result.project_name} at ${result.target_path}. Task ${result.task_id} is assigned through ${result.worker_type} worker mode.`;
   }
   return `Creating ${result.project_name} at ${result.target_path}. Codex CLI is running from the configured project root: ${config.newProjectsRoot}.`;
 }
 
 function taskSplitMessage(graph: import("./types.js").TaskGraphRecord, workerMode: WorkerType) {
+  if (workerMode === LOCAL_CODEX_BACKEND) {
+    return [
+      `This is a ${graph.complexity.complexity} project, so I prepared a local implementation plan.`,
+      "Execution: one local Codex CLI orchestrator session in this repo.",
+      "Codex will choose how many logical internal subagents to use and report their responsibilities, files, and validation.",
+      `Responsibility areas: ${graph.nodes.map((node) => node.title).join(" | ")}.`,
+      "Approve this plan to start the local Codex session.",
+    ].join(" ");
+  }
   const parallel = graph.execution_strategy === "parallel_worktrees"
     ? `I can start up to ${Math.min(graph.recommended_worker_count, config.orchestrator.maxParallelWorkers)} Docker workers in isolated worktrees.`
     : "I will run conflicting or dependent work sequentially.";
@@ -234,7 +251,9 @@ function plannerTaskSplitMessage(decision: PlannerDecision) {
     decision.requirements_summary ? `Before I start, here is what I understand: ${decision.requirements_summary}` : "Before I start, I want to confirm the plan.",
     decision.proposed_design ? `Technical direction: ${decision.proposed_design}` : "",
     assumptions,
-    `Worker plan: ${decision.recommended_worker_count} ${decision.recommended_worker_mode} worker${decision.recommended_worker_count === 1 ? "" : "s"}.`,
+    decision.recommended_worker_mode === LOCAL_CODEX_BACKEND
+      ? "Execution plan: one local Codex CLI orchestrator session. Codex will choose how many logical internal subagents to use."
+      : `Worker plan: ${decision.recommended_worker_count} ${decision.recommended_worker_mode} worker${decision.recommended_worker_count === 1 ? "" : "s"}.`,
     split.length ? `Task split: ${split.join(" ")}` : "",
     decision.approval_reason || "I need your approval before I launch workers.",
     "Does this match what you want? Reply `approve` to start, or tell me what to change.",
@@ -243,6 +262,118 @@ function plannerTaskSplitMessage(decision: PlannerDecision) {
 
 function firstAssignment(result: { assignments: Awaited<ReturnType<typeof multiWorkerCoordinator.createAndMaybeStart>>["assignments"] }) {
   return result.assignments[0] ?? null;
+}
+
+function localCodexApprovalMessage(decision: PlannerDecision, megaplan?: MegaplanRecord | null) {
+  const split = decision.proposed_task_split.map((item, index) => {
+    const validation = item.validation.length ? ` Validation: ${item.validation.join(", ")}.` : "";
+    return `${index + 1}. ${item.title}: ${item.goal}.${validation}`;
+  });
+  const design = /\b(worker|workers|task graph|output-contract|output contract|worktree|GKE|GCP VM|Docker)\b/i.test(decision.proposed_design)
+    ? "One local Codex CLI session will own the repo. Codex may use logical internal subagents and local validation inside that session."
+    : decision.proposed_design;
+  const approvalReason = /multi-worker|workers launch|launch workers/i.test(decision.approval_reason)
+    ? "Because this is complex work, I need your approval before I start the single local Codex CLI orchestrator session."
+    : decision.approval_reason;
+  return [
+    decision.requirements_summary ? `Before I start, here is what I understand: ${decision.requirements_summary}` : "Before I start, I want to confirm the plan.",
+    design ? `Technical direction: ${design}` : "",
+    "You will talk directly to Codex as the local CLI orchestrator for this repo.",
+    "I will build this locally in one repo using one local Codex CLI orchestrator session.",
+    megaplan ? `The Megaplan skill created MEGAPLAN.md for ${megaplan.repo.name} on branch ${megaplan.repo.branch ?? "unknown"}.` : "",
+    "Codex will choose how many logical internal subagents to create and will report the actual subagent breakdown after implementation.",
+    split.length ? `Proposed responsibility areas: ${split.join(" ")}` : "",
+    approvalReason || "Because this is complex work, I need your approval before I start the local Codex orchestrator session.",
+    "Reply `approve` to start, or tell me what to change.",
+  ].filter(Boolean).join(" ");
+}
+
+function queueLocalMegaplanApproval(input: {
+  session: SessionState;
+  project: ReturnType<typeof projectRecordForWorkspace>;
+  userGoal: string;
+  decision: PlannerDecision;
+  selectedExistingProject?: boolean;
+}) {
+  const latest = getSession(input.session.session_id) ?? input.session;
+  const decision: PlannerDecision = {
+    ...input.decision,
+    recommended_worker_mode: LOCAL_CODEX_BACKEND,
+    recommended_worker_count: 1,
+    requires_user_approval: true,
+    execution_allowed: false,
+    next_action: "none",
+    approval_reason: input.decision.approval_reason || "The Megaplan must be approved before Codex starts implementation.",
+  };
+  const megaplan = writeMegaplan({
+    session: latest,
+    project: input.project,
+    userGoal: input.userGoal,
+    decision,
+  });
+  const response = localCodexApprovalMessage(decision, megaplan);
+  setPendingAction(latest, {
+    type: "approve_megaplan",
+    original_user_goal: input.userGoal,
+    requested_kind: "app",
+    description: input.userGoal,
+    action: "approve_megaplan",
+    reason: decision.approval_reason || decision.reason,
+    risk_level: decision.risk_level,
+    worker_mode: LOCAL_CODEX_BACKEND,
+    target_project_id: input.project.project_id,
+    planning_decision_id: decision.planning_decision_id,
+    proposed_plan: decision,
+    user_approved_worker_count: 1,
+    user_approved_worker_mode: LOCAL_CODEX_BACKEND,
+    created_at: new Date().toISOString(),
+  });
+  latest.current_status = "waiting_for_approval";
+  latest.status = "waiting_for_approval";
+  latest.approval_status = "pending";
+  latest.requirement_summary = decision.requirements_summary;
+  latest.planning_decision_id = decision.planning_decision_id ?? latest.planning_decision_id;
+  latest.planner_output = decision;
+  latest.latest_codex_message = response;
+  latest.latest_plan = decision.proposed_task_split.map((item) => item.goal);
+  latest.latest_summary = decision.requirements_summary;
+  latest.current_project_id = input.project.project_id;
+  latest.project_id = input.project.project_id;
+  latest.last_updated = new Date().toISOString();
+  upsertSession(latest);
+  upsertProject({
+    ...input.project,
+    requirement_summary: decision.requirements_summary,
+    planning_decision_id: decision.planning_decision_id,
+    planner_output: decision,
+    approval_status: "pending",
+    open_questions: decision.open_questions,
+    assumptions: decision.assumptions,
+    last_active_session_id: latest.session_id,
+    updated_at: new Date().toISOString(),
+  });
+  appendOrchestratorEvent({
+    scope: "planning",
+    scope_id: decision.planning_decision_id ?? latest.session_id,
+    type: "megaplan.approval.requested",
+    message: response,
+    data: { session_id: latest.session_id, project_id: input.project.project_id, decision, pending_action: latest.pending_action, megaplan },
+  });
+  return {
+    session_id: latest.session_id,
+    status: "waiting_for_approval" as const,
+    message: response,
+    project_name: input.project.display_name,
+    target_path: input.project.workspace_path,
+    project_id: input.project.project_id,
+    task_graph_id: null,
+    task_ids: [],
+    worker_ids: [],
+    worker_type: LOCAL_CODEX_BACKEND,
+    selected_existing_project: input.selectedExistingProject,
+    planning_decision_id: decision.planning_decision_id,
+    megaplan,
+  };
 }
 
 async function startWorkerBackedProject(input: {
@@ -262,6 +393,7 @@ async function startWorkerBackedProject(input: {
     workerMode: workerType,
   });
   const decision = planning.decision;
+  const useLocalCodexSession = workerType === LOCAL_CODEX_BACKEND || decision.recommended_worker_mode === LOCAL_CODEX_BACKEND;
 
   if (
     decision.decision_type === "ask_clarification" ||
@@ -270,9 +402,25 @@ async function startWorkerBackedProject(input: {
     decision.decision_type === "answer_status_question"
   ) {
     const latest = getSession(session.session_id) ?? session;
+    if (decision.decision_type === "ask_clarification") {
+      setPendingAction(latest, {
+        type: "clarify_requirements",
+        original_user_goal: description,
+        requested_kind: "app",
+        description,
+        reason: decision.reason,
+        worker_mode: useLocalCodexSession ? LOCAL_CODEX_BACKEND : decision.recommended_worker_mode,
+        target_project_id: project.project_id,
+        planning_decision_id: decision.planning_decision_id,
+        proposed_plan: decision,
+        created_at: new Date().toISOString(),
+      });
+    }
     latest.current_status = decision.decision_type === "ask_clarification" ? "idle" : latest.current_status;
     latest.status = latest.current_status;
     latest.latest_codex_message = decision.user_visible_response;
+    latest.open_questions = decision.open_questions;
+    latest.assumptions = decision.assumptions;
     latest.last_updated = new Date().toISOString();
     upsertSession(latest);
     return {
@@ -298,19 +446,30 @@ async function startWorkerBackedProject(input: {
     decision.decision_type === "request_risky_action_approval"
   ) {
     const latest = getSession(session.session_id) ?? session;
-    const response = decision.proposed_task_split.length > 1 ? plannerTaskSplitMessage(decision) : decision.user_visible_response;
+    if (useLocalCodexSession) {
+      return queueLocalMegaplanApproval({
+        session: latest,
+        project,
+        userGoal: description,
+        decision: { ...decision, recommended_worker_mode: LOCAL_CODEX_BACKEND },
+        selectedExistingProject: input.selectedExistingProject,
+      });
+    }
+    const response = decision.proposed_task_split.length > 1
+      ? plannerTaskSplitMessage(decision)
+      : decision.user_visible_response;
     setPendingAction(latest, {
-      type: decision.decision_type === "request_risky_action_approval" ? "approve_gcp_action" : "approve_task_split",
+      type: !useLocalCodexSession && decision.decision_type === "request_risky_action_approval" ? "approve_gcp_action" : "approve_task_split",
       original_user_goal: description,
       requested_kind: "app",
       description,
       action: decision.decision_type === "request_risky_action_approval" ? description : "approve_planner_task_split",
       reason: decision.approval_reason || decision.reason,
       risk_level: decision.risk_level,
-      worker_mode: decision.recommended_worker_mode,
+      worker_mode: useLocalCodexSession ? LOCAL_CODEX_BACKEND : decision.recommended_worker_mode,
       target_project_id: project.project_id,
       planning_decision_id: decision.planning_decision_id,
-      proposed_plan: decision,
+      proposed_plan: useLocalCodexSession ? { ...decision, recommended_worker_mode: LOCAL_CODEX_BACKEND } : decision,
       user_approved_worker_count: null,
       user_approved_worker_mode: null,
       created_at: new Date().toISOString(),
@@ -340,13 +499,22 @@ async function startWorkerBackedProject(input: {
       task_graph_id: null,
       task_ids: [],
       worker_ids: [],
-      worker_type: decision.recommended_worker_mode,
+      worker_type: useLocalCodexSession ? LOCAL_CODEX_BACKEND : decision.recommended_worker_mode,
       selected_existing_project: input.selectedExistingProject,
       planning_decision_id: decision.planning_decision_id,
     };
   }
 
   if (decision.execution_allowed && (decision.next_action === "launch_workers" || decision.next_action === "create_task_graph")) {
+    if (useLocalCodexSession) {
+      return queueLocalMegaplanApproval({
+        session,
+        project,
+        userGoal: description,
+        decision: { ...decision, recommended_worker_mode: LOCAL_CODEX_BACKEND },
+        selectedExistingProject: input.selectedExistingProject,
+      });
+    }
     const started = await agenticPlanningController.createApprovedGraphAndStart({
       session: getSession(session.session_id) ?? session,
       project,
@@ -376,7 +544,7 @@ async function startWorkerBackedProject(input: {
     };
   }
 
-  if (workerType !== "local") {
+  if (workerType !== "local" && workerType !== LOCAL_CODEX_BACKEND) {
     const latest = getSession(session.session_id) ?? session;
     const approvalReason = decision.approval_reason || `${workerModeLabel(workerType)} worker execution requires approval before launch.`;
     const response = decision.proposed_task_split.length
@@ -438,6 +606,16 @@ async function startWorkerBackedProject(input: {
       selected_existing_project: input.selectedExistingProject,
       planning_decision_id: decision.planning_decision_id,
     };
+  }
+
+  if (useLocalCodexSession) {
+    return queueLocalMegaplanApproval({
+      session,
+      project,
+      userGoal: description,
+      decision: { ...decision, recommended_worker_mode: LOCAL_CODEX_BACKEND },
+      selectedExistingProject: input.selectedExistingProject,
+    });
   }
 
   const result = await multiWorkerCoordinator.createAndMaybeStart(project, description, workerType, { autoStart: true });
@@ -714,7 +892,6 @@ function supervisorModelConfig(): SupervisorModelConfig {
     provider: config.supervisorModelProvider as SupervisorModelProvider,
     testMode: config.testMode,
     testDouble: config.testSupervisorModelDouble as "deterministic" | null,
-    vertex: config.vertex,
     gcpConversationAi: config.gcpConversationAi,
     nvidiaNim: config.nvidiaNim,
     openai: config.openai,
@@ -849,12 +1026,12 @@ async function executeSupervisorTool(session: SessionState, decision: Developmen
       setPendingAction(session, {
         type: "collect_project_name",
         original_user_goal: userText,
-        requested_kind: requestedProjectKind(userText) as PendingAction["requested_kind"],
+        requested_kind: "project",
         created_at: new Date().toISOString(),
       });
       session.project_discovery.status = "collecting";
       session.project_discovery.last_question = response;
-      session.project_discovery.reason = "The model selected create_project without required arguments, so deterministic collection took over.";
+      session.project_discovery.reason = "The model selected create_project without required arguments, so Codex needs the project name.";
       upsertSession(session);
       return {
         response,
@@ -1042,6 +1219,7 @@ async function handleProjectDiscovery(session: SessionState, cleaned: string) {
       latest.workspace_path = decision.selected_workspace_path!;
       latest.active_task = `Project selected: ${project.display_name}`;
       latest.summary_text = `Codex is attached to ${project.display_name} at ${decision.selected_workspace_path}.`;
+      latest.errors = latest.errors.filter((item) => !/^Codex project selector failed\b/.test(item));
       if (priorSession && priorSession.session_id !== latest.session_id) {
         latest.files_read = [...new Set([...latest.files_read, ...priorSession.files_read])].sort();
         latest.files_modified = [...new Set([...latest.files_modified, ...priorSession.files_modified])].sort();
@@ -1279,19 +1457,24 @@ function appendProjectDiscoveryTurn(session: SessionState, role: "user" | "assis
   });
 }
 
-const newProjectKinds = "project|website|site|app|agent|tool|game";
+const implementationVerbPattern = "\\b(build|create|make|add|update|fix|implement|scaffold|generate)\\b";
 
-function isAffirmative(text: string) {
-  return /^(yes|yeah|yep|sure|ok|okay|please|go ahead|do it|create it|start it)$/i.test(text.trim());
+function removeNegatedImplementationClauses(text: string) {
+  return text.replace(
+    /\b(?:do not|don't|dont|without|no)\s+[^.?!,;]*(?:build|create|make|add|update|fix|implement|scaffold|generate|modify|change|edit|write)[^.?!,;]*/gi,
+    " ",
+  );
 }
 
-function isNegative(text: string) {
-  return /^(no|nope|cancel|never mind|nevermind|stop|do not|don't)$/i.test(text.trim());
+function hasImplementationRequest(text: string) {
+  return new RegExp(implementationVerbPattern, "i").test(removeNegatedImplementationClauses(text));
 }
 
-function normalizedProjectKind(value: string | undefined) {
-  const normalized = (value || "project").toLowerCase();
-  return normalized === "site" ? "website" : normalized;
+function readOnlyConversationResponse(text: string) {
+  if (!/\b(?:do not|don't|dont|without|no)\s+[^.?!,;]*(?:create|modify|change|edit|write|build|make|add|update|fix|implement|scaffold|generate)\b/i.test(text)) return null;
+  if (hasImplementationRequest(text)) return null;
+  if (!/\b(confirm|verify|verification|reachable|reach|reply|question|explain|status|summarize|tell me)\b/i.test(text)) return null;
+  return "Confirmed: this browser wrapper can reach Codex for the selected local repo. I will not create or modify files for this turn.";
 }
 
 function setPendingAction(session: SessionState, pendingAction: PendingAction) {
@@ -1325,55 +1508,6 @@ function clearPendingAction(session: SessionState) {
   session.pending_action_payload = null;
 }
 
-function pendingProjectPrompt(session: SessionState) {
-  return [session.project_discovery.last_question, session.latest_codex_message]
-    .filter((value): value is string => Boolean(value?.trim()))
-    .join("\n");
-}
-
-function isAwaitingNewProjectConfirmation(session: SessionState) {
-  return new RegExp(`\\bdo you want\\b[\\s\\S]*\\b(?:create|start|build)\\b[\\s\\S]*\\b(?:new\\s+)?(?:${newProjectKinds})\\b`, "i")
-    .test(pendingProjectPrompt(session));
-}
-
-function isAwaitingNewProjectName(session: SessionState) {
-  const prompt = pendingProjectPrompt(session);
-  return (
-    new RegExp(`\\bwhat\\b[\\s\\S]*\\b(?:call|name)\\b[\\s\\S]*\\b(?:new\\s+)?(?:${newProjectKinds})\\b`, "i").test(prompt) ||
-    new RegExp(`\\b(?:send|provide|give)\\b[\\s\\S]*\\b(?:project\\s+)?name\\b[\\s\\S]*\\b(?:new\\s+)?(?:${newProjectKinds})\\b`, "i").test(prompt)
-  );
-}
-
-function pendingProjectKind(session: SessionState) {
-  const prompt = pendingProjectPrompt(session).toLowerCase();
-  const match = prompt.match(new RegExp(`\\b(?:new\\s+)?(${newProjectKinds})\\b`, "i"));
-  return match?.[1] === "site" ? "website" : match?.[1] || "project";
-}
-
-function requestedProjectKind(text: string) {
-  const match = text.match(new RegExp(`\\b(${newProjectKinds})\\b`, "i"));
-  return normalizedProjectKind(match?.[1]);
-}
-
-function descriptionForNewProject(session: SessionState, cleaned: string, inferredDescription?: string) {
-  if (inferredDescription?.trim()) return inferredDescription.trim();
-  if (session.pending_action?.original_user_goal) {
-    return `${session.pending_action.original_user_goal.trim()} Project name: ${cleaned.trim()}.`;
-  }
-  if (isAwaitingNewProjectName(session)) return `Create a ${pendingProjectKind(session)} named "${cleaned}".`;
-  return cleaned;
-}
-
-function shouldInferNewProject(session: SessionState, cleaned: string) {
-  if (session.project_discovery.status !== "selected") return true;
-  if (new RegExp(`\\b(this|current|existing)\\s+(project|repo|repository|workspace|app|site|website|game)\\b|\\bin\\s+(this|the current|the existing)\\s+(project|repo|repository|workspace|app|site|website|game)\\b`, "i").test(cleaned)) {
-    return false;
-  }
-  if (/\b(new|called|named)\b/i.test(cleaned)) return true;
-  if (new RegExp(`\\b(?:i\\s+)?(?:need|want|would like|am looking for|looking for)\\b[\\s\\S]*\\b(${newProjectKinds})\\b`, "i").test(cleaned)) return true;
-  return new RegExp(`\\b(build|create|make|start|scaffold|generate)\\b[\\s\\S]*\\b(${newProjectKinds})\\b`, "i").test(cleaned);
-}
-
 async function createProjectFromResolvedName(session: SessionState, cleaned: string, projectName: string, description: string) {
   appendProjectDiscoveryTurn(session, "user", cleaned, "project_discovery.user");
   clearPendingAction(session);
@@ -1384,7 +1518,7 @@ async function createProjectFromResolvedName(session: SessionState, cleaned: str
   const latest = getSession(session.session_id);
   if (latest) {
     latest.latest_codex_message = response;
-    if (result.status !== "waiting_for_approval") {
+    if (result.status !== "waiting_for_approval" && result.status !== "idle") {
       clearPendingAction(latest);
     }
     pushSessionEvent(latest, {
@@ -1405,196 +1539,76 @@ async function createProjectFromResolvedName(session: SessionState, cleaned: str
   };
 }
 
-async function handlePendingProjectAction(session: SessionState, cleaned: string) {
-  const pending = session.pending_action;
-  if (!pending) return null;
-
-  if (pending.type === "confirm_create_project") {
-    if (isNegative(cleaned)) {
-      const response = "Okay. I will not create a new project. Tell me which existing project to use, or describe the change for the current project.";
-      appendProjectDiscoveryTurn(session, "user", cleaned, "project_discovery.user");
-      clearPendingAction(session);
-      session.project_discovery.status = "collecting";
-      session.project_discovery.reason = "The user declined deterministic new-project creation.";
-      session.project_discovery.last_question = response;
-      session.latest_codex_message = response;
-      appendProjectDiscoveryTurn(session, "assistant", response, "project_discovery.question");
-      upsertSession(session);
-      return {
-        response,
-        session_id: session.session_id,
-        handled: true,
-        project_discovery: session.project_discovery,
-      };
-    }
-
-    if (isAffirmative(cleaned)) {
-      const kind = normalizedProjectKind(pending.requested_kind);
-      const response = `What should I call the new ${kind}?`;
-      appendProjectDiscoveryTurn(session, "user", cleaned, "project_discovery.user");
-      setPendingAction(session, {
-        ...pending,
-        type: "collect_project_name",
-        created_at: new Date().toISOString(),
-      });
-      session.project_discovery.status = "collecting";
-      session.project_discovery.reason = "The user confirmed a new project and the supervisor is collecting its deterministic project name.";
-      session.project_discovery.last_question = response;
-      session.latest_codex_message = response;
-      appendProjectDiscoveryTurn(session, "assistant", response, "project_discovery.question");
-      upsertSession(session);
-      return {
-        response,
-        session_id: session.session_id,
-        handled: true,
-        project_discovery: session.project_discovery,
-      };
-    }
-
-    return await createProjectFromResolvedName(
-      session,
-      cleaned,
-      cleaned,
-      `${pending.original_user_goal.trim()} Project name: ${cleaned.trim()}.`,
-    );
-  }
-
-  if (pending.type === "collect_project_name") {
-    if (isNegative(cleaned)) {
-      const response = "Okay. I will not create a new project.";
-      appendProjectDiscoveryTurn(session, "user", cleaned, "project_discovery.user");
-      clearPendingAction(session);
-      session.project_discovery.last_question = "";
-      session.latest_codex_message = response;
-      appendProjectDiscoveryTurn(session, "assistant", response, "project_discovery.question");
-      upsertSession(session);
-      return {
-        response,
-        session_id: session.session_id,
-        handled: true,
-        project_discovery: session.project_discovery,
-      };
-    }
-
-    if (isAffirmative(cleaned)) {
-      const response = `Send the project name for the new ${normalizedProjectKind(pending.requested_kind)}.`;
-      appendProjectDiscoveryTurn(session, "user", cleaned, "project_discovery.user");
-      session.project_discovery.status = "collecting";
-      session.project_discovery.reason = "The supervisor is waiting for a concrete new-project name.";
-      session.project_discovery.last_question = response;
-      session.latest_codex_message = response;
-      appendProjectDiscoveryTurn(session, "assistant", response, "project_discovery.question");
-      upsertSession(session);
-      return {
-        response,
-        session_id: session.session_id,
-        handled: true,
-        project_discovery: session.project_discovery,
-      };
-    }
-
-    return await createProjectFromResolvedName(
-      session,
-      cleaned,
-      cleaned,
-      `${pending.original_user_goal.trim()} Project name: ${cleaned.trim()}.`,
-    );
-  }
-
-  return null;
-}
-
 async function handleNewProjectIntent(session: SessionState, cleaned: string) {
-  const pendingResult = await handlePendingProjectAction(session, cleaned);
-  if (pendingResult) return pendingResult;
-
-  const awaitingName = isAwaitingNewProjectName(session);
-  const awaitingConfirmation = isAwaitingNewProjectConfirmation(session);
-  const inferred = shouldInferNewProject(session, cleaned)
-    ? inferNewProjectSpec(cleaned, session.project_discovery.conversation)
-    : null;
-
-  if (!inferred && awaitingConfirmation && isNegative(cleaned)) {
-    const response = "Okay. I will not create a new project. Tell me which existing project to use, or describe the change for the current project.";
-    appendProjectDiscoveryTurn(session, "user", cleaned, "project_discovery.user");
-    session.latest_codex_message = response;
-    appendProjectDiscoveryTurn(session, "assistant", response, "project_discovery.question");
+  let intake: Awaited<ReturnType<typeof resolveProjectIntake>>;
+  try {
+    intake = await resolveProjectIntake(session, cleaned);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    session.errors.push(message);
     upsertSession(session);
-    return {
-      response,
-      session_id: session.session_id,
-      handled: true,
-      project_discovery: session.project_discovery,
-    };
+    appendOrchestratorEvent({
+      scope: "session",
+      scope_id: session.session_id,
+      type: "project_intake.failed",
+      message,
+      data: { session_id: session.session_id },
+    });
+    return null;
   }
 
-  if (!inferred && awaitingConfirmation && isAffirmative(cleaned)) {
-    const response = `What should I call the new ${pendingProjectKind(session)}?`;
-    appendProjectDiscoveryTurn(session, "user", cleaned, "project_discovery.user");
-    session.project_discovery.status = "collecting";
-    session.project_discovery.reason = "The user confirmed they want a new project and the supervisor is collecting its name.";
-    session.project_discovery.last_question = response;
-    session.latest_codex_message = response;
-    appendProjectDiscoveryTurn(session, "assistant", response, "project_discovery.question");
-    upsertSession(session);
-    return {
-      response,
-      session_id: session.session_id,
-      handled: true,
-      project_discovery: session.project_discovery,
-    };
+  const latest = getSession(session.session_id) ?? session;
+  for (const event of intake.rawEvents) {
+    latest.raw_events.push(event);
+    appendAuditEvent({
+      session_id: event.session_id,
+      ts: event.ts,
+      source: event.source,
+      type: event.type,
+      message: event.message,
+      data: event.data,
+    });
   }
+  upsertSession(latest);
 
-  if (!inferred && !awaitingName) return null;
+  const decision = intake.decision;
+  if (decision.action === "no_project_action") return null;
 
-  if (inferred?.needsName) {
-    const kind = requestedProjectKind(cleaned) as PendingAction["requested_kind"];
-    const question = `Do you want to create a new ${normalizedProjectKind(kind)} project?`;
-    appendProjectDiscoveryTurn(session, "user", cleaned, "project_discovery.user");
-    setPendingAction(session, {
-      type: "confirm_create_project",
-      original_user_goal: cleaned,
-      requested_kind: kind,
+  if (decision.action === "ask_user") {
+    appendProjectDiscoveryTurn(latest, "user", cleaned, "project_discovery.user");
+    setPendingAction(latest, {
+      type: decision.pending_action_type ?? "collect_project_name",
+      original_user_goal: decision.description || cleaned,
+      requested_kind: decision.requested_kind ?? "project",
+      description: decision.description || cleaned,
+      reason: decision.reason,
       created_at: new Date().toISOString(),
     });
-    session.project_discovery.status = "collecting";
-    session.project_discovery.reason = "The user asked for a vague new project. The deterministic state machine is confirming project creation before collecting the name.";
-    session.project_discovery.last_question = question;
-    session.latest_codex_message = question;
-    appendProjectDiscoveryTurn(session, "assistant", question, "project_discovery.question");
-    upsertSession(session);
+    latest.project_discovery.status = "collecting";
+    latest.project_discovery.reason = decision.reason;
+    latest.project_discovery.last_question = decision.assistant_message;
+    latest.latest_codex_message = decision.assistant_message;
+    appendProjectDiscoveryTurn(latest, "assistant", decision.assistant_message, "project_discovery.question");
+    upsertSession(latest);
     return {
-      response: question,
-      session_id: session.session_id,
+      response: decision.assistant_message,
+      session_id: latest.session_id,
       handled: true,
-      project_discovery: session.project_discovery,
+      project_discovery: latest.project_discovery,
     };
   }
 
-  if (!inferred && awaitingName && (isAffirmative(cleaned) || isNegative(cleaned))) {
-    const response = `Send the project name for the new ${pendingProjectKind(session)}.`;
-    appendProjectDiscoveryTurn(session, "user", cleaned, "project_discovery.user");
-    session.project_discovery.status = "collecting";
-    session.project_discovery.reason = "The supervisor is waiting for a concrete new-project name.";
-    session.project_discovery.last_question = response;
-    session.latest_codex_message = response;
-    appendProjectDiscoveryTurn(session, "assistant", response, "project_discovery.question");
-    upsertSession(session);
-    return {
-      response,
-      session_id: session.session_id,
-      handled: true,
-      project_discovery: session.project_discovery,
-    };
-  }
-
-  const projectName = inferred?.displayName || cleaned;
-  const description = descriptionForNewProject(session, cleaned, inferred ? cleaned : undefined);
-  return await createProjectFromResolvedName(session, cleaned, projectName, description);
+  return await createProjectFromResolvedName(
+    latest,
+    cleaned,
+    decision.project_name ?? cleaned,
+    decision.description || cleaned,
+  );
 }
 
 function requestedWorkerMode(text: string): WorkerType | null {
   const input = text.toLowerCase();
+  if (/\b(codex_session_local|local codex session|codex cli session|one codex session)\b/.test(input)) return "codex_session_local";
   if (/\b(docker local|docker_local|local docker)\b/.test(input)) return "docker_local";
   if (/\b(gke|kubernetes|k8s)\b[\s\S]*\b(job|jobs|workers?)\b/.test(input) || /\bworkers?\b[\s\S]*\b(gke|kubernetes|k8s)\b/.test(input)) return "gke_job";
   if (/\b(local mode|use local|run (this|it|the next task) locally|local worker)\b/.test(input)) return "local";
@@ -1616,6 +1630,7 @@ function isTaskSplitApproval(text: string) {
 }
 
 function workerModeLabel(mode: WorkerType) {
+  if (mode === "codex_session_local") return "Local Codex CLI session";
   if (mode === "docker_local") return "Docker local";
   if (mode === "gcp_vm") return "GCP VM";
   if (mode === "gke_job") return "GKE Job";
@@ -1686,14 +1701,19 @@ function pendingRevisionResponse(decision: PlannerDecision) {
     const validation = item.validation.length ? ` Validation: ${item.validation.join(", ")}.` : "";
     return `${index + 1}. ${item.title}: ${item.goal}.${files}${validation}`;
   });
+  const design = decision.recommended_worker_mode === LOCAL_CODEX_BACKEND && /\b(worker|workers|task graph|output-contract|output contract|worktree|GKE|GCP VM|Docker)\b/i.test(decision.proposed_design)
+    ? "One local Codex CLI session owns the repo, with Codex choosing any logical internal subagents it needs."
+    : decision.proposed_design;
   return [
     "I updated the pending plan before approval.",
     decision.user_visible_response && !/\b(starting|started|launching|launched)\b/i.test(decision.user_visible_response)
       ? decision.user_visible_response
       : "",
     decision.requirements_summary ? `Updated requirements: ${decision.requirements_summary}` : "",
-    decision.proposed_design ? `Technical direction: ${decision.proposed_design}` : "",
-    `Worker plan: ${decision.recommended_worker_count} ${workerModeLabel(decision.recommended_worker_mode)} worker${decision.recommended_worker_count === 1 ? "" : "s"}.`,
+    design ? `Technical direction: ${design}` : "",
+    decision.recommended_worker_mode === LOCAL_CODEX_BACKEND
+      ? "Execution plan: one local Codex CLI orchestrator session. Codex will choose the actual logical subagent count."
+      : `Worker plan: ${decision.recommended_worker_count} ${workerModeLabel(decision.recommended_worker_mode)} worker${decision.recommended_worker_count === 1 ? "" : "s"}.`,
     split.length ? `Task plan: ${split.join(" ")}` : "",
     "Reply `approve` to start this revised plan, or tell me what else to change.",
   ].filter(Boolean).join(" ");
@@ -1786,11 +1806,98 @@ function answerConversationStateQuestion(session: SessionState, cleaned: string,
 async function handlePendingConversationAction(session: SessionState, cleaned: string, channel?: Channel) {
   const pending = session.pending_action;
   if (!pending) return null;
+  const readOnlyResponse = readOnlyConversationResponse(cleaned);
+  if (readOnlyResponse) {
+    session.latest_codex_message = readOnlyResponse;
+    pushSessionEvent(session, {
+      ts: new Date().toISOString(),
+      source: "codex",
+      type: "supervisor.development.answer",
+      message: readOnlyResponse,
+      data: { reason: "Read-only conversation turn while another action was pending." },
+    });
+    upsertSession(session);
+    return { response: readOnlyResponse, session_id: session.session_id, handled: true };
+  }
   if (pending.type === "confirm_create_project" || pending.type === "collect_project_name") {
-    return await handlePendingProjectAction(session, cleaned);
+    return await handleNewProjectIntent(session, cleaned);
   }
 
-  if (pending.type === "approve_task_split") {
+  if (pending.type === "clarify_requirements") {
+    const project = pending.target_project_id ? getProject(pending.target_project_id) : session.project_id ? getProject(session.project_id) : null;
+    if (!project) {
+      const response = "I need a selected local project before I can apply those technical requirements.";
+      clearPendingAction(session);
+      session.latest_codex_message = response;
+      upsertSession(session);
+      return { response, session_id: session.session_id, handled: true };
+    }
+    const workerMode = pending.worker_mode ?? session.preferred_worker_mode ?? getOrchestratorSettings().default_worker_mode;
+    const updatedGoal = `${pending.original_user_goal}\n\nTechnical requirements from user: ${cleaned}`;
+    let planning: Awaited<ReturnType<typeof agenticPlanningController.decide>>;
+    try {
+      planning = await agenticPlanningController.decide({
+        session,
+        userMessage: updatedGoal,
+        project,
+        workerMode,
+      });
+    } catch (error) {
+      const response = `I could not apply those requirements because the local Codex planner failed: ${error instanceof Error ? error.message : String(error)}`;
+      session.latest_codex_message = response;
+      upsertSession(session);
+      return { response, session_id: session.session_id, handled: true };
+    }
+    const latest = getSession(session.session_id) ?? session;
+    const decision = planning.decision;
+    if (
+      decision.decision_type === "ask_clarification" ||
+      decision.decision_type === "wait_for_user" ||
+      decision.decision_type === "explain_blocker" ||
+      decision.decision_type === "answer_status_question"
+    ) {
+      setPendingAction(latest, {
+        ...pending,
+        original_user_goal: updatedGoal,
+        description: updatedGoal,
+        reason: decision.reason,
+        worker_mode: decision.recommended_worker_mode,
+        planning_decision_id: decision.planning_decision_id,
+        proposed_plan: decision,
+        created_at: pending.created_at,
+      });
+      latest.current_status = "idle";
+      latest.status = "idle";
+      latest.latest_codex_message = decision.user_visible_response;
+      latest.open_questions = decision.open_questions;
+      latest.assumptions = decision.assumptions;
+      upsertSession(latest);
+      return { response: decision.user_visible_response, session_id: latest.session_id, handled: true, decision };
+    }
+    clearPendingAction(latest);
+    if (workerMode === LOCAL_CODEX_BACKEND || decision.recommended_worker_mode === LOCAL_CODEX_BACKEND) {
+      const result = queueLocalMegaplanApproval({
+        session: latest,
+        project,
+        userGoal: updatedGoal,
+        decision: { ...decision, recommended_worker_mode: LOCAL_CODEX_BACKEND },
+        selectedExistingProject: true,
+      });
+      return { response: result.message, session_id: latest.session_id, handled: true, result };
+    }
+    const result = await startWorkerBackedProject({
+      session: latest,
+      project,
+      displayName: project.display_name,
+      targetPath: project.workspace_path,
+      description: updatedGoal,
+      workerType: workerMode,
+      selectedExistingProject: true,
+    });
+    return { response: result.message ?? "Planner handled the clarified requirements.", session_id: latest.session_id, handled: true, result };
+  }
+
+  if (pending.type === "approve_task_split" || pending.type === "approve_megaplan") {
     const pendingDecision = plannerDecisionForPending(session, pending);
     if (/^(explain first|explain|why|why first)$/i.test(cleaned)) {
       const graph = pending.target_task_graph_id ? await Promise.resolve(multiWorkerCoordinator.judge(pending.original_user_goal, pending.target_project_id ? getProject(pending.target_project_id) : null)) : null;
@@ -1804,7 +1911,9 @@ async function handlePendingConversationAction(session: SessionState, cleaned: s
       return { response, session_id: session.session_id, handled: true };
     }
     if (/^(no|reject|deny|cancel|do not|don't)$/i.test(cleaned)) {
-      const response = "Rejected the task split. I will not start the workers for that graph.";
+      const response = pending.type === "approve_megaplan"
+        ? "Rejected the Megaplan. I will not start the local Codex session."
+        : "Rejected the task split. I will not start the workers for that graph.";
       clearPendingAction(session);
       session.current_status = "idle";
       session.status = "idle";
@@ -1820,6 +1929,9 @@ async function handlePendingConversationAction(session: SessionState, cleaned: s
       return { response, session_id: session.session_id, handled: true };
     }
     if (!isTaskSplitApproval(cleaned)) {
+      const projectIntake = await handleNewProjectIntent(session, cleaned);
+      if (projectIntake) return projectIntake;
+
       const project = pending.target_project_id ? getProject(pending.target_project_id) : session.project_id ? getProject(session.project_id) : null;
       const workerMode = requestedWorkerMode(cleaned)
         ?? pendingDecision?.recommended_worker_mode
@@ -1839,7 +1951,7 @@ async function handlePendingConversationAction(session: SessionState, cleaned: s
           workerMode,
         });
       } catch (error) {
-        const response = `I could not revise the pending plan because the Vertex/Gemini supervisor failed: ${error instanceof Error ? error.message : String(error)}`;
+        const response = `I could not revise the pending plan because the local planner failed: ${error instanceof Error ? error.message : String(error)}`;
         session.latest_codex_message = response;
         upsertSession(session);
         appendOrchestratorEvent({
@@ -1854,7 +1966,7 @@ async function handlePendingConversationAction(session: SessionState, cleaned: s
       const latest = getSession(session.session_id) ?? session;
       const latestPending = latest.pending_action ?? pending;
       const plannedDecision = planning.decision;
-      const revisedWorkerCount = workerCount ?? plannedDecision.recommended_worker_count;
+      const revisedWorkerCount = workerMode === LOCAL_CODEX_BACKEND ? 1 : workerCount ?? plannedDecision.recommended_worker_count;
       const revised: PlannerDecision = {
         ...plannedDecision,
         decision_type: "revise_plan",
@@ -1876,18 +1988,22 @@ async function handlePendingConversationAction(session: SessionState, cleaned: s
         }),
       };
       updatePendingPlannerDecision(latest, latestPending, revised, updatedGoal);
+      const revisedProject = latestPending.target_project_id ? getProject(latestPending.target_project_id) : project;
+      const revisedMegaplan = revisedProject && (workerMode === LOCAL_CODEX_BACKEND || revised.recommended_worker_mode === LOCAL_CODEX_BACKEND)
+        ? writeMegaplan({ session: latest, project: revisedProject, userGoal: updatedGoal, decision: revised })
+        : null;
       latest.current_status = "waiting_for_approval";
       latest.status = "waiting_for_approval";
-      latest.latest_codex_message = revised.user_visible_response;
+      latest.latest_codex_message = revisedMegaplan ? localCodexApprovalMessage(revised, revisedMegaplan) : revised.user_visible_response;
       upsertSession(latest);
       appendOrchestratorEvent({
         scope: "planning",
         scope_id: revised.planning_decision_id ?? latest.session_id,
-        type: "planner.plan.revised",
-        message: revised.user_visible_response,
-        data: { session_id: latest.session_id, decision: revised },
+        type: revisedMegaplan ? "megaplan.revised" : "planner.plan.revised",
+        message: latest.latest_codex_message,
+        data: { session_id: latest.session_id, decision: revised, megaplan: revisedMegaplan },
       });
-      return { response: revised.user_visible_response, session_id: latest.session_id, handled: true, decision: revised };
+      return { response: latest.latest_codex_message, session_id: latest.session_id, handled: true, decision: revised };
     }
     if (!pending.target_task_graph_id) {
       const decision = pendingDecision;
@@ -1898,6 +2014,48 @@ async function handlePendingConversationAction(session: SessionState, cleaned: s
         session.latest_codex_message = response;
         upsertSession(session);
         return { response, session_id: session.session_id, handled: true };
+      }
+      if (pending.worker_mode === LOCAL_CODEX_BACKEND || decision.recommended_worker_mode === LOCAL_CODEX_BACKEND) {
+        const approvedDecision: PlannerDecision = { ...decision, recommended_worker_mode: LOCAL_CODEX_BACKEND, recommended_worker_count: 1 };
+        const approvedPlan = agenticPlanningController.approvedPlan(approvedDecision, channel);
+        const latest = getSession(session.session_id) ?? session;
+        clearPendingAction(latest);
+        latest.approved_plan = approvedPlan;
+        latest.approval_status = "approved";
+        latest.user_approved_worker_count = 1;
+        latest.user_approved_worker_mode = LOCAL_CODEX_BACKEND;
+        latest.current_project_id = project.project_id;
+        latest.project_id = project.project_id;
+        latest.latest_codex_message = "Approved local implementation plan. Starting one local Codex CLI orchestrator session.";
+        upsertSession(latest);
+        upsertProject({
+          ...project,
+          approved_plan: approvedPlan,
+          approval_status: "approved",
+          user_approved_worker_count: 1,
+          user_approved_worker_mode: LOCAL_CODEX_BACKEND,
+          updated_at: new Date().toISOString(),
+        });
+        const { task } = startLocalCodexSession({
+          session: latest,
+          project,
+          userGoal: pending.original_user_goal,
+          plannerDecision: approvedDecision,
+          approvedPlan,
+        });
+        appendOrchestratorEvent({
+          scope: "planning",
+          scope_id: approvedPlan.planning_decision_id,
+          type: "planner.plan.approved",
+          message: `Approved local Codex plan ${approvedPlan.planning_decision_id}.`,
+          data: { session_id: latest.session_id, project_id: project.project_id, task_id: task.task_id, approved_plan: approvedPlan },
+        });
+        return {
+          response: `Approved plan. Built by one local Codex orchestrator session: started task ${task.task_id}.`,
+          session_id: latest.session_id,
+          handled: true,
+          result: { task, approved_plan: approvedPlan, worker_ids: [] },
+        };
       }
       const started = await agenticPlanningController.createApprovedGraphAndStart({
         session,
@@ -2311,21 +2469,6 @@ export async function handleSupervisorMessage(sessionId: string, text: string, c
   const conversationControl = await handleConversationControl(session, cleaned, channel);
   if (conversationControl) return finalConversationResponse(sessionId, conversationControl, channel);
 
-  if (session.project_discovery.status !== "selected" && /^(build|make|create)\s+(a\s+|an\s+)?(game|app|website|site|tool)\.?$/i.test(cleaned)) {
-    const planning = await agenticPlanningController.decide({
-      session,
-      userMessage: cleaned,
-      project: null,
-      workerMode: session.preferred_worker_mode ?? getOrchestratorSettings().default_worker_mode,
-    });
-    return finalConversationResponse(sessionId, {
-      response: planning.decision.user_visible_response,
-      session_id: sessionId,
-      handled: true,
-      decision: planning.decision,
-    }, channel, "planner.clarification.sent");
-  }
-
   const newProject = await handleNewProjectIntent(session, cleaned);
   if (newProject) return finalConversationResponse(sessionId, newProject, channel);
 
@@ -2335,6 +2478,23 @@ export async function handleSupervisorMessage(sessionId: string, text: string, c
 
   const direct = answerStateQuestion(session, cleaned);
   if (direct) return finalConversationResponse(sessionId, { response: direct, session_id: sessionId, handled: true }, channel);
+
+  const readOnlyResponse = readOnlyConversationResponse(cleaned);
+  if (readOnlyResponse) {
+    const latest = getSession(sessionId);
+    if (latest) {
+      latest.latest_codex_message = readOnlyResponse;
+      pushSessionEvent(latest, {
+        ts: new Date().toISOString(),
+        source: "codex",
+        type: "supervisor.development.answer",
+        message: readOnlyResponse,
+        data: { reason: "Read-only conversation turn; no implementation requested." },
+      });
+      upsertSession(latest);
+    }
+    return finalConversationResponse(sessionId, { response: readOnlyResponse, session_id: sessionId, handled: true }, channel, "supervisor.development.answer");
+  }
 
   const pending = session.pending_approvals.find((item) => item.status === "pending");
   if (/^(approve it|approve|yes approve|go ahead)$/i.test(cleaned)) {
@@ -2363,7 +2523,7 @@ export async function handleSupervisorMessage(sessionId: string, text: string, c
     const developmentRequest = cleaned.replace(/^tell codex to /i, "");
     const selectedProject = session.project_id ? getProject(session.project_id) : null;
     const selectedWorkerType = session.preferred_worker_mode ?? getOrchestratorSettings().default_worker_mode;
-    const implementationRequest = /\b(build|create|make|add|update|fix|implement|scaffold|generate)\b/i.test(developmentRequest);
+    const implementationRequest = hasImplementationRequest(developmentRequest);
     const planningPreferred = selectedWorkerType !== "local" || /\b(multi-worker|workers?|task split|static|saas|dashboard|gcp)\b/i.test(developmentRequest);
     if (selectedProject && implementationRequest && planningPreferred) {
       const planned = await startWorkerBackedProject({
@@ -2399,9 +2559,7 @@ export async function handleSupervisorMessage(sessionId: string, text: string, c
       upsertSession(latest);
     }
     return finalConversationResponse(sessionId, {
-      response: message.includes(vertexSupervisorConfigurationError)
-        ? vertexSupervisorConfigurationError
-        : "I could not safely decide the next development step. I kept the session unchanged; please restate the request with one concrete goal.",
+      response: "I could not safely decide the next development step. I kept the session unchanged; please restate the request with one concrete goal.",
       session_id: sessionId,
       handled: false,
       error: "SUPERVISOR_DECISION_FAILED",

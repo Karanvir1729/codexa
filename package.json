@@ -11,6 +11,7 @@
     "test": "tsx --test --test-concurrency=1 codex-phone-supervisor/tests/*.test.ts",
     "demo": "tsx codex-phone-supervisor/scripts/demo.ts",
     "phone": "tsx codex-phone-supervisor/scripts/phone-sim.ts",
+    "codex:local": "tsx codex-phone-supervisor/scripts/local-codex-orchestrator.ts",
     "mcp:server": "tsx apps/mcp-server/src/server.ts",
     "gcp:readiness": "bash infra/gcp/readiness.sh",
     "gcp:provision": "bash infra/gcp/provision-control-plane.sh",

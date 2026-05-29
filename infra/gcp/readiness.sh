@@ -74,7 +74,6 @@ Proposed resources:
 - Firestore database for project/session state
 - Cloud Storage bucket for raw logs/artifacts/diffs
 - Service account for Cloud Run runtime identity
-- Vertex AI/Gemini for supervisor routing, summaries, and risk classification
 - Conversational Agents / Dialogflow CX for managed dialog and summaries
 - Optional Compute Engine GPU VM for self-hosted NVIDIA NIM/OpenAI-compatible inference
 

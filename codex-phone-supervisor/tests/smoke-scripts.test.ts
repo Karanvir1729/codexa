@@ -62,10 +62,7 @@ test("smoke scripts encode the required product paths", () => {
 test("Docker compose runtime does not configure mock supervisor", () => {
   const compose = fs.readFileSync(path.join(process.cwd(), "docker", "docker-compose.local.yml"), "utf8");
   assert.doesNotMatch(compose, /SUPERVISOR_MODEL_PROVIDER:\s*["']?mock/i);
-  assert.match(compose, /SUPERVISOR_MODEL_PROVIDER:\s*"\$\{SUPERVISOR_MODEL_PROVIDER:-vertex\}"/);
-  assert.match(compose, /VERTEX_PROJECT_ID/);
-  assert.match(compose, /VERTEX_LOCATION/);
-  assert.match(compose, /VERTEX_MODEL/);
+  assert.match(compose, /SUPERVISOR_MODEL_PROVIDER:\s*"\$\{SUPERVISOR_MODEL_PROVIDER:-codex_cli\}"/);
   assert.match(compose, /CODEX_PHONE_SUPERVISOR_WORKSPACE_PATH:\s*"\/generated-projects"/);
   assert.match(compose, /CODEX_PHONE_SUPERVISOR_PROJECT_ROOTS:\s*"\/generated-projects"/);
   assert.match(compose, /\.\.\/tmp\/codex-phone-supervisor-projects:\/generated-projects/);

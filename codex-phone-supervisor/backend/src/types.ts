@@ -9,9 +9,11 @@ export type Channel = PublicChannel | "twilio_sms" | "twilio_call";
 export type PendingActionType =
   | "confirm_create_project"
   | "collect_project_name"
+  | "clarify_requirements"
   | "approve_gcp_action"
   | "approve_operator_action"
   | "approve_task_split"
+  | "approve_megaplan"
   | "choose_worker_mode"
   | "confirm_deploy"
   | "select_project";
@@ -48,7 +50,7 @@ export interface ConversationMessage {
   text: string;
 }
 
-export type SupervisorModelProvider = "vertex" | "gcp_conversation_ai" | "nvidia_nim" | "openai";
+export type SupervisorModelProvider = "codex_cli" | "gcp_conversation_ai" | "nvidia_nim" | "openai";
 
 export type ApprovalKind =
   | "shell"
@@ -211,6 +213,14 @@ export interface TaskRecord {
   completion_gate_missing_required_app_files?: string[];
   completion_gate_docs_only?: boolean | null;
   latest_preview?: PreviewMetadata | null;
+  execution_backend?: "codex_session_local" | "worker_orchestrator" | null;
+  local_state_path?: string | null;
+  codex_subagents?: LocalCodexSubagentReport[];
+  codex_flowchart_summary?: LocalCodexFlowchartSummary | null;
+  codex_flowchart_json_path?: string | null;
+  local_validation_result?: LocalCodexValidationResult | null;
+  files_changed?: string[];
+  final_summary?: string | null;
   codex_session_id?: string | null;
   codex_rollout_path?: string | null;
   codex_rollout_host_path?: string | null;
@@ -227,6 +237,70 @@ export interface TaskRecord {
   codex_history_verification_command?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface LocalCodexSubagentReport {
+  name: string;
+  responsibility: string;
+  status: "waiting" | "running" | "completed" | "failed" | "skipped" | "unknown";
+  changed_files: string[];
+  validation: string[];
+  summary: string;
+}
+
+export type LocalCodexFlowchartNodeKind =
+  | "user_request"
+  | "requirement_summary"
+  | "plan"
+  | "codex_session"
+  | "subagent"
+  | "validation"
+  | "preview"
+  | "final_summary";
+
+export interface LocalCodexFlowchartNodeReport {
+  id: string;
+  kind: LocalCodexFlowchartNodeKind;
+  label: string;
+  status: string;
+  summary: string;
+  depends_on: string[];
+}
+
+export interface LocalCodexFlowchartEdgeReport {
+  from: string;
+  to: string;
+  label: string;
+}
+
+export interface LocalCodexFlowchartSummary {
+  title: string;
+  overview: string;
+  nodes: LocalCodexFlowchartNodeReport[];
+  edges: LocalCodexFlowchartEdgeReport[];
+}
+
+export interface LocalCodexValidationCommandResult {
+  command: string;
+  status: "passed" | "failed" | "skipped";
+  exit_code: number | null;
+  summary: string;
+}
+
+export interface LocalCodexValidationResult {
+  status: "passed" | "failed";
+  validated_at: string;
+  required_files_exist: boolean;
+  docs_updated: boolean;
+  docs_only_success_rejected: boolean;
+  preview_loaded: boolean | null;
+  files_changed: string[];
+  app_files: string[];
+  documentation_files: string[];
+  commands: LocalCodexValidationCommandResult[];
+  failures: string[];
+  warnings: string[];
+  summary: string;
 }
 
 export type PreviewServerType = "static" | "vite" | "next" | "custom";
@@ -264,7 +338,7 @@ export interface ProjectArtifactFileRecord {
   updated_at: string;
 }
 
-export type WorkerType = "local" | "docker_local" | "gcp_vm" | "gke_job";
+export type WorkerType = "codex_session_local" | "local" | "docker_local" | "gcp_vm" | "gke_job";
 
 export type WorkerStatus = "starting" | "idle" | "assigned" | "running" | "failed" | "stopping" | "stopped" | "expired";
 
@@ -687,7 +761,14 @@ export type FlowchartNodeType =
   | "task_split_proposal"
   | "user_approval"
   | "approved_plan"
-  | "execution_start";
+  | "execution_start"
+  | "user_request"
+  | "codex_plan"
+  | "codex_session"
+  | "codex_subagent"
+  | "files_changed"
+  | "validation"
+  | "final_summary";
 
 export type FlowchartVisualState = "idle" | "planning" | "waiting_for_approval" | "completed" | "failed" | "running" | "warning";
 

@@ -63,6 +63,8 @@ import { setupTerminalWebSocket } from "./terminal.js";
 import { startProgressBroadcaster } from "./progress-broadcaster.js";
 import { DesktopTerminalLaunchDisabledError, launchCodexInDesktopTerminal } from "./desktop-terminal.js";
 import { recordPreviewReport, servePreviewAsset, startPreviewForSession } from "./preview.js";
+import { resetSupervisorSession } from "./session-reset.js";
+import { getMegaplanForSession } from "./megaplan.js";
 import type { Channel, TaskStatus, WorkerType } from "./types.js";
 
 const app = express();
@@ -110,7 +112,7 @@ function hasToolError(result: unknown): result is { error: unknown; code?: unkno
 
 function parseWorkerType(value: unknown): WorkerType {
   const type = String(value || getOrchestratorSettings().default_worker_mode || config.orchestrator.defaultWorkerType || "local");
-  return type === "docker_local" || type === "gcp_vm" || type === "gke_job" ? type : "local";
+  return type === "codex_session_local" || type === "docker_local" || type === "gcp_vm" || type === "gke_job" ? type : "local";
 }
 
 function optionalBodyString(value: unknown) {
@@ -313,6 +315,12 @@ app.get("/ready", (_req, res) => {
     ok: true,
     store: fs.existsSync(config.storePath),
     codex_command: config.codexCommand,
+    local_codex: {
+      model: config.localCodex.model || "user Codex default",
+      access: config.localCodex.bypassApprovalsAndSandbox || config.localCodex.sandbox === "danger-full-access" ? "full local access" : config.localCodex.sandbox,
+      shell_environment: config.localCodex.inheritShellEnvironment ? "inherited" : "codex default",
+      account_config_plugins: "same local Codex account and CODEX_HOME configuration",
+    },
     worker_image_uri: config.orchestrator.workerImageUri || null,
     worker_settings: getOrchestratorSettings(),
     model_providers: config.modelProviders,
@@ -414,6 +422,14 @@ app.get("/sessions/:session_id/summary", (req, res) => {
   res.json(result);
 });
 
+app.get("/sessions/:session_id/megaplan", (req, res) => {
+  const session = getSession(req.params.session_id);
+  if (!session) return res.status(404).json(apiError("SESSION_NOT_FOUND", "Session not found."));
+  const megaplan = getMegaplanForSession(req.params.session_id);
+  if (!megaplan) return res.status(404).json(apiError("MEGAPLAN_NOT_FOUND", "Megaplan has not been created for this session yet."));
+  res.json({ megaplan });
+});
+
 app.post("/codex/start", async (req, res) => {
   const task = String(req.body?.task || "").trim();
   const workspacePath = String(req.body?.workspace_path || config.defaultWorkspacePath);
@@ -486,6 +502,21 @@ app.post("/supervisor/session", (req, res) => {
     data: { session },
   });
   res.status(201).json({ session_id: session.session_id, status: session.current_status });
+});
+
+app.post("/supervisor/session/reset", (req, res) => {
+  try {
+    const result = resetSupervisorSession({
+      sessionId: optionalBodyString(req.body?.session_id),
+      deleteProject: req.body?.delete_project !== false,
+      label: optionalBodyString(req.body?.label) || "New local Codex session",
+      workspacePath: optionalBodyString(req.body?.workspace_path) || config.defaultWorkspacePath,
+      channel: ensureBodyChannel(req.body?.channel, "web_text"),
+    });
+    res.status(201).json(result);
+  } catch (error) {
+    res.status(500).json(apiError("SESSION_RESET_FAILED", error instanceof Error ? error.message : String(error)));
+  }
 });
 
 app.post("/projects", (req, res) => {

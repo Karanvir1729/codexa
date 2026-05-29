@@ -15,16 +15,36 @@ New chat sessions start with a project-selection conversation. The selector asks
 
 The dashboard also has two operator-only terminal controls: an embedded local shell and a button that physically opens Terminal.app and runs the Codex CLI. These controls are for the human operator only; supervisor chat, browser voice, Twilio SMS, and Twilio phone calls cannot access them.
 
-`gcp_conversation_ai` uses Google Cloud Conversational Agents / Dialogflow CX for managed dialog and summarization when configured. `nvidia_nim` uses a self-hosted NVIDIA NIM/OpenAI-compatible endpoint, suitable for a GPU Compute Engine VM running an open NVIDIA/Nemotron-style model. Both providers return only text or structured decisions; Codex tool execution remains behind the backend approval firewall.
+`codex_cli` is the default local path. Optional `gcp_conversation_ai` and `nvidia_nim` modes remain legacy/experimental provider integrations for managed dialog or self-hosted inference. Those providers return only text or structured decisions; Codex tool execution remains behind the backend approval firewall.
 
 ## Five-Minute Architecture
 
 ```text
 web text       \
 web voice       \
-Twilio SMS       -> shared agent core -> project router -> backend tools -> Codex CLI
+Twilio SMS       -> shared agent core -> project router -> local Codex CLI orchestrator
 Twilio phone    /
 ```
+
+## V1 Local Codex Session Path
+
+The default product path is `codex_session_local`: one local Codex CLI orchestrator session owns the selected project repo and writes all implementation changes there.
+
+```text
+user request
+-> clarification when needed
+-> proposed plan
+-> approval for complex work
+-> one local Codex CLI orchestrator session
+-> Codex chooses any useful internal logical subagents
+-> local validation
+-> local preview
+-> flowchart and grounded final summary
+```
+
+The user is talking directly to Codex through the local CLI-backed session. Codex decides how many internal logical subagents to use and reports their responsibilities, files changed, and validation results. These subagents are not OS workers, Docker containers, VM workers, Kubernetes Jobs, or separate worktrees.
+
+The v1 source of truth is the local repo plus local file state. Each generated repo gets `.head-developer/` docs and `.head-developer/state.json` session metadata. Firestore, GKE, GCP VM workers, Cloud Run control-plane callbacks, GCS Codex bundles, Secret Manager Codex auth, worker callback infrastructure, and per-worker worktrees remain legacy/experimental paths and are not required for local app building.
 
 Backend tools:
 
@@ -41,7 +61,7 @@ Backend tools:
 - `deny_action(approvalId)`
 - `stop_session(sessionId)`
 
-The supervisor model provider is configured explicitly with `SUPERVISOR_MODEL_PROVIDER=vertex | gcp_conversation_ai | nvidia_nim | openai | mock`. `mock` requires `CODEX_PHONE_SUPERVISOR_TEST_MODE=1`.
+The supervisor mode is configured explicitly with `SUPERVISOR_MODEL_PROVIDER=codex_cli | gcp_conversation_ai | nvidia_nim | openai | mock`. `mock` requires `CODEX_PHONE_SUPERVISOR_TEST_MODE=1`.
 
 ## Repository Layout
 
@@ -70,6 +90,15 @@ Edit `.env`. The app intentionally requires explicit paths, ports, origins, work
 Set `CODEX_PHONE_SUPERVISOR_PROJECT_ROOTS` to the directories that contain projects the chat selector is allowed to choose from. The selector will not attach Codex to paths outside those roots.
 
 For full-device operator access, set `CODEX_PHONE_SUPERVISOR_WORKSPACE_PATH=/` and `CODEX_PHONE_SUPERVISOR_TERMINAL_CWD=/`. Keep `CODEX_PHONE_SUPERVISOR_NEW_PROJECTS_ROOT` pointed at the repository when you want newly generated projects created inside this repo.
+
+The default execution mode is:
+
+```env
+WORKER_MODE=codex_session_local
+DEFAULT_WORKER_MODE=codex_session_local
+```
+
+No Docker daemon, Firestore database, GKE cluster, Cloud Run service, or VM worker pool is needed for the default local build path.
 
 ## Run Locally
 
@@ -145,16 +174,17 @@ Status hook:   POST https://your-public-host/twilio/message-status
 
 ## Safety Rules
 
-- Codex runs through `codex exec --json`.
-- The app never uses `--dangerously-bypass-approvals-and-sandbox`.
+- Codex runs through one local `codex exec --json` CLI orchestrator session for the default v1 path.
+- The local Codex prompt requires all work to stay in the single selected repo and tells Codex to choose any useful internal logical subagents itself.
+- The local Codex implementation session uses the configured local Codex account, model, profiles, plugins, shell environment, and full-access mode by default; tune `CODEX_PHONE_SUPERVISOR_CODEX_*` only when you intentionally want a narrower sandbox.
 - Risky shell, network, package install, file deletion, deploy, git-push, secret, credential, payment/billing, GCP resource, Twilio mutation, or outside-workspace actions are approval-gated.
 - Access summaries expose environment variable names only, never secret values.
 - Every instruction, Codex event, and approval decision is appended to the audit log.
 - Physical Terminal.app launch is loopback-only and requires explicit `CODEX_PHONE_SUPERVISOR_DESKTOP_TERMINAL_*` config.
 
-## GCP
+## Legacy Cloud Worker Experiments
 
-GCP supports an authenticated Cloud Run control plane and disposable no-public-IP VM workers. Real `codex exec` on GCP VMs uses the runtime-only Secret Manager auth path described in [GCP_CODEX_AUTH.md](/Users/karanvirkhanna/tutor-tron-voice/docs/GCP_CODEX_AUTH.md); credentials are never baked into images or copied from local Codex auth.
+GCP support remains in the repo as an experimental/legacy worker path, not the v1 default. It supports an authenticated Cloud Run control plane and disposable no-public-IP VM workers. Real `codex exec` on GCP VMs uses the runtime-only Secret Manager auth path described in [GCP_CODEX_AUTH.md](/Users/karanvirkhanna/tutor-tron-voice/docs/GCP_CODEX_AUTH.md); credentials are never baked into images or copied from local Codex auth.
 
 Run the read-only readiness check:
 

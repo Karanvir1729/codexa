@@ -1,7 +1,6 @@
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
-import { vertexSupervisorConfigurationError } from "./model-provider.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const prototypeRoot = path.resolve(__dirname, "..", "..");
@@ -76,7 +75,7 @@ const twilioMessagingServiceSid = optionalEnv("TWILIO_MESSAGING_SERVICE_SID");
 const twilioFromNumber = optionalEnv("TWILIO_FROM_NUMBER");
 const publicBaseUrl = optionalEnv("CODEX_PHONE_SUPERVISOR_PUBLIC_BASE_URL");
 const conversationRelayWsUrl = optionalEnv("TWILIO_CONVERSATION_RELAY_WS_URL");
-const supervisorModelProvider = optionalEnv("SUPERVISOR_MODEL_PROVIDER") || "vertex";
+const supervisorModelProvider = optionalEnv("SUPERVISOR_MODEL_PROVIDER") || "codex_cli";
 const testSupervisorModelDouble = optionalEnv("CODEX_PHONE_SUPERVISOR_TEST_SUPERVISOR_MODEL");
 const defaultWorkspacePath = resolveFromRepo(requireEnv("CODEX_PHONE_SUPERVISOR_WORKSPACE_PATH"));
 const newProjectsRoot = resolveFromRepo(requireEnv("CODEX_PHONE_SUPERVISOR_NEW_PROJECTS_ROOT"));
@@ -91,11 +90,18 @@ const allowedOrigins = requireEnv("CODEX_PHONE_SUPERVISOR_ALLOWED_ORIGINS")
   .map((origin) => origin.trim())
   .filter(Boolean);
 
-function workerModeEnv(name: string, fallback: "local" | "docker_local" | "gcp_vm" | "gke_job") {
+function workerModeEnv(name: string, fallback: "codex_session_local" | "local" | "docker_local" | "gcp_vm" | "gke_job") {
   const value = optionalEnv(name);
   if (!value) return fallback;
-  if (value === "local" || value === "docker_local" || value === "gcp_vm" || value === "gke_job") return value;
-  throw new Error(`${name} must be one of: local, docker_local, gcp_vm, gke_job.`);
+  if (value === "codex_session_local" || value === "local" || value === "docker_local" || value === "gcp_vm" || value === "gke_job") return value;
+  throw new Error(`${name} must be one of: codex_session_local, local, docker_local, gcp_vm, gke_job.`);
+}
+
+function codexSandboxEnv(name: string, fallback: "read-only" | "workspace-write" | "danger-full-access") {
+  const value = optionalEnv(name);
+  if (!value) return fallback;
+  if (value === "read-only" || value === "workspace-write" || value === "danger-full-access") return value;
+  throw new Error(`${name} must be one of: read-only, workspace-write, danger-full-access.`);
 }
 
 function optionalBooleanEnv(name: string, fallback: boolean) {
@@ -156,22 +162,13 @@ if (!projectRoots.length) {
   throw new Error("CODEX_PHONE_SUPERVISOR_PROJECT_ROOTS must include at least one root.");
 }
 
-if (!["vertex", "gcp_conversation_ai", "nvidia_nim", "openai"].includes(supervisorModelProvider)) {
-  throw new Error("SUPERVISOR_MODEL_PROVIDER must be one of: vertex, gcp_conversation_ai, nvidia_nim, openai.");
+if (!["codex_cli", "gcp_conversation_ai", "nvidia_nim", "openai"].includes(supervisorModelProvider)) {
+  throw new Error("SUPERVISOR_MODEL_PROVIDER must be one of: codex_cli, gcp_conversation_ai, nvidia_nim, openai.");
 }
 
 if (testSupervisorModelDouble) {
   if (!testMode) throw new Error("CODEX_PHONE_SUPERVISOR_TEST_SUPERVISOR_MODEL requires CODEX_PHONE_SUPERVISOR_TEST_MODE=1.");
   if (testSupervisorModelDouble !== "deterministic") throw new Error("CODEX_PHONE_SUPERVISOR_TEST_SUPERVISOR_MODEL must be deterministic when set.");
-}
-
-if (supervisorModelProvider === "vertex") {
-  for (const name of ["VERTEX_PROJECT_ID", "VERTEX_LOCATION", "VERTEX_MODEL"]) {
-    if (!testSupervisorModelDouble) {
-      const value = optionalEnv(name);
-      if (!value) throw new Error(vertexSupervisorConfigurationError);
-    }
-  }
 }
 
 if (supervisorModelProvider === "gcp_conversation_ai") {
@@ -315,6 +312,14 @@ export const config = {
   projectRoots,
   codexCommand: requireEnv("CODEX_PHONE_SUPERVISOR_CODEX_COMMAND"),
   codexHome: requireEnv("CODEX_PHONE_SUPERVISOR_CODEX_HOME"),
+  localCodex: {
+    model: optionalEnv("CODEX_PHONE_SUPERVISOR_CODEX_MODEL") || optionalEnv("CODEX_MODEL") || "gpt-5.5",
+    profile: optionalEnv("CODEX_PHONE_SUPERVISOR_CODEX_PROFILE"),
+    profileV2: optionalEnv("CODEX_PHONE_SUPERVISOR_CODEX_PROFILE_V2"),
+    sandbox: codexSandboxEnv("CODEX_PHONE_SUPERVISOR_CODEX_SANDBOX", "danger-full-access"),
+    bypassApprovalsAndSandbox: optionalBooleanEnv("CODEX_PHONE_SUPERVISOR_CODEX_BYPASS_APPROVALS_AND_SANDBOX", true),
+    inheritShellEnvironment: optionalBooleanEnv("CODEX_PHONE_SUPERVISOR_CODEX_INHERIT_SHELL_ENV", true),
+  },
   storePath: path.join(storeDir, "sessions.json"),
   telephonyStorePath: path.join(storeDir, "telephony.json"),
   auditLogPath: path.join(storeDir, "audit-log.jsonl"),
@@ -359,24 +364,19 @@ export const config = {
     apiKey: optionalEnv("NVIDIA_NIM_API_KEY"),
     allowInsecureHttp: optionalEnv("NVIDIA_NIM_ALLOW_INSECURE_HTTP") === "1" || optionalEnv("NVIDIA_NIM_ALLOW_INSECURE_HTTP").toLowerCase() === "true",
   },
-  vertex: {
-    projectId: optionalEnv("VERTEX_PROJECT_ID"),
-    location: optionalEnv("VERTEX_LOCATION"),
-    model: optionalEnv("VERTEX_MODEL"),
-  },
   openai: {
     model: optionalEnv("OPENAI_MODEL"),
     apiKeyPresent: Boolean(optionalEnv("OPENAI_API_KEY")),
   },
   modelProviders: {
-    supervisor_model_provider: supervisorModelProvider === "vertex" ? "Vertex/Gemini" : supervisorModelProvider,
-    planner_model_provider: supervisorModelProvider === "vertex" ? "Vertex/Gemini" : supervisorModelProvider,
+    supervisor_model_provider: supervisorModelProvider === "codex_cli" ? "Codex CLI" : supervisorModelProvider,
+    planner_model_provider: supervisorModelProvider === "codex_cli" ? "Codex CLI" : supervisorModelProvider,
     worker_code_model: "Codex CLI",
   },
   orchestrator: {
     environment: optionalEnv("HEAD_DEVELOPER_ENV") || (testMode ? "dev" : "prod"),
-    workerMode: workerModeEnv("WORKER_MODE", workerModeEnv("HEAD_DEVELOPER_WORKER_MODE", "local")),
-    defaultWorkerType: workerModeEnv("DEFAULT_WORKER_MODE", workerModeEnv("HEAD_DEVELOPER_DEFAULT_WORKER_TYPE", "local")),
+    workerMode: workerModeEnv("WORKER_MODE", workerModeEnv("HEAD_DEVELOPER_WORKER_MODE", "codex_session_local")),
+    defaultWorkerType: workerModeEnv("DEFAULT_WORKER_MODE", workerModeEnv("HEAD_DEVELOPER_DEFAULT_WORKER_TYPE", "codex_session_local")),
     allowWorkerModeSwitch: optionalBooleanEnv("ALLOW_WORKER_MODE_SWITCH", true),
     maxLocalWorkers: optionalNumberEnv("MAX_LOCAL_WORKERS", 1),
     maxDockerLocalWorkers: optionalNumberEnv("MAX_DOCKER_LOCAL_WORKERS", 3),

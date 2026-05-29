@@ -34,7 +34,7 @@ export default defineConfig(({ mode }) => {
   if (!rawPort) throw new Error("CODEX_PHONE_SUPERVISOR_FRONTEND_PORT is required.");
   const port = Number(rawPort);
   if (!Number.isFinite(port)) throw new Error("CODEX_PHONE_SUPERVISOR_FRONTEND_PORT must be a finite number.");
-  for (const name of ["VITE_SUPERVISOR_API_BASE", "VITE_SUPERVISOR_WORKSPACE_PATH", "VITE_SUPERVISOR_USER_ID", "VITE_SUPERVISOR_TERMINAL_WS_URL"]) {
+  for (const name of ["VITE_SUPERVISOR_API_BASE", "VITE_SUPERVISOR_WORKSPACE_PATH", "VITE_SUPERVISOR_USER_ID"]) {
     if (!env[name]?.trim()) throw new Error(`${name} is required.`);
   }
 
@@ -45,7 +45,6 @@ export default defineConfig(({ mode }) => {
       "import.meta.env.VITE_SUPERVISOR_API_BASE": JSON.stringify(env.VITE_SUPERVISOR_API_BASE),
       "import.meta.env.VITE_SUPERVISOR_WORKSPACE_PATH": JSON.stringify(env.VITE_SUPERVISOR_WORKSPACE_PATH),
       "import.meta.env.VITE_SUPERVISOR_USER_ID": JSON.stringify(env.VITE_SUPERVISOR_USER_ID),
-      "import.meta.env.VITE_SUPERVISOR_TERMINAL_WS_URL": JSON.stringify(env.VITE_SUPERVISOR_TERMINAL_WS_URL),
     },
     server: {
       port,

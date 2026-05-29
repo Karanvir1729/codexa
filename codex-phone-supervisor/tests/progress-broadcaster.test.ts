@@ -21,7 +21,7 @@ function bootstrapEnv(storeDir: string) {
     process.env.CODEX_PHONE_SUPERVISOR_LOCK_RETRY_MS = "25";
     process.env.CODEX_PHONE_SUPERVISOR_TEST_MODE = "1";
     process.env.CODEX_PHONE_SUPERVISOR_PUBLIC_BASE_URL = "";
-    process.env.SUPERVISOR_MODEL_PROVIDER = "vertex";
+    process.env.SUPERVISOR_MODEL_PROVIDER = "codex_cli";
     process.env.CODEX_PHONE_SUPERVISOR_TEST_SUPERVISOR_MODEL = "deterministic";
     process.env.TWILIO_CONVERSATION_RELAY_WS_URL = "";
     process.env.TWILIO_SMS_ENABLED = "0";

@@ -56,7 +56,7 @@ FIRESTORE_LOCATION="${FIRESTORE_LOCATION:-${REGION}}"
 SERVICE_ACCOUNT_ID="${SERVICE_ACCOUNT_ID:-${CONTROL_PLANE_PREFIX}-api}"
 SERVICE_ACCOUNT_EMAIL="${SERVICE_ACCOUNT_ID}@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
 PUBSUB_TOPICS="${PUBSUB_TOPICS:-${CONTROL_PLANE_PREFIX}-events ${CONTROL_PLANE_PREFIX}-approvals ${CONTROL_PLANE_PREFIX}-audit ${CONTROL_PLANE_PREFIX}-instructions ${CONTROL_PLANE_PREFIX}-dead-letter}"
-SECRET_NAMES="${SECRET_NAMES:-twilio-auth-token twilio-account-sid twilio-phone-number-sid openai-api-key github-token vertex-service-account-json nvidia-nim-api-key ngc-api-key}"
+SECRET_NAMES="${SECRET_NAMES:-twilio-auth-token twilio-account-sid twilio-phone-number-sid openai-api-key github-token nvidia-nim-api-key ngc-api-key}"
 
 if [[ "${#SERVICE_ACCOUNT_ID}" -gt 30 ]]; then
   echo "SERVICE_ACCOUNT_ID must be 30 characters or fewer." >&2
@@ -141,7 +141,6 @@ else
 fi
 
 PROJECT_ROLES=(
-  roles/aiplatform.user
   roles/datastore.user
   roles/dialogflow.client
   roles/logging.logWriter

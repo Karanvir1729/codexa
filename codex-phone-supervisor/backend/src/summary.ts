@@ -54,7 +54,7 @@ function filesFromCommandEvents(commands: CommandEventRecord[]) {
     const output = `${event.summary}\n${event.stdout_preview}\n${event.stderr_preview}`;
     const statusMatches = output.match(/(?:modified:|created:|deleted:)\s+([^\n,]+)/gi) ?? [];
     const gitStatusMatches = [...output.matchAll(/^\s*(?:\?\?|[AMDRC?!]{1,2})\s+(.+)$/gm)].map((match) => match[1].trim());
-    const jsonMatches = [...output.matchAll(/"files_modified"\s*:\s*\[([^\]]*)\]/g)].flatMap((match) => {
+    const jsonMatches = [...output.matchAll(/"files_(?:modified|changed)"\s*:\s*\[([^\]]*)\]/g)].flatMap((match) => {
       try {
         return JSON.parse(`[${match[1]}]`) as string[];
       } catch {
@@ -123,7 +123,7 @@ export function assessTaskCompletionForSummary(taskId: string, commands: Command
   const task = getTask(taskId);
   const node = graphNodeForTask(task);
   const filesChanged = filesFromCommandEvents(commands);
-  const observedFiles = unique([...filesChanged, ...listWorkspaceFiles(task?.worktree_path)]);
+  const observedFiles = unique([...filesChanged, ...(task?.files_changed ?? []), ...listWorkspaceFiles(task?.worktree_path)]);
   const documentationFiles = observedFiles.filter(isDocumentationFile);
   const appFiles = observedFiles.filter(isSourceLikeFile);
   const expected = expectedAppFiles(node);

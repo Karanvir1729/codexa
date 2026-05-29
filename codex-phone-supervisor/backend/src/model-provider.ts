@@ -24,11 +24,6 @@ export type SupervisorModelConfig = {
   provider: SupervisorModelProvider;
   testMode: boolean;
   testDouble?: "deterministic" | null;
-  vertex?: {
-    projectId: string;
-    location: string;
-    model: string;
-  };
   gcpConversationAi?: {
     projectId: string;
     location: string;
@@ -49,8 +44,6 @@ export type SupervisorModelConfig = {
     apiKeyPresent: boolean;
   };
 };
-
-export const vertexSupervisorConfigurationError = "Vertex/Gemini supervisor is not configured. Set required GCP/Vertex env vars.";
 
 export type RouteProjectInput = {
   text: string;
@@ -94,16 +87,11 @@ export type DevelopmentTurnOutput = {
 };
 
 export function validateSupervisorModelConfig(config: SupervisorModelConfig) {
-  if (!["vertex", "gcp_conversation_ai", "nvidia_nim", "openai"].includes(config.provider)) {
-    throw new Error("Supervisor model provider must be vertex, gcp_conversation_ai, nvidia_nim, or openai.");
+  if (!["codex_cli", "gcp_conversation_ai", "nvidia_nim", "openai"].includes(config.provider)) {
+    throw new Error("Supervisor model provider must be codex_cli, gcp_conversation_ai, nvidia_nim, or openai.");
   }
   if (config.testDouble && !config.testMode) {
     throw new Error("Supervisor model test doubles require CODEX_PHONE_SUPERVISOR_TEST_MODE=1.");
-  }
-  if (config.provider === "vertex") {
-    if (!config.testDouble && (!config.vertex?.projectId || !config.vertex.location || !config.vertex.model)) {
-      throw new Error(vertexSupervisorConfigurationError);
-    }
   }
   if (config.provider === "gcp_conversation_ai") {
     if (
@@ -139,6 +127,21 @@ export function validateSupervisorModelConfig(config: SupervisorModelConfig) {
 }
 
 function deterministicTestSupervisorModel() {
+  return {
+    routeProject: deterministicTestRouteProject,
+    developmentTurn: deterministicTestDevelopmentTurn,
+    async summarize(text: string) {
+      return text;
+    },
+    async classifyRisk(action: string) {
+      const firewallClassification = classifyApproval(action);
+      if (firewallClassification.risk) return firewallClassification.risk;
+      return /delete|deploy|gcloud|git push|twilio/i.test(action) ? "high" : "medium";
+    },
+  };
+}
+
+function localCodexCliSupervisorModel() {
   return {
     routeProject: deterministicTestRouteProject,
     developmentTurn: deterministicTestDevelopmentTurn,
@@ -384,63 +387,6 @@ function extractChatCompletionText(response: unknown) {
   return "";
 }
 
-function vertexGenerateContentUrl(config: NonNullable<SupervisorModelConfig["vertex"]>) {
-  return `https://${encodeURIComponent(config.location)}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(config.projectId)}/locations/${encodeURIComponent(config.location)}/publishers/google/models/${encodeURIComponent(config.model)}:generateContent`;
-}
-
-function extractVertexText(response: unknown) {
-  const candidates = (response as { candidates?: Array<{ content?: { parts?: Array<{ text?: unknown }> } }> }).candidates ?? [];
-  return candidates
-    .flatMap((candidate) => candidate.content?.parts ?? [])
-    .map((part) => (typeof part.text === "string" ? part.text : ""))
-    .join("")
-    .trim();
-}
-
-async function callVertex(
-  config: NonNullable<SupervisorModelConfig["vertex"]>,
-  systemInstruction: string,
-  userText: string,
-  options: { json?: boolean; maxOutputTokens?: number; responseSchema?: unknown } = {},
-) {
-  const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
-  const client = await auth.getClient();
-  const token = await client.getAccessToken();
-  if (!token.token) throw new Error("Google authentication did not return an access token.");
-
-  const response = await fetch(vertexGenerateContentUrl(config), {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${token.token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      systemInstruction: {
-        parts: [{ text: systemInstruction }],
-      },
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: userText }],
-        },
-      ],
-      generationConfig: {
-        temperature: 0.1,
-        maxOutputTokens: options.maxOutputTokens ?? 1024,
-        ...(options.json ? { responseMimeType: "application/json" } : {}),
-        ...(options.responseSchema ? { responseSchema: options.responseSchema } : {}),
-      },
-    }),
-  });
-  const body = await response.text();
-  if (!response.ok) {
-    throw new Error(`Vertex generateContent failed with HTTP ${response.status}: ${body.slice(0, 500)}`);
-  }
-  const text = extractVertexText(JSON.parse(body));
-  if (!text) throw new Error("Vertex generateContent returned no assistant text.");
-  return text;
-}
-
 async function callNvidiaNim(config: NonNullable<SupervisorModelConfig["nvidiaNim"]>, messages: Array<{ role: "system" | "user"; content: string }>) {
   const response = await fetch(chatCompletionsUrl(config.baseUrl), {
     method: "POST",
@@ -614,17 +560,9 @@ function deterministicTestDevelopmentTurn(input: DevelopmentTurnInput): Developm
 export function createSupervisorModel(config: SupervisorModelConfig) {
   validateSupervisorModelConfig(config);
   if (config.testDouble === "deterministic") return deterministicTestSupervisorModel();
+  if (config.provider === "codex_cli") return localCodexCliSupervisorModel();
   return {
     async routeProject(input: RouteProjectInput) {
-      if (config.provider === "vertex") {
-        const text = await callVertex(
-          config.vertex!,
-          "You are Codex Phone Supervisor's project router. Return only JSON. Do not execute tools, request credentials, or issue shell commands.",
-          buildRouteProjectPrompt(input),
-          { json: true, maxOutputTokens: 1024, responseSchema: routeProjectResponseSchema },
-        );
-        return parseStructuredDecision(text);
-      }
       if (config.provider === "gcp_conversation_ai") {
         const response = await detectIntent(config.gcpConversationAi!, buildRouteProjectPrompt(input), input.sessionId || input.text);
         return parseStructuredDecision(extractTextMessages(response));
@@ -642,15 +580,6 @@ export function createSupervisorModel(config: SupervisorModelConfig) {
       throw new Error(`${config.provider} supervisor model calls are configured but not executed in local dry-run mode.`);
     },
     async developmentTurn(input: DevelopmentTurnInput) {
-      if (config.provider === "vertex") {
-        const text = await callVertex(
-          config.vertex!,
-          "You are Codex Phone Supervisor's high-level developer agent. Return only JSON. You can only answer, ask the user, or call whitelisted backend supervisor tools. You must not execute commands or bypass approvals.",
-          buildDevelopmentPrompt(input),
-          { json: true, maxOutputTokens: 1200, responseSchema: developmentTurnResponseSchema },
-        );
-        return parseDevelopmentDecision(text);
-      }
       if (config.provider === "nvidia_nim") {
         const text = await callNvidiaNim(config.nvidiaNim!, [
           {
@@ -664,14 +593,6 @@ export function createSupervisorModel(config: SupervisorModelConfig) {
       throw new Error(`${config.provider} supervisor development turns are not implemented.`);
     },
     async summarize(text: string) {
-      if (config.provider === "vertex") {
-        return callVertex(
-          config.vertex!,
-          "Summarize Codex supervisor state for a phone or chat caller. Be concise, factual, and never reveal secret values.",
-          text,
-          { maxOutputTokens: 512 },
-        );
-      }
       if (config.provider === "gcp_conversation_ai") {
         const response = await detectIntent(config.gcpConversationAi!, `Summarize this Codex supervisor state concisely:\n\n${text}`, `summary:${text.slice(0, 200)}`);
         return extractTextMessages(response);
@@ -690,18 +611,6 @@ export function createSupervisorModel(config: SupervisorModelConfig) {
     async classifyRisk(action: string) {
       const firewallClassification = classifyApproval(action);
       if (firewallClassification.risk) return firewallClassification.risk;
-      if (config.provider === "vertex") {
-        const risk = (
-          await callVertex(
-            config.vertex!,
-            "Classify the action risk as exactly one lowercase word: low, medium, or high.",
-            action,
-            { maxOutputTokens: 16 },
-          )
-        ).toLowerCase().trim();
-        if (risk !== "low" && risk !== "medium" && risk !== "high") throw new Error(`Vertex returned invalid risk classification: ${risk}`);
-        return risk;
-      }
       if (config.provider === "gcp_conversation_ai") {
         const response = await detectIntent(config.gcpConversationAi!, `Classify risk as exactly one word: low, medium, or high.\nAction: ${action}`, `risk:${action}`);
         const risk = extractTextMessages(response).toLowerCase().trim();

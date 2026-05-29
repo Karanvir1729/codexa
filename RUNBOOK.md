@@ -10,26 +10,17 @@ npm run dev:frontend
 
 Backend defaults come from `.env` and `.env.codex-phone-supervisor`. The backend must have a real Codex CLI path in `CODEX_PHONE_SUPERVISOR_CODEX_COMMAND` for app creation.
 
-The user-facing supervisor and planner default to Vertex/Gemini. `SUPERVISOR_MODEL_PROVIDER=mock` is not a valid runtime provider. Local runtime must have real Vertex configuration or fail clearly with:
-
-```text
-Vertex/Gemini supervisor is not configured. Set required GCP/Vertex env vars.
-```
-
-Required Vertex/Gemini env vars:
+The user-facing supervisor and planner default to the local Codex CLI path. `SUPERVISOR_MODEL_PROVIDER=mock` is not a valid runtime provider.
 
 ```bash
-export SUPERVISOR_MODEL_PROVIDER=vertex
-export VERTEX_PROJECT_ID=your-gcp-project-id
-export VERTEX_LOCATION=us-central1
-export VERTEX_MODEL=gemini-2.5-flash
+export SUPERVISOR_MODEL_PROVIDER=codex_cli
 ```
 
 The dashboard provider indicator should show:
 
 ```text
-Supervisor: Vertex/Gemini
-Planner: Vertex/Gemini
+Supervisor: Codex CLI
+Planner: Codex CLI
 Worker code model: Codex CLI
 ```
 
@@ -52,7 +43,7 @@ The API runs on `127.0.0.1:4317` and the frontend on `127.0.0.1:4318`. Docker Lo
 
 Docker Local project discovery is intentionally isolated from the repo root. API, frontend, and workers use `/generated-projects` in containers, backed by `tmp/codex-phone-supervisor-projects` on the host. This keeps the browser app from listing unrelated repo folders or old smoke fixtures as selectable projects.
 
-Docker Local does not configure a mock supervisor. It passes through `SUPERVISOR_MODEL_PROVIDER` and defaults it to `vertex`, with `VERTEX_PROJECT_ID`, `VERTEX_LOCATION`, and `VERTEX_MODEL` passed from the host environment. If those are empty, API/worker startup fails with the Vertex/Gemini configuration error above.
+Docker Local does not configure a mock supervisor. It passes through `SUPERVISOR_MODEL_PROVIDER` and defaults it to `codex_cli`.
 
 Codex auth is mounted, not baked into images:
 
@@ -203,7 +194,7 @@ npm run build
 docker compose -f docker/docker-compose.local.yml config
 ```
 
-## Vertex Planner Smoke
+## Local Planner Smoke
 
 Run this without `CODEX_PHONE_SUPERVISOR_TEST_SUPERVISOR_MODEL` and without launching workers. Use a selected project/session and send:
 
@@ -212,8 +203,8 @@ Build a static SaaS dashboard with landing, login, dashboard, and settings.
 ```
 
 Expected:
-- `provider=vertex`.
-- `planner_model` starts with `vertex:`.
+- `provider=codex_cli`.
+- `planner_model` is local.
 - Decision type is a planning/proposal decision such as `propose_task_split`.
 - `requires_user_approval=true`.
 - `execution_allowed=false`.

@@ -38,7 +38,6 @@ APIS=(
   pubsub.googleapis.com
   firestore.googleapis.com
   storage.googleapis.com
-  aiplatform.googleapis.com
   cloudbuild.googleapis.com
   iam.googleapis.com
 )

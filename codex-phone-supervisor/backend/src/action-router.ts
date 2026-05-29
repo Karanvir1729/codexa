@@ -222,6 +222,7 @@ function inspectWorkerResult(worker: WorkerRecord) {
 }
 
 function workerModeLabel(mode: WorkerType | string | null | undefined) {
+  if (mode === "codex_session_local") return "Local Codex CLI";
   if (mode === "docker_local") return "Docker Local";
   if (mode === "gcp_vm") return "GCP VM";
   if (mode === "gke_job") return "GKE Job";
@@ -417,7 +418,7 @@ export function parseOperatorIntent(message: string): ParsedOperatorIntent | nul
     return { action_type: "inspect_worker", input: workerId ? { worker_id: workerId } : {}, normalized_intent: cleaned };
   }
   if (/\b(start|launch)\b[\s\S]*\b(worker|docker worker|gcp worker|gke worker|kubernetes worker|local worker)\b/.test(cleaned)) {
-    const mode: WorkerType | undefined = /\b(gke|kubernetes|k8s)\b/.test(cleaned) ? "gke_job" : cleaned.includes("gcp") ? "gcp_vm" : cleaned.includes("docker") ? "docker_local" : cleaned.includes("local") ? "local" : undefined;
+    const mode: WorkerType | undefined = /\b(codex_session_local|codex cli|codex session)\b/.test(cleaned) ? "codex_session_local" : /\b(gke|kubernetes|k8s)\b/.test(cleaned) ? "gke_job" : cleaned.includes("gcp") ? "gcp_vm" : cleaned.includes("docker") ? "docker_local" : cleaned.includes("local") ? "local" : undefined;
     return { action_type: "start_worker", input: mode ? { worker_mode: mode } : {}, normalized_intent: cleaned };
   }
   if (/\brestart\b[\s\S]*\bworker\b/.test(cleaned)) {

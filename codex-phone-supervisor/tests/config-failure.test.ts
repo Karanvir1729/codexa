@@ -53,43 +53,25 @@ test("config import fails clearly when required env is missing", () => {
   assert.match(`${result.stderr}\n${result.stdout}`, /CODEX_PHONE_SUPERVISOR_STORE_DIR is required/);
 });
 
-test("runtime config defaults to Vertex Gemini supervisor", () => {
+test("runtime config defaults to local Codex CLI supervisor", () => {
   const result = spawnSync(
     process.execPath,
     ["--import", tsxLoader, "-e", `${configImport}; console.log(JSON.stringify({ provider: (await import(${JSON.stringify(pathToFileURL(path.resolve("codex-phone-supervisor/backend/src/config.ts")).href)})).config.supervisorModelProvider, modelProviders: (await import(${JSON.stringify(pathToFileURL(path.resolve("codex-phone-supervisor/backend/src/config.ts")).href)})).config.modelProviders }));`],
-    {
-      cwd: isolatedCwd(),
-      env: baseRuntimeEnv({
-        VERTEX_PROJECT_ID: "vertex-project",
-        VERTEX_LOCATION: "us-central1",
-        VERTEX_MODEL: "gemini-test-model",
-      }),
-      encoding: "utf8",
-    },
-  );
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-  const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}") as Record<string, unknown>;
-  assert.equal(payload.provider, "vertex");
-  assert.deepEqual(payload.modelProviders, {
-    supervisor_model_provider: "Vertex/Gemini",
-    planner_model_provider: "Vertex/Gemini",
-    worker_code_model: "Codex CLI",
-  });
-  assert.doesNotMatch(JSON.stringify(payload), /vertex-project|gemini-test-model|secret|token/i);
-});
-
-test("missing Vertex config fails clearly without mock fallback", () => {
-  const result = spawnSync(
-    process.execPath,
-    ["--import", tsxLoader, "-e", configImport],
     {
       cwd: isolatedCwd(),
       env: baseRuntimeEnv(),
       encoding: "utf8",
     },
   );
-  assert.notEqual(result.status, 0);
-  assert.match(`${result.stderr}\n${result.stdout}`, /Vertex\/Gemini supervisor is not configured. Set required GCP\/Vertex env vars./);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}") as Record<string, unknown>;
+  assert.equal(payload.provider, "codex_cli");
+  assert.deepEqual(payload.modelProviders, {
+    supervisor_model_provider: "Codex CLI",
+    planner_model_provider: "Codex CLI",
+    worker_code_model: "Codex CLI",
+  });
+  assert.doesNotMatch(JSON.stringify(payload), /secret|token/i);
 });
 
 test("runtime config accepts codex_home_bundle auth and does not default to API-key auth", () => {
@@ -99,9 +81,6 @@ test("runtime config accepts codex_home_bundle auth and does not default to API-
     {
       cwd: isolatedCwd(),
       env: baseRuntimeEnv({
-        VERTEX_PROJECT_ID: "vertex-project",
-        VERTEX_LOCATION: "us-central1",
-        VERTEX_MODEL: "gemini-test-model",
         HEAD_DEVELOPER_CODEX_AUTH_METHOD: "codex_home_bundle",
         HEAD_DEVELOPER_CODEX_HOME: "/codex-home",
         HEAD_DEVELOPER_CODEX_HOME_BUNDLE_SECRET: "codex-vm-home-bundle",
@@ -126,9 +105,6 @@ test("runtime config defaults GCP VM workers to the dedicated worker service acc
     {
       cwd: isolatedCwd(),
       env: baseRuntimeEnv({
-        VERTEX_PROJECT_ID: "vertex-project",
-        VERTEX_LOCATION: "us-central1",
-        VERTEX_MODEL: "gemini-test-model",
         GCP_PROJECT_ID: "gcp-project",
       }),
       encoding: "utf8",
@@ -146,9 +122,6 @@ test("runtime config rejects unknown Codex auth methods with the allowed runtime
     {
       cwd: isolatedCwd(),
       env: baseRuntimeEnv({
-        VERTEX_PROJECT_ID: "vertex-project",
-        VERTEX_LOCATION: "us-central1",
-        VERTEX_MODEL: "gemini-test-model",
         HEAD_DEVELOPER_CODEX_AUTH_METHOD: "mock",
       }),
       encoding: "utf8",
@@ -169,7 +142,7 @@ test("runtime config rejects mock supervisor provider", () => {
     },
   );
   assert.notEqual(result.status, 0);
-  assert.match(`${result.stderr}\n${result.stdout}`, /SUPERVISOR_MODEL_PROVIDER must be one of: vertex, gcp_conversation_ai, nvidia_nim, openai/);
+  assert.match(`${result.stderr}\n${result.stdout}`, /SUPERVISOR_MODEL_PROVIDER must be one of: codex_cli, gcp_conversation_ai, nvidia_nim, openai/);
 });
 
 test("Twilio voice enabled requires an explicit ConversationRelay URL", () => {
@@ -195,7 +168,7 @@ test("Twilio voice enabled requires an explicit ConversationRelay URL", () => {
         CODEX_PHONE_SUPERVISOR_LOCK_TIMEOUT_MS: "5000",
         CODEX_PHONE_SUPERVISOR_LOCK_RETRY_MS: "25",
         CODEX_PHONE_SUPERVISOR_TEST_MODE: "1",
-        SUPERVISOR_MODEL_PROVIDER: "vertex",
+        SUPERVISOR_MODEL_PROVIDER: "codex_cli",
         CODEX_PHONE_SUPERVISOR_TEST_SUPERVISOR_MODEL: "deterministic",
         TWILIO_VALIDATE_SIGNATURES: "0",
         TWILIO_SMS_ENABLED: "1",
@@ -231,7 +204,7 @@ test("terminal enabled requires explicit shell configuration", () => {
         CODEX_PHONE_SUPERVISOR_LOCK_TIMEOUT_MS: "5000",
         CODEX_PHONE_SUPERVISOR_LOCK_RETRY_MS: "25",
         CODEX_PHONE_SUPERVISOR_TEST_MODE: "1",
-        SUPERVISOR_MODEL_PROVIDER: "vertex",
+        SUPERVISOR_MODEL_PROVIDER: "codex_cli",
         CODEX_PHONE_SUPERVISOR_TEST_SUPERVISOR_MODEL: "deterministic",
         TWILIO_VALIDATE_SIGNATURES: "0",
         TWILIO_SMS_ENABLED: "0",
@@ -267,7 +240,7 @@ test("desktop terminal enabled requires explicit osascript configuration", () =>
         CODEX_PHONE_SUPERVISOR_LOCK_TIMEOUT_MS: "5000",
         CODEX_PHONE_SUPERVISOR_LOCK_RETRY_MS: "25",
         CODEX_PHONE_SUPERVISOR_TEST_MODE: "1",
-        SUPERVISOR_MODEL_PROVIDER: "vertex",
+        SUPERVISOR_MODEL_PROVIDER: "codex_cli",
         CODEX_PHONE_SUPERVISOR_TEST_SUPERVISOR_MODEL: "deterministic",
         TWILIO_VALIDATE_SIGNATURES: "0",
         TWILIO_SMS_ENABLED: "0",

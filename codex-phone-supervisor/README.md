@@ -4,13 +4,14 @@ Local prototype for supervising Codex over a phone-style voice interface.
 
 ## What it does
 
-- Starts Codex tasks with `codex exec --json`
+- Starts one local Codex CLI orchestrator and implementation session with `codex exec --json`
+- Lets Codex choose how many internal logical subagents to use for the job
+- Keeps all generated code in one selected local repo
 - Stores raw event output and a normalized session state
 - Answers phone-style questions about Codex state
 - Gates risky actions behind explicit approval
 - Shows a minimal dashboard for status, events, approvals, touched files, commands, and summaries
 - Supports four connection modes: in-app mic voice, in-app text chat, Twilio SMS, and Twilio phone calls
-- Can use Vertex AI Gemini for project routing, summarization, and risk classification when `SUPERVISOR_MODEL_PROVIDER=vertex`
 - Can use Google Cloud Conversational Agents / Dialogflow CX for managed conversation and summarization when `SUPERVISOR_MODEL_PROVIDER=gcp_conversation_ai`
 - Can use a self-hosted NVIDIA NIM/OpenAI-compatible endpoint on Compute Engine when `SUPERVISOR_MODEL_PROVIDER=nvidia_nim`
 
@@ -44,6 +45,15 @@ cp .env.example .env
 Edit `.env` before starting the app. The supervisor intentionally does not silently infer ports, Codex paths, workspace paths, project roots, origins, or Twilio URLs.
 
 For local overrides that should take precedence over legacy repo `.env` values, create `.env.codex-phone-supervisor`. That file is gitignored and loaded after `.env`.
+
+The default execution mode is local and CLI-based:
+
+```env
+WORKER_MODE=codex_session_local
+DEFAULT_WORKER_MODE=codex_session_local
+```
+
+This path does not require Docker, Firestore, GKE, VM workers, Cloud Run worker callbacks, or per-worker worktrees.
 
 3. Start the backend:
 
@@ -99,20 +109,7 @@ Before coding starts, the chat runs a Codex-backed project-selection flow. It as
 
 The phone, SMS, mic, and app text layers never run shell commands directly. They only call the backend supervisor tools.
 
-## Vertex AI Gemini
-
-Use `SUPERVISOR_MODEL_PROVIDER=vertex` for the high-level supervisor model. Vertex handles project routing, concise summaries, and risk classification. It never executes shell commands directly; Codex work still goes through the backend Codex adapter and approval firewall.
-
-Required config:
-
-```bash
-SUPERVISOR_MODEL_PROVIDER=vertex
-VERTEX_PROJECT_ID=your-project-id
-VERTEX_LOCATION=us-central1
-VERTEX_MODEL=gemini-2.5-flash
-```
-
-The local machine must have Google Application Default Credentials or a service account available for Vertex AI. The current local override file uses Vertex for the supervisor and an explicit Codex CLI binary path.
+For clear simple build requests, the supervisor starts a short local plan and then one local Codex CLI orchestrator session. For complex requests, it proposes a plan, waits for approval, then starts one local Codex CLI orchestrator session. The session prompt tells Codex that the user is talking to it directly, to keep all work in the selected repo, choose any useful internal logical subagents, report changed files, and ground success in validation results.
 
 ## GCP Conversation AI
 
@@ -218,4 +215,5 @@ npm run typecheck
 
 - This MVP treats approvals at the supervisor layer. Codex is instructed not to execute risky shell/network/install/delete/deploy/git-push actions until explicitly approved.
 - Secrets are never exposed in the access summary. Only environment variable names are shown.
+- Docker, GCP VM, GKE Job, Firestore, and distributed worker code remain legacy/experimental paths unless explicitly selected.
 - The phone and SMS bridge never runs shell commands directly. It only sends messages through the supervisor intent router and approval firewall.

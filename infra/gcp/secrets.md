@@ -10,7 +10,6 @@ Use Secret Manager for credentials. Store names in config and inject values thro
 - `openai-api-key`
 - `codex-api-key`
 - `github-token`
-- `vertex-service-account-json` if workload identity is unavailable
 - `nvidia-nim-api-key`
 - `ngc-api-key` if using NGC-hosted NIM containers
 
