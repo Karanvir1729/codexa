@@ -80,6 +80,7 @@ type TaskRecord = {
 
 type RuntimeSettings = {
   model: string;
+  reasoning_effort: string;
   planning_model: string;
   planning_reasoning_effort: string;
   access: string;
@@ -332,10 +333,11 @@ function compactFlowchartLayout(nodes: FlowchartNode[], columns = FLOW_COLUMNS) 
     ["codex_plan", 3],
     ["user_approval", 4],
     ["codex_session", 5],
-    ["codex_subagent", 6],
-    ["validation", 7],
-    ["preview", 8],
-    ["final_summary", 9],
+    ["flowchart_maker", 6],
+    ["codex_subagent", 7],
+    ["validation", 8],
+    ["preview", 9],
+    ["final_summary", 10],
   ]);
   const sorted = [...nodes].sort((a, b) => {
     const priority = (typePriority.get(a.type) ?? 99) - (typePriority.get(b.type) ?? 99);
@@ -361,7 +363,7 @@ function compactFlowchartLayout(nodes: FlowchartNode[], columns = FLOW_COLUMNS) 
     cursor += 1;
   };
 
-  ["orchestrator", "user_request", "requirement_summary", "codex_plan", "user_approval", "codex_session"].forEach(placeInFlow);
+  ["orchestrator", "user_request", "requirement_summary", "codex_plan", "user_approval", "codex_session", "flowchart_maker"].forEach(placeInFlow);
 
   const subagentStartRow = Math.max(1, Math.ceil(cursor / columnCount));
   subagents.forEach((node, index) => {
@@ -544,12 +546,14 @@ function localFlowchartNodes(flowchart: FlowchartState | null, taskIds: Set<stri
   return (flowchart?.nodes ?? [])
     .filter((node) => {
       if (node.type === "orchestrator") return true;
+      if (node.id.startsWith("codex_flow:") || node.id.startsWith("codex_flow_pending:")) {
+        const taskId = localFlowchartTaskId(node.id);
+        return Boolean(taskId && taskIds.has(taskId));
+      }
       if (pendingMegaplanFlowchartTypes.has(node.type)) {
         return Boolean(currentSessionId && String(node.detail.session_id ?? "") === currentSessionId);
       }
-      if (!node.id.startsWith("codex_flow:") && !node.id.startsWith("codex_flow_pending:")) return false;
-      const taskId = localFlowchartTaskId(node.id);
-      return Boolean(taskId && taskIds.has(taskId));
+      return false;
     })
     .filter((node) => !hiddenLocalFlowchartTypes.has(node.type))
     .map((node) => node.type === "orchestrator"
@@ -1051,6 +1055,7 @@ function App() {
           <div><strong>Session:</strong> local Codex CLI</div>
           <div><strong>Subagents:</strong> Codex internal</div>
           <div><strong>Model:</strong> {runtimeSettings?.model ?? "loading"}</div>
+          <div><strong>Coding reasoning:</strong> {runtimeSettings?.reasoning_effort ?? "loading"}</div>
           <div><strong>Fast planning:</strong> {runtimeSettings ? `${runtimeSettings.planning_model} / ${runtimeSettings.planning_reasoning_effort}` : "loading"}</div>
           <div><strong>Access:</strong> {runtimeSettings?.access ?? "loading"}</div>
           <div><strong>Skills:</strong> {runtimeSettings?.skill_inventory ? `${runtimeSettings.skill_inventory.status} (${runtimeSettings.skill_inventory.total_discovered})` : "checking"}</div>
@@ -1121,9 +1126,12 @@ function App() {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
           <div>
             <h2 style={{ marginBottom: 4 }}>Codex Session Flowchart</h2>
-            <div style={{ color: "#555", fontSize: 13 }}>Runtime graph from the live parallel Codex flowchart watcher JSON: request, requirements, plan, Codex-chosen subagents, validation, preview, and final summary.</div>
+            <div style={{ color: "#555", fontSize: 13 }}>Rapid truthful runtime graph from the live parallel Codex flowchart watcher JSON: request, requirements, Megaplan, approval, Codex-chosen subagents, flowchart maker, validation, preview, and final summary.</div>
             <div style={{ color: "#374151", fontSize: 13, marginTop: 4 }}>
               Built by one local Codex session. Orchestrator: Codex CLI | Subagents: Codex internal logical subagents | Source of truth: local repo
+            </div>
+            <div style={{ color: "#475569", fontSize: 13, marginTop: 4 }}>
+              Flowchart priority: fast updates, honest partial state, and every Codex-reported subagent shown as its own node.
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

@@ -12,6 +12,7 @@ test("dashboard flowchart nodes are clickable and open the details panel", () =>
   assert.match(source, /RuntimeSettings/);
   assert.match(source, /\/ready/);
   assert.match(source, /Model:/);
+  assert.match(source, /Coding reasoning:/);
   assert.match(source, /Fast planning:/);
   assert.match(source, /Access:/);
   assert.match(source, /Skills:/);
@@ -23,7 +24,9 @@ test("dashboard flowchart nodes are clickable and open the details panel", () =>
   assert.match(source, /data-testid="codex-browser-chat-resume"/);
   assert.match(source, /Normal terminal chat resume:/);
   assert.match(source, /codex_conversation_resume_command/);
-  assert.match(source, /Runtime graph from the live parallel Codex flowchart watcher JSON/);
+  assert.match(source, /Rapid truthful runtime graph from the live parallel Codex flowchart watcher JSON/);
+  assert.match(source, /Megaplan, approval, Codex-chosen subagents, flowchart maker/);
+  assert.match(source, /Flowchart priority: fast updates, honest partial state, and every Codex-reported subagent shown as its own node/);
   assert.match(source, /compactFlowchartLayout/);
   assert.match(source, /FLOW_COLUMNS = 4/);
   assert.match(source, /ResizeObserver/);
@@ -46,11 +49,13 @@ test("dashboard flowchart nodes are clickable and open the details panel", () =>
   assert.match(source, /displayFlowText/);
   assert.match(source, /node\.id\.startsWith\("codex_flow:"\)/);
   assert.match(source, /node\.id\.startsWith\("codex_flow_pending:"\)/);
+  assert.match(source, /flowchart_maker/);
   assert.match(source, /localFlowchartTaskId/);
   assert.match(source, /taskIds\.has\(taskId\)/);
   assert.match(source, /pendingMegaplanFlowchartTypes/);
   assert.match(source, /node\.detail\.session_id/);
   assert.match(source, /scopedFlowchartTaskIds/);
+  assert.match(source, /node\.id\.startsWith\("codex_flow:"\) \|\| node\.id\.startsWith\("codex_flow_pending:"\)/);
   assert.match(source, /Codex-chosen subagents/);
   assert.match(source, /Built by one local Codex session/);
   assert.match(source, /data-testid=\{`flow-node-\$\{node\.type\}`\}/);

@@ -337,6 +337,7 @@ export const config = {
     model: optionalEnv("CODEX_PHONE_SUPERVISOR_CODEX_MODEL") || optionalEnv("CODEX_MODEL") || "gpt-5.5",
     profile: optionalEnv("CODEX_PHONE_SUPERVISOR_CODEX_PROFILE"),
     profileV2: optionalEnv("CODEX_PHONE_SUPERVISOR_CODEX_PROFILE_V2"),
+    reasoningEffort: reasoningEffortEnv("CODEX_PHONE_SUPERVISOR_CODEX_REASONING_EFFORT", "xhigh"),
     planningModel: optionalEnv("CODEX_PHONE_SUPERVISOR_CODEX_PLANNING_MODEL") || optionalEnv("CODEX_PHONE_SUPERVISOR_CODEX_MODEL") || optionalEnv("CODEX_MODEL") || "gpt-5.5",
     planningProfile: optionalEnv("CODEX_PHONE_SUPERVISOR_CODEX_PLANNING_PROFILE") || optionalEnv("CODEX_PHONE_SUPERVISOR_CODEX_PROFILE"),
     planningProfileV2: optionalEnv("CODEX_PHONE_SUPERVISOR_CODEX_PLANNING_PROFILE_V2") || optionalEnv("CODEX_PHONE_SUPERVISOR_CODEX_PROFILE_V2"),

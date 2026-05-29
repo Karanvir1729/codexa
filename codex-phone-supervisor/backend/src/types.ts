@@ -237,6 +237,7 @@ export interface TaskRecord {
   codex_resume_command?: string | null;
   codex_prompt_excerpt?: string | null;
   codex_model?: string | null;
+  codex_reasoning_effort?: string | null;
   codex_started_at?: string | null;
   codex_completed_at?: string | null;
   codex_history_confidence?: string | null;
@@ -258,8 +259,11 @@ export type LocalCodexFlowchartNodeKind =
   | "user_request"
   | "requirement_summary"
   | "plan"
+  | "megaplan"
+  | "approval"
   | "codex_session"
   | "subagent"
+  | "flowchart_maker"
   | "validation"
   | "preview"
   | "final_summary";
@@ -589,6 +593,7 @@ export interface CommandEventRecord {
   codex_resume_command?: string | null;
   codex_prompt_excerpt?: string | null;
   codex_model?: string | null;
+  codex_reasoning_effort?: string | null;
   codex_started_at?: string | null;
   codex_completed_at?: string | null;
   codex_history_confidence?: string | null;
@@ -772,6 +777,7 @@ export type FlowchartNodeType =
   | "codex_plan"
   | "codex_session"
   | "codex_subagent"
+  | "flowchart_maker"
   | "files_changed"
   | "validation"
   | "final_summary";

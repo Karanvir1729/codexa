@@ -74,10 +74,10 @@ test("runtime config defaults to local Codex CLI supervisor", () => {
   assert.doesNotMatch(JSON.stringify(payload), /secret|token/i);
 });
 
-test("runtime config uses fast Codex defaults for short planning and chat-mirror turns", () => {
+test("runtime config uses extra-high coding and fast Codex defaults for short planning and chat-mirror turns", () => {
   const result = spawnSync(
     process.execPath,
-    ["--import", tsxLoader, "-e", `${configImport}; const { config } = await import(${JSON.stringify(pathToFileURL(path.resolve("codex-phone-supervisor/backend/src/config.ts")).href)}); console.log(JSON.stringify({ implementationModel: config.localCodex.model, planningModel: config.localCodex.planningModel, planningReasoningEffort: config.localCodex.planningReasoningEffort, mirrorBrowserConversationToResume: config.localCodex.mirrorBrowserConversationToResume }));`],
+    ["--import", tsxLoader, "-e", `${configImport}; const { config } = await import(${JSON.stringify(pathToFileURL(path.resolve("codex-phone-supervisor/backend/src/config.ts")).href)}); console.log(JSON.stringify({ implementationModel: config.localCodex.model, implementationReasoningEffort: config.localCodex.reasoningEffort, planningModel: config.localCodex.planningModel, planningReasoningEffort: config.localCodex.planningReasoningEffort, mirrorBrowserConversationToResume: config.localCodex.mirrorBrowserConversationToResume }));`],
     {
       cwd: isolatedCwd(),
       env: baseRuntimeEnv(),
@@ -88,10 +88,27 @@ test("runtime config uses fast Codex defaults for short planning and chat-mirror
   const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}") as Record<string, unknown>;
   assert.deepEqual(payload, {
     implementationModel: "gpt-5.5",
+    implementationReasoningEffort: "xhigh",
     planningModel: "gpt-5.5",
     planningReasoningEffort: "low",
     mirrorBrowserConversationToResume: true,
   });
+});
+
+test("runtime config rejects unsupported Codex coding reasoning effort", () => {
+  const result = spawnSync(
+    process.execPath,
+    ["--import", tsxLoader, "-e", configImport],
+    {
+      cwd: isolatedCwd(),
+      env: baseRuntimeEnv({
+        CODEX_PHONE_SUPERVISOR_CODEX_REASONING_EFFORT: "turbo",
+      }),
+      encoding: "utf8",
+    },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stderr}\n${result.stdout}`, /CODEX_PHONE_SUPERVISOR_CODEX_REASONING_EFFORT must be one of: minimal, low, medium, high, xhigh/);
 });
 
 test("runtime config rejects unsupported Codex planning reasoning effort", () => {

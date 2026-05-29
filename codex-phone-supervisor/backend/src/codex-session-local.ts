@@ -235,7 +235,7 @@ function buildSchemaFile(taskId: string) {
               required: ["id", "kind", "label", "status", "summary", "depends_on"],
               properties: {
                 id: { type: "string" },
-                kind: { type: "string", enum: ["user_request", "requirement_summary", "plan", "codex_session", "subagent", "validation", "preview", "final_summary"] },
+                kind: { type: "string", enum: ["user_request", "requirement_summary", "plan", "megaplan", "approval", "codex_session", "subagent", "flowchart_maker", "validation", "preview", "final_summary"] },
                 label: { type: "string" },
                 status: { type: "string" },
                 summary: { type: "string" },
@@ -270,6 +270,7 @@ function codexSharedArgs() {
   if (config.localCodex.model) args.push("--model", config.localCodex.model);
   if (config.localCodex.profile) args.push("--profile", config.localCodex.profile);
   if (config.localCodex.profileV2) args.push("--profile-v2", config.localCodex.profileV2);
+  if (config.localCodex.reasoningEffort) args.push("-c", `model_reasoning_effort=${JSON.stringify(config.localCodex.reasoningEffort)}`);
   if (config.localCodex.inheritShellEnvironment) args.push("-c", "shell_environment_policy.inherit=all");
   return args;
 }
@@ -310,9 +311,11 @@ export function buildLocalCodexImplementationPrompt(input: {
 
   return [
     "You are Codex, the local orchestrator and implementation lead. The user is talking to you directly through this CLI-backed session.",
-    "Use internal Codex subagents when useful.",
+    "Use internal Codex subagents when useful, and for non-trivial work strongly prefer multiple named logical subagents so the browser flowchart shows the real responsibility split.",
     "Execution model: one local Codex CLI orchestrator session owns this repo.",
-    "You choose how many logical subagents to use and what to name them. Consider frontend, backend, shared logic, tests, docs, and integration responsibilities only when they fit the task.",
+    `Runtime mode: implementation coding uses ${config.localCodex.reasoningEffort || "Codex default"} reasoning; short planning, intake, chat mirror, subagent-advisor, and flowchart helper sessions use ${config.localCodex.planningReasoningEffort || "Codex default"} reasoning.`,
+    "You choose how many logical subagents to use and what to name them. Consider product/UI, backend/API, shared logic, data, tests, docs, integration, validation, and research responsibilities only when they fit the task.",
+    "Do not collapse distinct UI, API, shared logic, tests, docs, validation, and integration work into one generic subagent when separate responsibility lanes would be more truthful.",
     subagentAdvice?.recommended === false
       ? "The pre-implementation subagent check-in does not recommend internal subagents. Keep this run single-lane unless you need to stop and ask before changing that."
       : subagentAdvice?.recommended === true
@@ -325,6 +328,7 @@ export function buildLocalCodexImplementationPrompt(input: {
     "There is one source of truth: the local repo.",
     "Treat .head-developer/MEGAPLAN.md as the approved implementation plan when it exists. Keep changes aligned with it unless the user revises the plan.",
     "Do not claim success unless files exist and validation passes.",
+    "Do not run long-lived preview or dev servers as blocking foreground commands. If a server is needed for validation, start it in the background, verify it, stop it before the final JSON response, and report clear run instructions instead of hanging the CLI session.",
     "Use the Codex CLI tools, skills, plugins, and MCP servers available in this same local account when useful. Before relying on a requested skill or plugin, verify it is available in this CODEX_HOME; if it is missing, say so and continue with the best fallback. Do not fake plugin/tool output; report only what actually happened.",
     "You have full local CLI access. Keep product source of truth in this repo and avoid external/cloud orchestration unless the user explicitly requests it.",
     "Continuous improvement is part of your role: while implementing, look for bugs, UX gaps, performance issues, test gaps, maintainability problems, and feature opportunities that would make the product better.",
@@ -332,10 +336,12 @@ export function buildLocalCodexImplementationPrompt(input: {
     "Record deferred improvements in .head-developer/IMPROVEMENTS.md with concise sections for bugs found, optimizations, feature ideas, follow-up experiments, and decisions that need user input.",
     "If a valuable improvement would materially change scope, architecture, data, cost, risk, or timeline, record it as a recommendation instead of implementing it without user approval.",
     "Report each logical subagent's responsibility, changed files, and validation result so the CLI can validate the repo.",
+    "Subagent reporting is part of the product experience: once you choose subagents, state their Codex-chosen names early and keep their user-facing status summaries current.",
     "As work progresses, state concise CLI progress updates for any logical subagents you create, including each subagent's Codex-chosen name, current status, and user-facing summary.",
     "Do not include file paths, code, commands, internal IDs, branch names, or stack traces in subagent progress updates.",
     "Use $codex-flowchart-summary to produce the final flowchart_summary field. The supervisor persists that JSON as the browser flowchart source of truth.",
-    "flowchart_summary must be user-facing: include the user request, requirement summary, plan, one Codex session, your chosen subagents, validation, preview if available, and final summary.",
+    "flowchart_summary must be user-facing: include the user request, requirement summary, Megaplan creation, approval gate, one Codex session, your chosen subagents, parallel flowchart maker, validation, preview if available, and final summary.",
+    "flowchart_summary must include every subagent you actually used or reported; do not merge several real subagents into one generic node. If you truly used no subagents, say so honestly.",
     "flowchart_summary must not include file paths, command strings, code snippets, package names, stack traces, stdout/stderr, branch names, internal IDs, worktree paths, or repo paths.",
     "",
     `Project: ${input.project.display_name}`,
@@ -435,6 +441,7 @@ function writeHeadDeveloperState(workspacePath: string, value: Record<string, un
 }
 
 function writeHeadDeveloperFlowchartJson(workspacePath: string, flowchart: LocalCodexFlowchartSummary) {
+  const normalizedFlowchart = ensureSystemProcessNodes(flowchart);
   const docsDir = path.join(workspacePath, ".head-developer");
   fs.mkdirSync(docsDir, { recursive: true });
   const flowchartPath = path.join(docsDir, "flowchart.json");
@@ -442,7 +449,7 @@ function writeHeadDeveloperFlowchartJson(workspacePath: string, flowchart: Local
     schema_version: 1,
     generated_at: nowIso(),
     generator: "parallel_codex_flowchart_session",
-    flowchart,
+    flowchart: normalizedFlowchart,
   }, null, 2)}\n`);
   return flowchartPath;
 }
@@ -534,8 +541,11 @@ const localFlowchartNodeKinds = new Set<LocalCodexFlowchartNodeKind>([
   "user_request",
   "requirement_summary",
   "plan",
+  "megaplan",
+  "approval",
   "codex_session",
   "subagent",
+  "flowchart_maker",
   "validation",
   "preview",
   "final_summary",
@@ -604,6 +614,75 @@ function parseFlowchartSummary(value: unknown): LocalCodexFlowchartSummary | nul
   };
 }
 
+function firstFlowNodeId(summary: LocalCodexFlowchartSummary, kind: LocalCodexFlowchartNodeKind) {
+  return summary.nodes.find((node) => node.kind === kind)?.id ?? "";
+}
+
+function flowNodeStatus(summary: LocalCodexFlowchartSummary, kind: LocalCodexFlowchartNodeKind) {
+  return summary.nodes.find((node) => node.kind === kind)?.status ?? "";
+}
+
+function addFlowEdge(edges: LocalCodexFlowchartSummary["edges"], from: string, to: string, label: string) {
+  if (!from || !to || from === to) return;
+  if (edges.some((edge) => edge.from === from && edge.to === to)) return;
+  edges.push({ from, to, label });
+}
+
+function ensureSystemProcessNodes(summary: LocalCodexFlowchartSummary): LocalCodexFlowchartSummary {
+  const nodes = [...summary.nodes];
+  const edges = [...summary.edges];
+  const hasKind = (kind: LocalCodexFlowchartNodeKind) => nodes.some((node) => node.kind === kind);
+  const requestId = firstFlowNodeId(summary, "user_request") || nodes[0]?.id || "";
+  const requirementsId = firstFlowNodeId(summary, "requirement_summary");
+  const planId = firstFlowNodeId(summary, "plan");
+  const codexSessionId = firstFlowNodeId(summary, "codex_session");
+  const finalSummaryId = firstFlowNodeId(summary, "final_summary");
+  const preMegaplanId = planId || requirementsId || requestId;
+
+  if (!hasKind("megaplan")) {
+    nodes.push({
+      id: "megaplan",
+      kind: "megaplan",
+      label: "Megaplan skill",
+      status: "created",
+      summary: "Codex turns clarified requirements into an approval-ready Megaplan.",
+      depends_on: preMegaplanId ? [preMegaplanId] : [],
+    });
+  }
+  if (!hasKind("approval")) {
+    nodes.push({
+      id: "approval-gate",
+      kind: "approval",
+      label: "Approval gate",
+      status: "approved",
+      summary: "Complex work waits for user approval before implementation starts.",
+      depends_on: ["megaplan"],
+    });
+  }
+  if (!hasKind("flowchart_maker")) {
+    const codexStatus = flowNodeStatus(summary, "codex_session");
+    nodes.push({
+      id: "flowchart-maker",
+      kind: "flowchart_maker",
+      label: "Flowchart maker",
+      status: /running|working|in progress/i.test(codexStatus) ? "running" : "updated",
+      summary: "Parallel Codex process converts live summaries into this graph.",
+      depends_on: codexSessionId ? [codexSessionId] : [],
+    });
+  }
+
+  const megaplanId = nodes.find((node) => node.kind === "megaplan")?.id ?? "";
+  const approvalId = nodes.find((node) => node.kind === "approval")?.id ?? "";
+  const flowchartMakerId = nodes.find((node) => node.kind === "flowchart_maker")?.id ?? "";
+  addFlowEdge(edges, preMegaplanId, megaplanId, "megaplan");
+  addFlowEdge(edges, megaplanId, approvalId, "approval");
+  addFlowEdge(edges, approvalId, codexSessionId, "starts");
+  addFlowEdge(edges, codexSessionId, flowchartMakerId, "summarizes");
+  addFlowEdge(edges, flowchartMakerId, finalSummaryId, "updates");
+
+  return { ...summary, nodes, edges };
+}
+
 function fallbackFlowchartSummary(input: {
   task: TaskRecord;
   session: SessionState;
@@ -637,12 +716,36 @@ function fallbackFlowchartSummary(input: {
       depends_on: ["requirements"],
     },
     {
+      id: "megaplan",
+      kind: "megaplan",
+      label: "Megaplan skill",
+      status: "created",
+      summary: "Codex turns clarified requirements into an approval-ready Megaplan.",
+      depends_on: ["plan"],
+    },
+    {
+      id: "approval-gate",
+      kind: "approval",
+      label: "Approval gate",
+      status: "approved",
+      summary: "Complex work waits for user approval before implementation starts.",
+      depends_on: ["megaplan"],
+    },
+    {
       id: "codex-session",
       kind: "codex_session",
       label: "Codex CLI session",
       status: input.task.status,
       summary: "One local Codex CLI session owned the repo and coordinated the work.",
-      depends_on: ["plan"],
+      depends_on: ["approval-gate"],
+    },
+    {
+      id: "flowchart-maker",
+      kind: "flowchart_maker",
+      label: "Flowchart maker",
+      status: input.task.status === "running" ? "running" : "updated",
+      summary: "Parallel Codex process converts live summaries into this graph.",
+      depends_on: ["codex-session"],
     },
   ];
   const subagentIds = input.report.subagents.map((subagent, index) => {
@@ -682,7 +785,7 @@ function fallbackFlowchartSummary(input: {
     label: "Final summary",
     status: input.task.status,
     summary: flowchartText(input.report.final_summary || input.report.summary || input.task.latest_summary),
-    depends_on: input.previewLoaded !== null ? ["preview"] : ["validation"],
+    depends_on: input.previewLoaded !== null ? ["preview", "flowchart-maker"] : ["validation", "flowchart-maker"],
   });
   const edges = nodes.flatMap((node) => node.depends_on.map((from) => ({ from, to: node.id, label: "next" })));
   return {
@@ -694,7 +797,8 @@ function fallbackFlowchartSummary(input: {
 }
 
 const FLOWCHART_MAKER_TIMEOUT_MS = 5_000;
-const FLOWCHART_WATCHER_INTERVAL_MS = 2_000;
+const FLOWCHART_WATCHER_INTERVAL_MS = 1_000;
+const FLOWCHART_UPDATE_THROTTLE_MS = 1_000;
 const liveRolloutPaths = new Map<string, string>();
 const flowchartMakerState = new Map<string, {
   stream: string;
@@ -868,7 +972,7 @@ function buildFlowchartMakerSchemaFile(taskId: string) {
           required: ["id", "kind", "label", "status", "summary", "depends_on"],
           properties: {
             id: { type: "string" },
-            kind: { type: "string", enum: ["user_request", "requirement_summary", "plan", "codex_session", "subagent", "validation", "preview", "final_summary"] },
+            kind: { type: "string", enum: ["user_request", "requirement_summary", "plan", "megaplan", "approval", "codex_session", "subagent", "flowchart_maker", "validation", "preview", "final_summary"] },
             label: { type: "string" },
             status: { type: "string" },
             summary: { type: "string" },
@@ -916,9 +1020,12 @@ function buildFlowchartMakerPrompt(input: {
     "Use $codex-flowchart-summary.",
     "You are the local Codex flowchart maker. Convert the current implementation summary into the browser flowchart JSON.",
     "Return only JSON matching the supplied schema. The supervisor writes your JSON into the repo-local flowchart artifact for the UI renderer.",
-    "You have at most 5 seconds. Be concise and use only the supplied summary state.",
+    "You have at most 5 seconds. Optimize for rapid truthful updates: produce the best valid partial graph from current evidence instead of waiting for completion.",
+    "Be concise and use only the supplied summary state.",
     "Do not write files. Do not inspect the repo. Do not include code, file paths, command strings, internal IDs, stdout/stderr, worktree names, branch names, package names, or stack traces.",
-    "Preserve the subagent names chosen by Codex. Use reported_subagents when present; during live runs, infer only from Codex-authored implementation progress and do not invent names.",
+    "Preserve the subagent names chosen by Codex. Include every reported_subagents entry as a separate subagent node.",
+    "During live runs, infer subagent nodes only from Codex-authored implementation progress and do not invent names. If names are not available yet, show the Codex session as planning or running without fake subagent nodes.",
+    "Include system process nodes for Megaplan creation, approval gate, and the parallel flowchart maker so the user can understand how this UI is orchestrating Codex.",
     "This is a live update; represent partial progress honestly when the implementation is still running.",
     "",
     JSON.stringify({
@@ -943,8 +1050,11 @@ function buildFlowchartMakerPrompt(input: {
       flowchart_watcher: {
         mode: "continuous parallel Codex flowchart watcher",
         interval_ms: FLOWCHART_WATCHER_INTERVAL_MS,
+        update_throttle_ms: FLOWCHART_UPDATE_THROTTLE_MS,
+        priority: "rapid truthful flowchart creation",
         latest_workspace_activity: flowchartText(flowchartMakerForTask(input.task.task_id).latestWorkspaceActivity),
       },
+      required_system_nodes: ["Megaplan skill", "Approval gate", "Flowchart maker"],
       implementation_stream_summary: flowchartText(input.stream, input.stream),
     }, null, 2),
   ].join("\n");
@@ -1053,7 +1163,7 @@ function scheduleFlowchartSummaryUpdate(input: {
   if (input.chunk) appendFlowchartMakerStream(input.taskId, input.chunk);
   const state = flowchartMakerForTask(input.taskId);
   const now = Date.now();
-  if (!input.force && now - state.lastStartedMs < 4_000) return;
+  if (!input.force && now - state.lastStartedMs < FLOWCHART_UPDATE_THROTTLE_MS) return;
   if (state.running) {
     state.pending = true;
     return;
@@ -1164,15 +1274,16 @@ async function runFlowchartMakerOnce(input: {
   const latestTask = getTask(input.taskId);
   const latestSession = getSession(input.sessionId);
   if (!latestTask || !latestSession) return;
-  const flowchartJsonPath = writeHeadDeveloperFlowchartJson(input.project.workspace_path, summary);
-  latestTask.codex_flowchart_summary = summary;
+  const normalizedSummary = ensureSystemProcessNodes(summary);
+  const flowchartJsonPath = writeHeadDeveloperFlowchartJson(input.project.workspace_path, normalizedSummary);
+  latestTask.codex_flowchart_summary = normalizedSummary;
   latestTask.codex_flowchart_json_path = flowchartJsonPath;
   latestTask.updated_at = nowIso();
   upsertTask(latestTask);
   const latestMessage = latestSession.latest_codex_message;
-  appendSessionEvent(latestSession, "local_codex_flowchart.updated", "codex", summary.overview || "Flowchart summary updated.", {
+  appendSessionEvent(latestSession, "local_codex_flowchart.updated", "codex", normalizedSummary.overview || "Flowchart summary updated.", {
     task_id: input.taskId,
-    flowchart_summary: summary,
+    flowchart_summary: normalizedSummary,
   });
   latestSession.latest_codex_message = latestMessage;
   upsertSession(latestSession);
@@ -1180,8 +1291,8 @@ async function runFlowchartMakerOnce(input: {
     scope: "task",
     scope_id: input.taskId,
     type: "local_codex_flowchart.updated",
-    message: summary.overview || "Flowchart summary updated.",
-    data: { task_id: input.taskId, flowchart_summary: summary },
+    message: normalizedSummary.overview || "Flowchart summary updated.",
+    data: { task_id: input.taskId, flowchart_summary: normalizedSummary },
   });
 }
 
@@ -1392,6 +1503,7 @@ async function runCodexCli(input: {
     codex_history_kind: "exec",
     codex_prompt_excerpt: input.prompt.replace(/\s+/g, " ").trim().slice(0, 500),
     codex_model: config.localCodex.model || null,
+    codex_reasoning_effort: config.localCodex.reasoningEffort || null,
     codex_started_at: startedAt,
     command: commandDisplay,
     cwd: input.project.workspace_path,
@@ -1422,6 +1534,7 @@ async function runCodexCli(input: {
     command: commandEvent.command,
     cwd: input.project.workspace_path,
     codex_model: config.localCodex.model || null,
+    codex_reasoning_effort: config.localCodex.reasoningEffort || null,
     codex_home: config.codexHome,
     full_access: config.localCodex.bypassApprovalsAndSandbox || config.localCodex.sandbox === "danger-full-access",
     plugins_source: "same CODEX_HOME and user Codex config",
@@ -1431,7 +1544,7 @@ async function runCodexCli(input: {
     taskId: input.task.task_id,
     sessionId: input.session.session_id,
     project: input.project,
-    chunk: "Codex CLI session started. Waiting for Codex to choose subagents.",
+    chunk: "Codex CLI session started. Waiting for Codex to choose and name useful subagents.",
     force: true,
   });
   startFlowchartWatcher({
@@ -1602,7 +1715,8 @@ async function completeLocalCodexRun(input: {
     const flowchartSummary = report.flowchart_summary
       ?? liveTask?.codex_flowchart_summary
       ?? fallbackFlowchartSummary({ task: taskForSummary, session, report: reportForSummary, validation, previewLoaded });
-    const flowchartJsonPath = writeHeadDeveloperFlowchartJson(input.project.workspace_path, flowchartSummary);
+    const normalizedFlowchartSummary = ensureSystemProcessNodes(flowchartSummary);
+    const flowchartJsonPath = writeHeadDeveloperFlowchartJson(input.project.workspace_path, normalizedFlowchartSummary);
     const completedAt = nowIso();
     task.status = validation.status === "passed" && report.status === "completed" ? "completed" : "failed";
     task.command_count = listCommandEvents({ taskId: task.task_id }).length;
@@ -1621,7 +1735,7 @@ async function completeLocalCodexRun(input: {
     task.codex_history_confidence = codex.commandEvent.codex_history_confidence ?? null;
     task.codex_history_verification_command = codex.commandEvent.codex_history_verification_command ?? null;
     task.codex_subagents = finalSubagents;
-    task.codex_flowchart_summary = flowchartSummary;
+    task.codex_flowchart_summary = normalizedFlowchartSummary;
     task.codex_flowchart_json_path = flowchartJsonPath;
     task.local_validation_result = validation;
     task.files_changed = discoveredChanged;

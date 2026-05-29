@@ -319,6 +319,7 @@ app.get("/ready", (_req, res) => {
     codex_command: config.codexCommand,
     local_codex: {
       model: config.localCodex.model || "user Codex default",
+      reasoning_effort: config.localCodex.reasoningEffort || "default",
       planning_model: config.localCodex.planningModel || config.localCodex.model || "user Codex default",
       planning_reasoning_effort: config.localCodex.planningReasoningEffort || "default",
       access: config.localCodex.bypassApprovalsAndSandbox || config.localCodex.sandbox === "danger-full-access" ? "full local access" : config.localCodex.sandbox,

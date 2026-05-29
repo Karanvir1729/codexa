@@ -44,8 +44,8 @@ function plannerResponsibilities(decision: PlannerDecision) {
 export function shouldRunSubagentAdvisor(userGoal: string, decision: PlannerDecision) {
   if (decision.recommended_worker_mode !== "codex_session_local") return false;
   if (hasUserDeclinedSubagents(userGoal)) return true;
-  if (decision.proposed_task_split.length > 1) return true;
-  return false;
+  // Ask Codex instead of classifying user wording with a hand-written parser.
+  return true;
 }
 
 export function plannerContextSubagentAdvice(input: {
@@ -69,12 +69,12 @@ export function plannerContextSubagentAdvice(input: {
   const recommended = responsibilities.length >= 2;
   return {
     recommended,
-    confidence: recommended ? 0.7 : 0.55,
+    confidence: recommended ? 0.74 : 0.55,
     reason: recommended
       ? "The Codex planner produced multiple responsibility areas, so internal Codex subagents look useful while keeping one repo and one CLI session."
       : "The Codex planner produced a narrow responsibility split, so a direct implementation lane looks sufficient.",
     user_check_in: recommended
-      ? "The plan has multiple responsibility areas. Approval means Codex may choose the internal subagent count and names; tell me before approving if you want a single-lane run."
+      ? "Approval means Codex may choose the internal subagent count and names, use multiple named internal subagents when useful, and show those names in the flowchart; tell me before approving if you want a single-lane run."
       : "The plan looks narrow enough for a direct Codex lane. Approval keeps Codex free to ask before changing to a materially different subagent strategy.",
     suggested_responsibilities: responsibilities,
     source: input.source ?? "planner_context",
@@ -138,7 +138,9 @@ export function buildSubagentAdvisorPrompt(input: {
     "You are a short-lived parallel Codex subagent advisor for Codex Phone Supervisor.",
     "Decide whether the upcoming single local Codex CLI implementation should use internal logical Codex subagents.",
     "Do not choose a fixed subagent count. Codex implementation lead still chooses count and names during the real run.",
-    "Recommend subagents only when the work has meaningfully distinct responsibility areas such as frontend, backend, shared logic, tests, docs, integration, data, or validation.",
+    "Bias toward visible internal subagents for non-trivial app, site, game, full-stack, integration, docs, tests, validation, or research work when that is truthful.",
+    "Recommend subagents when the work has meaningfully distinct responsibility areas such as product/UI, backend/API, shared logic, data, tests, docs, integration, research, or validation.",
+    "Do not recommend fake subagents for tiny single-file edits or when the user asks for a single-lane run.",
     "If the user asked for no subagents or a single-lane run, recommend false and say Codex should ask before changing that.",
     "Return a concise user_check_in sentence that can be shown before Megaplan approval.",
     "Do not inspect files, write files, run commands, or include file paths. Return only JSON.",

@@ -73,7 +73,10 @@ test("codex_session_local prompt names Codex as the direct CLI orchestrator", ()
       hasDirectCli: /talking to you directly through this CLI-backed session/.test(prompt),
       includesBrowserTranscript: /Browser conversation with Codex before this implementation run/.test(prompt) && /Approve the Megaplan/.test(prompt),
       letsCodexChoose: /You choose how many logical subagents/.test(prompt),
+      hasSubagentVisibilityBias: /strongly prefer multiple named logical subagents/.test(prompt) && /Do not collapse distinct UI/.test(prompt) && /state their Codex-chosen names early/.test(prompt),
       hasSubagentApprovalBoundary: /subagent strategy would materially change scope/.test(prompt) && /status needs_approval/.test(prompt),
+      hasTruthfulFlowchartGuardrails: /flowchart_summary must include every subagent/.test(prompt) && /If you truly used no subagents/.test(prompt),
+      hasSystemFlowchartNodes: /Megaplan creation, approval gate/.test(prompt) && /parallel flowchart maker/.test(prompt),
       allowsPlugins: /tools, skills, plugins, and MCP servers available in this same local account/.test(prompt),
       hasFullAccess: /You have full local CLI access/.test(prompt),
       hasImprovementLoop: /Continuous improvement is part of your role/.test(prompt) && /\\.head-developer\\/IMPROVEMENTS\\.md/.test(prompt),
@@ -90,7 +93,10 @@ test("codex_session_local prompt names Codex as the direct CLI orchestrator", ()
   assert.equal(payload.hasDirectCli, true);
   assert.equal(payload.includesBrowserTranscript, true);
   assert.equal(payload.letsCodexChoose, true);
+  assert.equal(payload.hasSubagentVisibilityBias, true);
   assert.equal(payload.hasSubagentApprovalBoundary, true);
+  assert.equal(payload.hasTruthfulFlowchartGuardrails, true);
+  assert.equal(payload.hasSystemFlowchartNodes, true);
   assert.equal(payload.allowsPlugins, true);
   assert.equal(payload.hasFullAccess, true);
   assert.equal(payload.hasImprovementLoop, true);
@@ -103,6 +109,8 @@ test("codex_session_local invokes Codex with same-account full access settings",
   const configSource = fs.readFileSync(path.join(process.cwd(), "codex-phone-supervisor", "backend", "src", "config.ts"), "utf8");
   assert.match(configSource, /CODEX_PHONE_SUPERVISOR_CODEX_MODEL/);
   assert.match(configSource, /"gpt-5\.5"/);
+  assert.match(configSource, /CODEX_PHONE_SUPERVISOR_CODEX_REASONING_EFFORT/);
+  assert.match(configSource, /"xhigh"/);
   assert.match(configSource, /CODEX_PHONE_SUPERVISOR_CODEX_PROFILE/);
   assert.match(configSource, /CODEX_PHONE_SUPERVISOR_CODEX_PROFILE_V2/);
   assert.match(configSource, /CODEX_PHONE_SUPERVISOR_CODEX_SANDBOX/);
@@ -112,7 +120,9 @@ test("codex_session_local invokes Codex with same-account full access settings",
   assert.match(source, /"--model", config\.localCodex\.model/);
   assert.match(source, /"--profile", config\.localCodex\.profile/);
   assert.match(source, /"--profile-v2", config\.localCodex\.profileV2/);
+  assert.match(source, /model_reasoning_effort=.*config\.localCodex\.reasoningEffort/);
   assert.match(source, /shell_environment_policy\.inherit=all/);
+  assert.match(source, /Do not run long-lived preview or dev servers as blocking foreground commands/);
   assert.match(source, /--dangerously-bypass-approvals-and-sandbox/);
   assert.match(source, /config\.localCodex\.sandbox === "danger-full-access"/);
   assert.match(source, /plugins_source: "same CODEX_HOME and user Codex config"/);
@@ -300,7 +310,8 @@ test("flowchart maker is a separate read-only Codex session capped at five secon
   const source = fs.readFileSync(path.join(process.cwd(), "codex-phone-supervisor", "backend", "src", "codex-session-local.ts"), "utf8");
   const flowchartSource = fs.readFileSync(path.join(process.cwd(), "codex-phone-supervisor", "backend", "src", "flowchart.ts"), "utf8");
   assert.match(source, /const FLOWCHART_MAKER_TIMEOUT_MS = 5_000/);
-  assert.match(source, /const FLOWCHART_WATCHER_INTERVAL_MS = 2_000/);
+  assert.match(source, /const FLOWCHART_WATCHER_INTERVAL_MS = 1_000/);
+  assert.match(source, /const FLOWCHART_UPDATE_THROTTLE_MS = 1_000/);
   assert.match(source, /local_codex_flowchart\.started/);
   assert.match(source, /local_codex_flowchart\.watcher\.started/);
   assert.match(source, /local_codex_flowchart\.watcher\.tick/);
@@ -321,7 +332,14 @@ test("flowchart maker is a separate read-only Codex session capped at five secon
   assert.match(source, /force: true/);
   assert.match(source, /implementation_stream_summary/);
   assert.match(source, /reported_subagents/);
+  assert.match(source, /Optimize for rapid truthful updates/);
+  assert.match(source, /Include every reported_subagents entry as a separate subagent node/);
+  assert.match(source, /do not invent names/);
+  assert.match(source, /Megaplan creation, approval gate, and the parallel flowchart maker/);
+  assert.match(source, /required_system_nodes/);
+  assert.match(source, /ensureSystemProcessNodes/);
   assert.match(source, /latest_workspace_activity/);
+  assert.match(source, /rapid truthful flowchart creation/);
   assert.match(source, /scheduleFlowchartSummaryUpdate\(\{\s*taskId: input\.task\.task_id/);
   assert.doesNotMatch(source, /updateLiveSubagentsFromCodexText/);
   assert.doesNotMatch(source, /liveSubagentBuffers/);
@@ -330,6 +348,11 @@ test("flowchart maker is a separate read-only Codex session capped at five secon
   assert.match(flowchartSource, /codex_flowchart_json_path/);
   assert.match(flowchartSource, /readLocalCodexFlowchartJson/);
   assert.match(flowchartSource, /live Codex updates/);
+  assert.match(flowchartSource, /codex_flow_pending:\$\{task\.task_id\}:megaplan/);
+  assert.match(flowchartSource, /label: "Megaplan skill"/);
+  assert.match(flowchartSource, /label: "Approval gate"/);
+  assert.match(flowchartSource, /type: "flowchart_maker"/);
+  assert.match(flowchartSource, /Separate short-lived Codex process turns live implementation summaries into this graph/);
   assert.match(flowchartSource, /!summary\.nodes\.some\(\(node\) => node\.kind === "subagent"\)/);
   assert.match(flowchartSource, /parallel Codex flowchart/);
   assert.doesNotMatch(flowchartSource, /label: "Files Changed"/);
@@ -342,6 +365,8 @@ test("subagent advisor is a separate read-only Codex process capped at five seco
   const megaplanSource = fs.readFileSync(path.join(process.cwd(), "codex-phone-supervisor", "backend", "src", "megaplan.ts"), "utf8");
   const localCodexSource = fs.readFileSync(path.join(process.cwd(), "codex-phone-supervisor", "backend", "src", "codex-session-local.ts"), "utf8");
   assert.match(source, /SUBAGENT_ADVISOR_TIMEOUT_MS = 5_000/);
+  assert.match(source, /Ask Codex instead of classifying user wording with a hand-written parser/);
+  assert.match(source, /Bias toward visible internal subagents/);
   assert.match(source, /short-lived parallel Codex subagent advisor/);
   assert.match(source, /spawnSync\(config\.codexCommand/);
   assert.match(source, /"--output-schema"/);
@@ -432,7 +457,7 @@ setTimeout(() => {
     process.env.CODEX_PHONE_SUPERVISOR_CODEX_COMMAND = ${JSON.stringify(fakeCodexPath)};
     const fs = await import("node:fs");
     const { createSession } = await import("./codex-phone-supervisor/backend/src/session.ts");
-    const { upsertSession, getTask, listOrchestratorEvents, listWorkers } = await import("./codex-phone-supervisor/backend/src/store.ts");
+    const { upsertSession, getTask, listCommandEvents, listOrchestratorEvents, listWorkers } = await import("./codex-phone-supervisor/backend/src/store.ts");
     const { projectRecordForWorkspace, upsertProject } = await import("./codex-phone-supervisor/backend/src/project-store.ts");
     const { startLocalCodexSession } = await import("./codex-phone-supervisor/backend/src/codex-session-local.ts");
     const project = projectRecordForWorkspace(${JSON.stringify(projectDir)});
@@ -455,6 +480,7 @@ setTimeout(() => {
       task = getTask(started.task.task_id);
     }
     const finalEvents = listOrchestratorEvents(started.task.task_id).map((event) => event.type);
+    const command = listCommandEvents({ taskId: started.task.task_id })[0];
     console.log(JSON.stringify({
       midTaskStatus: midTask?.status ?? null,
       midFlowchartExists,
@@ -463,7 +489,9 @@ setTimeout(() => {
       watcherUpdated: midEvents.includes("local_codex_flowchart.updated"),
       watcherStopped: finalEvents.includes("local_codex_flowchart.watcher.stopped"),
       finalStatus: task?.status ?? null,
-      workerCount: listWorkers().length
+      workerCount: listWorkers().length,
+      command: command?.command ?? null,
+      codexReasoningEffort: command?.codex_reasoning_effort ?? null
     }));
   `;
   const result = runIsolated(script);
@@ -477,6 +505,8 @@ setTimeout(() => {
     watcherStopped?: boolean;
     finalStatus?: string | null;
     workerCount?: number;
+    command?: string | null;
+    codexReasoningEffort?: string | null;
   };
   assert.equal(payload.midTaskStatus, "running");
   assert.equal(payload.midFlowchartExists, true);
@@ -486,6 +516,8 @@ setTimeout(() => {
   assert.equal(payload.watcherStopped, true);
   assert.equal(payload.finalStatus, "completed");
   assert.equal(payload.workerCount, 0);
+  assert.match(payload.command ?? "", /model_reasoning_effort="xhigh"/);
+  assert.equal(payload.codexReasoningEffort, "xhigh");
 });
 
 test("flowchart renders Codex-chosen logical subagents without external workers", () => {
@@ -636,8 +668,10 @@ test("flowchart renders Codex-chosen logical subagents without external workers"
   assert.equal(payload.workerCount, 0);
   assert.ok(payload.summaryTypes?.includes("user_request"));
   assert.ok(payload.summaryTypes?.includes("codex_plan"));
+  assert.ok(payload.summaryTypes?.includes("user_approval"));
   assert.ok(payload.summaryTypes?.includes("codex_session"));
   assert.ok(payload.summaryTypes?.includes("codex_subagent"));
+  assert.ok(payload.summaryTypes?.includes("flowchart_maker"));
   assert.ok(payload.summaryTypes?.includes("validation"));
   assert.ok(payload.summaryTypes?.includes("preview"));
   assert.ok(payload.summaryTypes?.includes("final_summary"));
@@ -645,6 +679,9 @@ test("flowchart renders Codex-chosen logical subagents without external workers"
   assert.match(payload.summaryText ?? "", /Rules Agent/);
   assert.match(payload.summaryText ?? "", /API Agent/);
   assert.match(payload.summaryText ?? "", /Interface Agent/);
+  assert.match(payload.summaryText ?? "", /Megaplan skill/);
+  assert.match(payload.summaryText ?? "", /Approval gate/);
+  assert.match(payload.summaryText ?? "", /Flowchart maker/);
   assert.doesNotMatch(payload.summaryText ?? "", /shared\/game\.js|public\/index\.html|\/workspace|npm test|npm run/);
 });
 
