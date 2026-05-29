@@ -273,6 +273,16 @@ function codexSharedArgs() {
   return args;
 }
 
+function codexFastReadOnlyArgs() {
+  const args: string[] = [];
+  if (config.localCodex.planningModel) args.push("--model", config.localCodex.planningModel);
+  if (config.localCodex.planningProfile) args.push("--profile", config.localCodex.planningProfile);
+  if (config.localCodex.planningProfileV2) args.push("--profile-v2", config.localCodex.planningProfileV2);
+  if (config.localCodex.planningReasoningEffort) args.push("-c", `model_reasoning_effort=${JSON.stringify(config.localCodex.planningReasoningEffort)}`);
+  if (config.localCodex.inheritShellEnvironment) args.push("-c", "shell_environment_policy.inherit=all");
+  return args;
+}
+
 function codexImplementationAccessArgs() {
   if (config.localCodex.bypassApprovalsAndSandbox) return ["--dangerously-bypass-approvals-and-sandbox"];
   return ["-s", config.localCodex.sandbox];
@@ -1085,7 +1095,7 @@ async function runFlowchartMakerOnce(input: {
   });
   const args = [
     "exec",
-    ...codexSharedArgs(),
+    ...codexFastReadOnlyArgs(),
     "--json",
     "--color",
     "never",

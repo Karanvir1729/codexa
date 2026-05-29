@@ -894,7 +894,7 @@ export class ActionRouter {
     if (!task) throw new Error("No task is available for Codex history inspection.");
     const command = action.command_id ? getCommandEvent(action.command_id) : latestCodexCommand(task.task_id);
     if (!command) return { message: "No Codex command history is recorded for this task yet.", command: null };
-    const resume = command.codex_session_id ? `codex exec resume ${command.codex_session_id} "summarize what you built"` : null;
+    const resume = command.codex_session_id ? `codex resume --include-non-interactive ${command.codex_session_id}` : null;
     return {
       message: command.codex_session_id
         ? `Codex history is recorded for task ${task.task_id}. Session: ${command.codex_session_id}. Resume details are available in the side panel.`

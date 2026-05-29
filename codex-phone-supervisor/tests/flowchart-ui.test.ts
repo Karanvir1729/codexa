@@ -12,9 +12,14 @@ test("dashboard flowchart nodes are clickable and open the details panel", () =>
   assert.match(source, /RuntimeSettings/);
   assert.match(source, /\/ready/);
   assert.match(source, /Model:/);
+  assert.match(source, /Fast planning:/);
   assert.match(source, /Access:/);
   assert.match(source, /Plugins:/);
   assert.match(source, /same Codex account/);
+  assert.match(source, /Browser chat resume:/);
+  assert.match(source, /data-testid="codex-browser-chat-resume"/);
+  assert.match(source, /Normal terminal chat resume:/);
+  assert.match(source, /codex_conversation_resume_command/);
   assert.match(source, /Runtime graph from the live parallel Codex flowchart watcher JSON/);
   assert.match(source, /compactFlowchartLayout/);
   assert.match(source, /FLOW_COLUMNS = 4/);

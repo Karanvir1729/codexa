@@ -30,6 +30,10 @@ type Session = {
   latest_plan: string[];
   recent_messages: Array<{ ts: string; role: "user" | "assistant" | "system"; channel: string | null; text: string }>;
   raw_events: SessionEvent[];
+  codex_conversation_session_id: string | null;
+  codex_conversation_resume_command: string | null;
+  codex_conversation_mirrored_at: string | null;
+  codex_conversation_mirror_error: string | null;
   git_diff_summary: string;
   workspace_path: string;
   project_discovery: {
@@ -76,9 +80,12 @@ type TaskRecord = {
 
 type RuntimeSettings = {
   model: string;
+  planning_model: string;
+  planning_reasoning_effort: string;
   access: string;
   shell_environment: string;
   account_config_plugins: string;
+  conversation_resume_mirror: string;
 };
 
 type FlowchartVisualState = "idle" | "planning" | "waiting_for_approval" | "completed" | "failed" | "running" | "warning";
@@ -1037,8 +1044,10 @@ function App() {
           <div><strong>Session:</strong> local Codex CLI</div>
           <div><strong>Subagents:</strong> Codex internal</div>
           <div><strong>Model:</strong> {runtimeSettings?.model ?? "loading"}</div>
+          <div><strong>Fast planning:</strong> {runtimeSettings ? `${runtimeSettings.planning_model} / ${runtimeSettings.planning_reasoning_effort}` : "loading"}</div>
           <div><strong>Access:</strong> {runtimeSettings?.access ?? "loading"}</div>
           <div><strong>Plugins:</strong> same Codex account</div>
+          <div><strong>Browser chat resume:</strong> {runtimeSettings?.conversation_resume_mirror ?? "loading"}</div>
         </div>
       </header>
 
@@ -1065,6 +1074,13 @@ function App() {
             Session ID
             <input value={sessionId} onChange={(e) => setSessionId(e.target.value)} style={{ width: "100%", boxSizing: "border-box", marginTop: 4 }} />
           </label>
+          {session ? (
+            <div data-testid="codex-browser-chat-resume" style={{ marginTop: 10, border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, background: "#fff", fontSize: 13, color: "#334155" }}>
+              <div><strong>Normal terminal chat resume:</strong> <code>{session.codex_conversation_resume_command || "Waiting for the browser chat mirror."}</code></div>
+              {session.codex_conversation_mirrored_at ? <div><strong>Mirrored:</strong> {new Date(session.codex_conversation_mirrored_at).toLocaleString()}</div> : null}
+              {session.codex_conversation_mirror_error ? <div style={{ color: "#b91c1c" }}><strong>Mirror error:</strong> {session.codex_conversation_mirror_error}</div> : null}
+            </div>
+          ) : null}
           <div style={{ minHeight: 130, maxHeight: 220, overflow: "auto", border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, marginTop: 12, background: "#f8fafc" }}>
             {chatMessages.length ? (
               chatMessages.map((message) => (

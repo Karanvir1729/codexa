@@ -937,6 +937,10 @@ export interface SessionState {
   design_decision_history?: DesignDecisionRecord[];
   user_approved_worker_count?: number | null;
   user_approved_worker_mode?: WorkerType | null;
+  codex_conversation_session_id?: string | null;
+  codex_conversation_resume_command?: string | null;
+  codex_conversation_mirrored_at?: string | null;
+  codex_conversation_mirror_error?: string | null;
 }
 
 export interface PersistedState {

@@ -40,6 +40,10 @@ export function ensureSessionShape(session: SessionState): SessionState {
   session.design_decision_history ??= [];
   session.user_approved_worker_count ??= null;
   session.user_approved_worker_mode ??= null;
+  session.codex_conversation_session_id ??= null;
+  session.codex_conversation_resume_command ??= null;
+  session.codex_conversation_mirrored_at ??= null;
+  session.codex_conversation_mirror_error ??= null;
   return session;
 }
 
@@ -90,5 +94,9 @@ export function createSession(activeTask: string, workspacePath: string): Sessio
     design_decision_history: [],
     user_approved_worker_count: null,
     user_approved_worker_mode: null,
+    codex_conversation_session_id: null,
+    codex_conversation_resume_command: null,
+    codex_conversation_mirrored_at: null,
+    codex_conversation_mirror_error: null,
   };
 }

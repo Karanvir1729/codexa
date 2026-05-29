@@ -49,6 +49,7 @@ import { LOCAL_CODEX_BACKEND, startLocalCodexSession } from "./codex-session-loc
 import { agenticPlanningController, parsePlannerDecision } from "./agentic-planning.js";
 import { answerPreviewQuestion, isPreviewQuestion, isPreviewRequest, previewChatResponse, startPreviewForSession } from "./preview.js";
 import { writeMegaplan, type MegaplanRecord } from "./megaplan.js";
+import { mirrorBrowserConversationTurn } from "./codex-conversation-mirror.js";
 import type { Channel, PendingAction, PlannerDecision, SessionState, SupervisorEvent, SupervisorModelProvider, WorkerType } from "./types.js";
 
 export function list_projects() {
@@ -1675,6 +1676,7 @@ function finalConversationResponse<T extends { response: string; session_id?: st
 ) {
   const latest = getSession(sessionId);
   if (latest) {
+    const latestUserMessage = [...(latest.recent_messages ?? [])].reverse().find((message) => message.role === "user");
     rememberConversationMessage(latest, "assistant", result.response, channel);
     syncConversationState(latest);
     upsertSession(latest);
@@ -1691,6 +1693,14 @@ function finalConversationResponse<T extends { response: string; session_id?: st
         pending_action: latest.pending_action,
       },
     });
+    if (latestUserMessage) {
+      mirrorBrowserConversationTurn({
+        session: latest,
+        userText: latestUserMessage.text,
+        assistantText: result.response,
+        channel,
+      });
+    }
   }
   return result;
 }

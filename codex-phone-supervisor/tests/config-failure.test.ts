@@ -74,6 +74,42 @@ test("runtime config defaults to local Codex CLI supervisor", () => {
   assert.doesNotMatch(JSON.stringify(payload), /secret|token/i);
 });
 
+test("runtime config uses fast Codex defaults for short planning and chat-mirror turns", () => {
+  const result = spawnSync(
+    process.execPath,
+    ["--import", tsxLoader, "-e", `${configImport}; const { config } = await import(${JSON.stringify(pathToFileURL(path.resolve("codex-phone-supervisor/backend/src/config.ts")).href)}); console.log(JSON.stringify({ implementationModel: config.localCodex.model, planningModel: config.localCodex.planningModel, planningReasoningEffort: config.localCodex.planningReasoningEffort, mirrorBrowserConversationToResume: config.localCodex.mirrorBrowserConversationToResume }));`],
+    {
+      cwd: isolatedCwd(),
+      env: baseRuntimeEnv(),
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}") as Record<string, unknown>;
+  assert.deepEqual(payload, {
+    implementationModel: "gpt-5.5",
+    planningModel: "gpt-5.5",
+    planningReasoningEffort: "low",
+    mirrorBrowserConversationToResume: true,
+  });
+});
+
+test("runtime config rejects unsupported Codex planning reasoning effort", () => {
+  const result = spawnSync(
+    process.execPath,
+    ["--import", tsxLoader, "-e", configImport],
+    {
+      cwd: isolatedCwd(),
+      env: baseRuntimeEnv({
+        CODEX_PHONE_SUPERVISOR_CODEX_PLANNING_REASONING_EFFORT: "turbo",
+      }),
+      encoding: "utf8",
+    },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stderr}\n${result.stdout}`, /CODEX_PHONE_SUPERVISOR_CODEX_PLANNING_REASONING_EFFORT must be one of: minimal, low, medium, high, xhigh/);
+});
+
 test("runtime config accepts codex_home_bundle auth and does not default to API-key auth", () => {
   const result = spawnSync(
     process.execPath,

@@ -51,11 +51,11 @@ test("CommandEvent stores Codex history metadata", () => {
     codex_rollout_relative_path: ".codex-worker-home/sessions/2026/05/26/rollout-019e-history-session.jsonl",
     codex_home: "/codex-home",
     codex_history_kind: "exec",
-    codex_resume_command: "codex exec resume 019e-history-session \"summarize what you built\"",
+    codex_resume_command: "codex resume --include-non-interactive 019e-history-session",
     codex_history_confidence: "session_id_with_verified_rollout",
   }));
   assert.equal(saved.codex_session_id, "019e-history-session");
-  assert.match(saved.codex_resume_command ?? "", /codex exec resume 019e-history-session/);
+  assert.match(saved.codex_resume_command ?? "", /codex resume --include-non-interactive 019e-history-session/);
   assert.equal(store.getCommandEvent(saved.event_id)?.codex_history_confidence, "session_id_with_verified_rollout");
 });
 

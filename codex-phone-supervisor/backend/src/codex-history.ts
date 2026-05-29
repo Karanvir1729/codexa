@@ -203,7 +203,7 @@ function shellDoubleQuote(value: string) {
 
 export function buildCodexResumeCommand(sessionId: string | null | undefined) {
   if (!sessionId) return null;
-  return `codex exec resume ${sessionId} "summarize what you built"`;
+  return `codex resume --include-non-interactive ${sessionId}`;
 }
 
 export function buildVisibilityMirrorPrompt(input: {

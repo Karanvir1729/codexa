@@ -120,6 +120,13 @@ function optionalNumberEnv(name: string, fallback: number) {
   return value;
 }
 
+function reasoningEffortEnv(name: string, fallback: "minimal" | "low" | "medium" | "high" | "xhigh") {
+  const value = optionalEnv(name);
+  if (!value) return fallback;
+  if (["minimal", "low", "medium", "high", "xhigh"].includes(value)) return value as "minimal" | "low" | "medium" | "high" | "xhigh";
+  throw new Error(`${name} must be one of: minimal, low, medium, high, xhigh.`);
+}
+
 function stateStoreTypeEnv() {
   const value = optionalEnv("HEAD_DEVELOPER_STATE_STORE") || optionalEnv("STATE_STORE");
   if (!value) return optionalEnv("K_SERVICE") ? "firestore" : "file";
@@ -330,6 +337,11 @@ export const config = {
     model: optionalEnv("CODEX_PHONE_SUPERVISOR_CODEX_MODEL") || optionalEnv("CODEX_MODEL") || "gpt-5.5",
     profile: optionalEnv("CODEX_PHONE_SUPERVISOR_CODEX_PROFILE"),
     profileV2: optionalEnv("CODEX_PHONE_SUPERVISOR_CODEX_PROFILE_V2"),
+    planningModel: optionalEnv("CODEX_PHONE_SUPERVISOR_CODEX_PLANNING_MODEL") || optionalEnv("CODEX_PHONE_SUPERVISOR_CODEX_MODEL") || optionalEnv("CODEX_MODEL") || "gpt-5.5",
+    planningProfile: optionalEnv("CODEX_PHONE_SUPERVISOR_CODEX_PLANNING_PROFILE") || optionalEnv("CODEX_PHONE_SUPERVISOR_CODEX_PROFILE"),
+    planningProfileV2: optionalEnv("CODEX_PHONE_SUPERVISOR_CODEX_PLANNING_PROFILE_V2") || optionalEnv("CODEX_PHONE_SUPERVISOR_CODEX_PROFILE_V2"),
+    planningReasoningEffort: reasoningEffortEnv("CODEX_PHONE_SUPERVISOR_CODEX_PLANNING_REASONING_EFFORT", "low"),
+    mirrorBrowserConversationToResume: optionalBooleanEnv("CODEX_PHONE_SUPERVISOR_MIRROR_BROWSER_CHAT_TO_CODEX_RESUME", !testMode),
     sandbox: codexSandboxEnv("CODEX_PHONE_SUPERVISOR_CODEX_SANDBOX", "danger-full-access"),
     bypassApprovalsAndSandbox: optionalBooleanEnv("CODEX_PHONE_SUPERVISOR_CODEX_BYPASS_APPROVALS_AND_SANDBOX", true),
     inheritShellEnvironment: optionalBooleanEnv("CODEX_PHONE_SUPERVISOR_CODEX_INHERIT_SHELL_ENV", true),

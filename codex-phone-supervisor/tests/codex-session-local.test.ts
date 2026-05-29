@@ -131,6 +131,113 @@ test("codex_session_local pipes real Codex CLI stdout and stderr into session ev
   assert.match(source, /piped_from: "codex_cli"/);
 });
 
+test("browser chat turns are mirrored into a real resumable Codex CLI session", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "local-codex-chat-mirror-"));
+  const storeDir = path.join(root, "store");
+  const workspaceRoot = path.join(root, "workspace");
+  const projectDir = path.join(workspaceRoot, "chat-mirror-app");
+  const codexHome = path.join(root, "codex-home");
+  const fakeCodexPath = path.join(root, "fake-codex.cjs");
+  const fakeLogPath = path.join(root, "fake-codex-log.jsonl");
+  fs.mkdirSync(projectDir, { recursive: true });
+  fs.mkdirSync(codexHome, { recursive: true });
+  fs.writeFileSync(fakeCodexPath, `#!/usr/bin/env node
+const fs = require("node:fs");
+const logPath = process.env.FAKE_CODEX_MIRROR_LOG;
+let stdin = "";
+process.stdin.on("data", (chunk) => {
+  stdin += chunk.toString();
+});
+process.stdin.on("end", () => {
+  const argv = process.argv.slice(2);
+  fs.appendFileSync(logPath, JSON.stringify({ argv, stdin }) + "\\n");
+  console.log(JSON.stringify({ type: "session.created", session_id: "mirror-session-1", model: "gpt-5.5" }));
+  console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "Recorded browser conversation turn." } }));
+});
+`);
+  fs.chmodSync(fakeCodexPath, 0o755);
+
+  const script = `
+    ${bootstrapEnv(storeDir, workspaceRoot, codexHome)}
+    process.env.CODEX_PHONE_SUPERVISOR_CODEX_COMMAND = ${JSON.stringify(fakeCodexPath)};
+    process.env.CODEX_PHONE_SUPERVISOR_MIRROR_BROWSER_CHAT_TO_CODEX_RESUME = "1";
+    process.env.CODEX_PHONE_SUPERVISOR_CODEX_PLANNING_PROFILE = "fast-planning-profile";
+    process.env.CODEX_PHONE_SUPERVISOR_CODEX_PLANNING_REASONING_EFFORT = "low";
+    process.env.FAKE_CODEX_MIRROR_LOG = ${JSON.stringify(fakeLogPath)};
+    const fs = await import("node:fs");
+    const { createSession } = await import("./codex-phone-supervisor/backend/src/session.ts");
+    const { getSession, upsertSession } = await import("./codex-phone-supervisor/backend/src/store.ts");
+    const { mirrorBrowserConversationTurn, resetConversationMirrorQueuesForTests } = await import("./codex-phone-supervisor/backend/src/codex-conversation-mirror.ts");
+    resetConversationMirrorQueuesForTests();
+    const session = createSession("Browser chat mirror", ${JSON.stringify(projectDir)});
+    session.session_id = "session_chat_mirror";
+    session.channel = "web_text";
+    session.workspace_path = ${JSON.stringify(projectDir)};
+    upsertSession(session);
+    const first = mirrorBrowserConversationTurn({
+      session,
+      userText: "Can you make a game?",
+      assistantText: "What should I name the game project?",
+      channel: "web_text"
+    });
+    if (first) await first;
+    const afterFirst = getSession(session.session_id);
+    const second = mirrorBrowserConversationTurn({
+      session: afterFirst,
+      userText: "Call it x.",
+      assistantText: "Before implementation, I need the technical shape.",
+      channel: "web_text"
+    });
+    if (second) await second;
+    const afterSecond = getSession(session.session_id);
+    const logs = fs.readFileSync(${JSON.stringify(fakeLogPath)}, "utf8").trim().split(/\\r?\\n/).map((line) => JSON.parse(line));
+    console.log(JSON.stringify({
+      callCount: logs.length,
+      firstArgs: logs[0].argv,
+      secondArgs: logs[1].argv,
+      sessionId: afterSecond.codex_conversation_session_id,
+      resumeCommand: afterSecond.codex_conversation_resume_command,
+      mirrorError: afterSecond.codex_conversation_mirror_error,
+      firstPrompt: logs[0].stdin,
+      secondPrompt: logs[1].stdin,
+      eventTypes: afterSecond.raw_events.map((event) => event.type)
+    }));
+  `;
+  const result = runIsolated(script);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}") as {
+    callCount?: number;
+    firstArgs?: string[];
+    secondArgs?: string[];
+    sessionId?: string | null;
+    resumeCommand?: string | null;
+    mirrorError?: string | null;
+    firstPrompt?: string;
+    secondPrompt?: string;
+    eventTypes?: string[];
+  };
+  assert.equal(payload.callCount, 2);
+  assert.deepEqual(payload.firstArgs?.slice(0, 2), ["exec", "--model"]);
+  assert.ok(payload.firstArgs?.includes("--profile"));
+  assert.ok(payload.firstArgs?.includes("fast-planning-profile"));
+  assert.ok(payload.firstArgs?.includes("-s"));
+  assert.ok(payload.firstArgs?.includes("read-only"));
+  assert.deepEqual(payload.secondArgs?.slice(0, 2), ["exec", "resume"]);
+  assert.ok(payload.secondArgs?.includes("mirror-session-1"));
+  assert.ok(payload.firstArgs?.includes("model_reasoning_effort=\"low\""));
+  assert.ok(payload.secondArgs?.includes("model_reasoning_effort=\"low\""));
+  assert.equal(payload.secondArgs?.includes("--profile"), false);
+  assert.equal(payload.sessionId, "mirror-session-1");
+  assert.equal(payload.resumeCommand, "codex resume --include-non-interactive mirror-session-1");
+  assert.equal(payload.mirrorError, null);
+  assert.match(payload.firstPrompt ?? "", /User: Can you make a game\?/);
+  assert.match(payload.firstPrompt ?? "", /Codex app response: What should I name the game project\?/);
+  assert.match(payload.secondPrompt ?? "", /User: Call it x\./);
+  assert.match(payload.secondPrompt ?? "", /Codex app response: Before implementation, I need the technical shape\./);
+  assert.ok(payload.eventTypes?.includes("codex_conversation_mirror.started"));
+  assert.ok(payload.eventTypes?.includes("codex_conversation_mirror.completed"));
+});
+
 test("flowchart maker is a separate read-only Codex session capped at five seconds", () => {
   const source = fs.readFileSync(path.join(process.cwd(), "codex-phone-supervisor", "backend", "src", "codex-session-local.ts"), "utf8");
   const flowchartSource = fs.readFileSync(path.join(process.cwd(), "codex-phone-supervisor", "backend", "src", "flowchart.ts"), "utf8");
@@ -338,7 +445,7 @@ test("flowchart renders Codex-chosen logical subagents without external workers"
       execution_backend: "codex_session_local",
       local_state_path: ${JSON.stringify(path.join(projectDir, ".head-developer", "state.json"))},
       codex_session_id: "real-or-recorded-codex-session-id",
-      codex_resume_command: "codex exec resume real-or-recorded-codex-session-id",
+      codex_resume_command: "codex resume --include-non-interactive real-or-recorded-codex-session-id",
       codex_prompt_excerpt: "You are Codex, the local orchestrator.",
       codex_flowchart_summary: {
         title: "Wordle build flow",

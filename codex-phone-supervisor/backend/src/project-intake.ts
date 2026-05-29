@@ -75,9 +75,10 @@ function parseProjectIntakeDecision(text: string): ProjectIntakeDecision {
 
 function codexSharedReadOnlyArgs() {
   const args: string[] = [];
-  if (config.localCodex.model) args.push("--model", config.localCodex.model);
-  if (config.localCodex.profile) args.push("--profile", config.localCodex.profile);
-  if (config.localCodex.profileV2) args.push("--profile-v2", config.localCodex.profileV2);
+  if (config.localCodex.planningModel) args.push("--model", config.localCodex.planningModel);
+  if (config.localCodex.planningProfile) args.push("--profile", config.localCodex.planningProfile);
+  if (config.localCodex.planningProfileV2) args.push("--profile-v2", config.localCodex.planningProfileV2);
+  if (config.localCodex.planningReasoningEffort) args.push("-c", `model_reasoning_effort=${JSON.stringify(config.localCodex.planningReasoningEffort)}`);
   if (config.localCodex.inheritShellEnvironment) args.push("-c", "shell_environment_policy.inherit=all");
   return args;
 }
