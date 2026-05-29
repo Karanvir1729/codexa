@@ -1,5 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
+
+declare global {
+  interface Window {
+    __codexPhoneSupervisorRoot?: Root;
+  }
+}
 
 type SessionEvent = {
   id: string;
@@ -1431,4 +1437,7 @@ function App() {
   );
 }
 
-createRoot(document.getElementById("root")!).render(<App />);
+const rootElement = document.getElementById("root");
+if (!rootElement) throw new Error("Missing root element.");
+window.__codexPhoneSupervisorRoot ??= createRoot(rootElement);
+window.__codexPhoneSupervisorRoot.render(<App />);
