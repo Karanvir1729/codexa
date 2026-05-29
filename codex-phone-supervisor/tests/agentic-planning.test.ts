@@ -642,6 +642,7 @@ process.stdin.on("end", () => {
     process.env.DEFAULT_WORKER_MODE = "codex_session_local";
     const fs = await import("node:fs");
     const path = await import("node:path");
+    const { spawnSync } = await import("node:child_process");
     const { createSession } = await import("./codex-phone-supervisor/backend/src/session.ts");
     const { handleSupervisorMessage } = await import("./codex-phone-supervisor/backend/src/supervisor-tools.ts");
     const { getSession, upsertSession } = await import("./codex-phone-supervisor/backend/src/store.ts");
@@ -682,6 +683,135 @@ process.stdin.on("end", () => {
   assert.equal(payload.desiredExists, true);
   assert.equal(payload.desiredGitExists, true);
   assert.notEqual(payload.workspace, payload.oldGeneratedWorkspace);
+});
+
+test("new local Codex projects initialize git and attach a GitHub repo when enabled", () => {
+  const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), "planner-github-repo-store-"));
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "planner-github-repo-root-"));
+  const fakeCodexPath = path.join(storeDir, "fake-codex-github-planner.cjs");
+  const fakeGhPath = path.join(storeDir, "fake-gh.cjs");
+  const ghLogPath = path.join(storeDir, "gh-log.jsonl");
+  fs.writeFileSync(fakeCodexPath, `#!/usr/bin/env node
+const fs = require("node:fs");
+let input = "";
+process.stdin.on("data", (chunk) => input += chunk.toString());
+process.stdin.on("end", () => {
+  function arg(name) {
+    const index = process.argv.indexOf(name);
+    return index === -1 ? "" : process.argv[index + 1] || "";
+  }
+  const finalPath = arg("--output-last-message");
+  const value = {
+    decision_type: "request_user_approval",
+    confidence: 0.91,
+    reason: "The local Codex plan is ready.",
+    user_visible_response: "Approve the local Codex plan?",
+    requirements_summary: "Build a small app in a new GitHub-backed repo.",
+    open_questions: [],
+    assumptions: [],
+    proposed_design: "One local Codex CLI session owns the repo.",
+    proposed_task_split: [{
+      title: "Build App",
+      goal: "Create the app files.",
+      can_run_parallel: false,
+      depends_on: [],
+      expected_files: ["index.html"],
+      validation: ["test -f index.html"]
+    }],
+    recommended_worker_count: 1,
+    recommended_worker_mode: "codex_session_local",
+    requires_user_approval: true,
+    approval_reason: "The Megaplan must be approved first.",
+    risk_level: "low",
+    next_action: "none",
+    execution_allowed: false
+  };
+  if (finalPath) fs.writeFileSync(finalPath, JSON.stringify(value));
+  console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: JSON.stringify(value) } }));
+});
+`);
+  fs.chmodSync(fakeCodexPath, 0o755);
+  fs.writeFileSync(fakeGhPath, `#!/usr/bin/env node
+const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const logPath = ${JSON.stringify(ghLogPath)};
+fs.appendFileSync(logPath, JSON.stringify({ argv: process.argv.slice(2) }) + "\\n");
+const args = process.argv.slice(2);
+if (args[0] === "auth" && args[1] === "status") process.exit(0);
+if (args[0] === "repo" && args[1] === "create") {
+  const target = args[2];
+  const source = args[args.indexOf("--source") + 1];
+  const name = target.includes("/") ? target.split("/").pop() : target;
+  const owner = target.includes("/") ? target.split("/")[0] : "Karanvir1729";
+  const url = "https://github.com/" + owner + "/" + name + ".git";
+  const result = spawnSync("git", ["remote", "add", "origin", url], { cwd: source, encoding: "utf8" });
+  if (result.status !== 0) {
+    process.stderr.write(result.stderr || result.stdout || "remote add failed");
+    process.exit(result.status || 1);
+  }
+  console.log(url);
+  process.exit(0);
+}
+if (args[0] === "repo" && args[1] === "view") {
+  const target = args[2];
+  const name = target.includes("/") ? target.split("/").pop() : target;
+  const owner = target.includes("/") ? target.split("/")[0] : "Karanvir1729";
+  console.log(JSON.stringify({ url: "https://github.com/" + owner + "/" + name, nameWithOwner: owner + "/" + name }));
+  process.exit(0);
+}
+process.stderr.write("unexpected gh args: " + args.join(" "));
+process.exit(1);
+`);
+  fs.chmodSync(fakeGhPath, 0o755);
+  const script = `
+    ${bootstrapEnv(storeDir, workspaceRoot)}
+    delete process.env.CODEX_PHONE_SUPERVISOR_TEST_SUPERVISOR_MODEL;
+    process.env.CODEX_PHONE_SUPERVISOR_CODEX_COMMAND = ${JSON.stringify(fakeCodexPath)};
+    process.env.CODEX_PHONE_SUPERVISOR_GH_COMMAND = ${JSON.stringify(fakeGhPath)};
+    process.env.CODEX_PHONE_SUPERVISOR_GITHUB_REPO_CREATE = "always";
+    process.env.CODEX_PHONE_SUPERVISOR_GITHUB_REPO_VISIBILITY = "private";
+    process.env.WORKER_MODE = "codex_session_local";
+    process.env.DEFAULT_WORKER_MODE = "codex_session_local";
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const { spawnSync } = await import("node:child_process");
+    const { createSession } = await import("./codex-phone-supervisor/backend/src/session.ts");
+    const { create_project } = await import("./codex-phone-supervisor/backend/src/supervisor-tools.ts");
+    const { getSession, listOrchestratorEvents, upsertSession } = await import("./codex-phone-supervisor/backend/src/store.ts");
+    const { getProject } = await import("./codex-phone-supervisor/backend/src/project-store.ts");
+    const session = createSession("github repo project", ${JSON.stringify(workspaceRoot)});
+    session.session_id = "session_github_repo_project";
+    session.channel = "web_text";
+    session.preferred_worker_mode = "codex_session_local";
+    upsertSession(session);
+    const result = await create_project(session.session_id, "GitHub Speed Repo", "Build a small app in a new GitHub-backed repo.");
+    const latest = getSession(session.session_id);
+    const project = result.project_id ? getProject(result.project_id) : null;
+    const remote = project ? spawnSync("git", ["remote", "get-url", "origin"], { cwd: project.workspace_path, encoding: "utf8" }).stdout.trim() : "";
+    console.log(JSON.stringify({
+      status: result.status,
+      pending: latest?.pending_action?.type ?? null,
+      projectPath: project?.workspace_path ?? null,
+      gitExists: project ? fs.existsSync(path.join(project.workspace_path, ".git")) : false,
+      remote,
+      githubUrl: project?.github_repo_url ?? null,
+      githubFullName: project?.github_repo_full_name ?? null,
+      githubEvents: listOrchestratorEvents(project?.project_id ?? "").filter((event) => event.type.startsWith("github.repo.")).map((event) => event.type),
+      ghLog: fs.readFileSync(${JSON.stringify(ghLogPath)}, "utf8")
+    }));
+  `;
+  const result = runIsolated(script);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}") as Record<string, unknown>;
+  assert.equal(payload.status, "waiting_for_approval");
+  assert.equal(payload.pending, "approve_megaplan");
+  assert.equal(payload.gitExists, true);
+  assert.match(String(payload.projectPath), /github-speed-repo$/);
+  assert.match(String(payload.remote), /github\.com\/Karanvir1729\/github-speed-repo\.git$/);
+  assert.equal(payload.githubUrl, "https://github.com/Karanvir1729/github-speed-repo");
+  assert.equal(payload.githubFullName, "Karanvir1729/github-speed-repo");
+  assert.ok((payload.githubEvents as string[]).includes("github.repo.ready"));
+  assert.match(String(payload.ghLog), /"repo","create","github-speed-repo"/);
 });
 
 test("agentic planner converts human validation text into acceptance checks, not required commands", () => {

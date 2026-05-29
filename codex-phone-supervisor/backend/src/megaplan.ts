@@ -210,6 +210,7 @@ export function writeMegaplan(input: {
   userGoal: string;
   decision: PlannerDecision | null;
 }) {
+  const startedMs = Date.now();
   const docsDir = path.join(input.project.workspace_path, ".head-developer");
   fs.mkdirSync(docsDir, { recursive: true });
   const built = buildMegaplanMarkdown(input);
@@ -233,6 +234,7 @@ export function writeMegaplan(input: {
       project_id: input.project.project_id,
       megaplan_path: target,
       repo: built.repo,
+      duration_ms: Date.now() - startedMs,
     },
   });
   return record;

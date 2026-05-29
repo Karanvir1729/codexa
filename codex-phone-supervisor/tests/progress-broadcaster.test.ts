@@ -109,6 +109,77 @@ test("silence watchdog sends grounded progress and stale-worker updates", () => 
   assert.ok(payload.progressData.some((data) => data.source_event_type === "worker.stale" && data.task_id === "task_watchdog" && data.worker_id === "worker_watchdog"));
 });
 
+test("progress broadcaster records Codex intake, planning, and Megaplan updates", () => {
+  const storeDir = path.join(process.cwd(), "tmp", `progress-planning-test-${Date.now()}`);
+  const script = `
+    ${bootstrapEnv(storeDir)}
+
+    const { createSession } = await import("./codex-phone-supervisor/backend/src/session.ts");
+    const { startProgressBroadcaster, stopProgressBroadcasterForTests } = await import("./codex-phone-supervisor/backend/src/progress-broadcaster.ts");
+    const { appendOrchestratorEvent, getSession, upsertSession } = await import("./codex-phone-supervisor/backend/src/store.ts");
+
+    const session = createSession("planning progress smoke", process.cwd());
+    session.channel = "web_text";
+    upsertSession(session);
+
+    startProgressBroadcaster();
+    appendOrchestratorEvent({
+      scope: "session",
+      scope_id: session.session_id,
+      type: "project_intake.codex_started",
+      message: "Started Codex project-intake decision.",
+      data: { session_id: session.session_id }
+    });
+    appendOrchestratorEvent({
+      scope: "session",
+      scope_id: session.session_id,
+      type: "project_intake.codex_completed",
+      message: "create_project: selected local repo",
+      data: { session_id: session.session_id, duration_ms: 87, action: "create_project" }
+    });
+    appendOrchestratorEvent({
+      scope: "planning",
+      scope_id: "planning_progress",
+      type: "planner.codex_cli.started",
+      message: "Started read-only Codex CLI planner session.",
+      data: { session_id: session.session_id }
+    });
+    appendOrchestratorEvent({
+      scope: "planning",
+      scope_id: "planning_progress",
+      type: "planner.codex_cli.completed",
+      message: "request_user_approval: plan is ready",
+      data: { session_id: session.session_id, duration_ms: 1234 }
+    });
+    appendOrchestratorEvent({
+      scope: "planning",
+      scope_id: "planning_progress",
+      type: "megaplan.created",
+      message: "Megaplan skill created .head-developer/MEGAPLAN.md and is waiting for approval.",
+      data: { session_id: session.session_id, duration_ms: 9 }
+    });
+
+    const latest = getSession(session.session_id);
+    const progress = latest.raw_events.filter((event) => event.type === "progress.update");
+    stopProgressBroadcasterForTests();
+    console.log(JSON.stringify({
+      messages: progress.map((event) => event.message),
+      sourceTypes: progress.map((event) => event.data?.source_event_type)
+    }));
+  `;
+
+  const result = runIsolated(script);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}") as { messages: string[]; sourceTypes: string[] };
+  assert.ok(payload.sourceTypes.includes("project_intake.codex_started"));
+  assert.ok(payload.sourceTypes.includes("planner.codex_cli.started"));
+  assert.ok(payload.sourceTypes.includes("megaplan.created"));
+  assert.ok(payload.messages.some((message) => /new repo|repo correction|normal follow-up/i.test(message)));
+  assert.ok(payload.messages.some((message) => /technical requirements|Megaplan inputs/i.test(message)));
+  assert.ok(payload.messages.some((message) => /1\.2s/i.test(message)));
+  assert.ok(payload.messages.some((message) => /Megaplan is ready/i.test(message)));
+});
+
 test("long-running stale heartbeat progress is emitted once for unchanged state", () => {
   const storeDir = path.join(process.cwd(), "tmp", `progress-stale-dedupe-test-${Date.now()}`);
   const script = `

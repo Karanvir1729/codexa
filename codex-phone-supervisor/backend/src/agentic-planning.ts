@@ -787,6 +787,7 @@ export class CodexCliPlannerModel implements PlannerModel {
   readonly modelName = "codex_cli";
 
   async generatePlanningDecision(input: PlannerInput): Promise<PlannerDecision> {
+    const startedMs = Date.now();
     const schemaPath = buildPlannerSchemaFile(input.session.session_id);
     const finalMessagePath = path.join(config.runtimeDir, `${input.session.session_id}.planner.final.json`);
     const cwd = input.project?.workspace_path ?? config.defaultWorkspacePath;
@@ -820,52 +821,71 @@ export class CodexCliPlannerModel implements PlannerModel {
         model: config.localCodex.model || null,
       },
     });
-    const child = spawn(config.codexCommand, args, {
-      cwd,
-      env: {
-        ...process.env,
-        CODEX_HOME: config.codexHome,
-        NO_COLOR: "1",
-        FORCE_COLOR: "0",
-      },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGTERM");
-    }, PLANNER_CODEX_TIMEOUT_MS);
-    child.stdin?.on("error", () => undefined);
-    child.stdin?.end(prompt);
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-    const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
-      child.on("error", reject);
-      child.on("close", (code, signal) => resolve({ code, signal }));
-    });
-    clearTimeout(timer);
-    if (timedOut) throw new Error("Codex planner timed out.");
-    if (exit.code !== 0) throw new Error(`Codex planner exited with code ${exit.code ?? "null"}${stderr ? `: ${preview(stderr)}` : ""}`);
-    const finalText = extractFinalAgentText(parseCodexJsonl(`${stdout}\n${stderr}`)) || safeRead(finalMessagePath) || stdout;
-    const decision = parsePlannerDecision(finalText);
-    appendOrchestratorEvent({
-      scope: "planning",
-      scope_id: decision.planning_decision_id ?? input.session.session_id,
-      type: "planner.codex_cli.completed",
-      message: `${decision.decision_type}: ${decision.reason}`,
-      data: {
-        session_id: input.session.session_id,
-        project_id: input.project?.project_id ?? null,
-        decision,
-      },
-    });
-    return decision;
+    let timer: NodeJS.Timeout | null = null;
+    try {
+      const child = spawn(config.codexCommand, args, {
+        cwd,
+        env: {
+          ...process.env,
+          CODEX_HOME: config.codexHome,
+          NO_COLOR: "1",
+          FORCE_COLOR: "0",
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      let timedOut = false;
+      timer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGTERM");
+      }, PLANNER_CODEX_TIMEOUT_MS);
+      child.stdin?.on("error", () => undefined);
+      child.stdin?.end(prompt);
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk.toString();
+      });
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString();
+      });
+      const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+        child.on("error", reject);
+        child.on("close", (code, signal) => resolve({ code, signal }));
+      });
+      if (timer) clearTimeout(timer);
+      timer = null;
+      if (timedOut) throw new Error("Codex planner timed out.");
+      if (exit.code !== 0) throw new Error(`Codex planner exited with code ${exit.code ?? "null"}${stderr ? `: ${preview(stderr)}` : ""}`);
+      const finalText = extractFinalAgentText(parseCodexJsonl(`${stdout}\n${stderr}`)) || safeRead(finalMessagePath) || stdout;
+      const decision = parsePlannerDecision(finalText);
+      appendOrchestratorEvent({
+        scope: "planning",
+        scope_id: decision.planning_decision_id ?? input.session.session_id,
+        type: "planner.codex_cli.completed",
+        message: `${decision.decision_type}: ${decision.reason}`,
+        data: {
+          session_id: input.session.session_id,
+          project_id: input.project?.project_id ?? null,
+          duration_ms: Date.now() - startedMs,
+          decision,
+        },
+      });
+      return decision;
+    } catch (error) {
+      if (timer) clearTimeout(timer);
+      appendOrchestratorEvent({
+        scope: "planning",
+        scope_id: input.session.session_id,
+        type: "planner.codex_cli.failed",
+        message: error instanceof Error ? error.message : String(error),
+        data: {
+          session_id: input.session.session_id,
+          project_id: input.project?.project_id ?? null,
+          duration_ms: Date.now() - startedMs,
+        },
+      });
+      throw error;
+    }
   }
 }
 

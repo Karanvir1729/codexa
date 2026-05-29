@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { config } from "./config.js";
 import { getCodexAccessSummary, gitDiffSummary } from "./access.js";
 import { classifyApproval } from "./approval-firewall.js";
@@ -42,6 +41,7 @@ import {
   refreshProjectsFromConfiguredRoots,
   upsertProject,
 } from "./project-store.js";
+import { ensureGitHubRepositoryForProject, ensureLocalGitRepository, type GitHubRepoProvisionResult } from "./github-repo.js";
 import { slugifyProjectName } from "./project-naming.js";
 import { cloudOrchestrator } from "./cloud-orchestrator.js";
 import { multiWorkerCoordinator } from "./multi-worker-coordinator.js";
@@ -234,19 +234,61 @@ function ensureWorkspaceDirectory(workspacePath: string) {
   return fs.realpathSync(workspacePath);
 }
 
-function gitRepoRoot(workspacePath: string) {
-  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: workspacePath, encoding: "utf8" });
-  return result.status === 0 ? result.stdout.trim() : null;
+function githubProvisionMessage(result: GitHubRepoProvisionResult | null) {
+  if (!result) return "";
+  if (result.status === "created" || result.status === "attached" || result.status === "existing_remote") {
+    return result.url ? `GitHub repo: ${result.url}.` : "";
+  }
+  if (result.status === "failed") {
+    return `GitHub repo creation did not complete: ${result.error}`;
+  }
+  return "";
 }
 
-function ensureGitRepository(workspacePath: string) {
-  const existingRoot = gitRepoRoot(workspacePath);
-  if (existingRoot) return { initialized: false, repoRoot: existingRoot };
-  const result = spawnSync("git", ["init"], { cwd: workspacePath, encoding: "utf8" });
-  if (result.status !== 0) {
-    throw new Error(`Could not initialize git repository at ${workspacePath}: ${(result.stderr || result.stdout || "").trim()}`);
-  }
-  return { initialized: true, repoRoot: gitRepoRoot(workspacePath) ?? workspacePath };
+function recordGitHubProvision(project: ReturnType<typeof projectRecordForWorkspace>, result: GitHubRepoProvisionResult) {
+  project.github_repo_url = result.url;
+  project.github_repo_full_name = result.full_name;
+  project.github_repo_created = result.status === "created";
+  project.github_repo_error = result.status === "failed" ? result.error : null;
+  appendOrchestratorEvent({
+    scope: "project",
+    scope_id: project.project_id,
+    type: result.status === "failed"
+      ? "github.repo.failed"
+      : result.status === "skipped"
+        ? "github.repo.skipped"
+        : "github.repo.ready",
+    message: result.status === "failed"
+      ? `GitHub repo creation failed for ${project.display_name}.`
+      : result.status === "skipped"
+        ? `GitHub repo creation skipped for ${project.display_name}.`
+        : `GitHub repo ready for ${project.display_name}.`,
+    data: { project_id: project.project_id, workspace_path: project.workspace_path, github: result },
+  });
+}
+
+function initializeNewProjectRepository(input: {
+  session: SessionState;
+  workspacePath: string;
+  displayName: string;
+  slug: string;
+  description: string;
+}) {
+  const git = ensureLocalGitRepository(input.workspacePath);
+  const project = projectRecordForWorkspace(input.workspacePath);
+  project.display_name = input.displayName;
+  project.last_active_session_id = input.session.session_id;
+  const github = ensureGitHubRepositoryForProject({
+    project,
+    slug: input.slug,
+    description: input.description,
+  });
+  const refreshed = projectRecordForWorkspace(input.workspacePath, project);
+  refreshed.display_name = input.displayName;
+  refreshed.last_active_session_id = input.session.session_id;
+  recordGitHubProvision(refreshed, github);
+  upsertProject(refreshed);
+  return { project: refreshed, gitInitialized: git.initialized, github };
 }
 
 function describeNewProjectResult(result: Awaited<ReturnType<typeof create_project>>) {
@@ -326,7 +368,7 @@ function firstAssignment(result: { assignments: Awaited<ReturnType<typeof multiW
   return result.assignments[0] ?? null;
 }
 
-function localCodexApprovalMessage(decision: PlannerDecision, megaplan?: MegaplanRecord | null) {
+function localCodexApprovalMessage(decision: PlannerDecision, megaplan?: MegaplanRecord | null, project?: ReturnType<typeof projectRecordForWorkspace> | null) {
   const split = decision.proposed_task_split.map((item, index) => {
     const validation = item.validation.length ? ` Validation: ${item.validation.join(", ")}.` : "";
     return `${index + 1}. ${item.title}: ${item.goal}.${validation}`;
@@ -342,6 +384,11 @@ function localCodexApprovalMessage(decision: PlannerDecision, megaplan?: Megapla
     design ? `Technical direction: ${design}` : "",
     "You will talk directly to Codex as the local CLI orchestrator for this repo.",
     "I will build this locally in one repo using one local Codex CLI orchestrator session.",
+    githubProvisionMessage(project?.github_repo_error
+      ? { status: "failed", url: null, full_name: null, reason: "GitHub repo creation failed.", error: project.github_repo_error }
+      : project?.github_repo_url
+        ? { status: project.github_repo_created ? "created" : "existing_remote", url: project.github_repo_url, full_name: project.github_repo_full_name ?? null, reason: "GitHub repo ready." }
+        : null),
     megaplan ? `The Megaplan skill created MEGAPLAN.md for ${megaplan.repo.name} on branch ${megaplan.repo.branch ?? "unknown"}.` : "",
     "Codex will choose how many logical internal subagents to create and will report the actual subagent breakdown after implementation.",
     split.length ? `Proposed responsibility areas: ${split.join(" ")}` : "",
@@ -373,7 +420,7 @@ function queueLocalMegaplanApproval(input: {
     userGoal: input.userGoal,
     decision,
   });
-  const response = localCodexApprovalMessage(decision, megaplan);
+  const response = localCodexApprovalMessage(decision, megaplan, input.project);
   setPendingAction(latest, {
     type: "approve_megaplan",
     original_user_goal: input.userGoal,
@@ -783,7 +830,7 @@ export async function create_project(
     let gitInitialized = false;
     if (requestedWorkspacePath) {
       try {
-        gitInitialized = ensureGitRepository(target).initialized;
+        gitInitialized = ensureLocalGitRepository(target).initialized;
       } catch (error) {
         return { error: error instanceof Error ? error.message : String(error), code: "WORKSPACE_CREATE_FAILED" };
       }
@@ -866,16 +913,23 @@ export async function create_project(
   if (requestedWorkspacePath) {
     let workspacePath: string;
     let gitInitialized = false;
+    let github: GitHubRepoProvisionResult | null = null;
+    let project: ReturnType<typeof projectRecordForWorkspace>;
     try {
       workspacePath = ensureWorkspaceDirectory(target);
-      gitInitialized = ensureGitRepository(workspacePath).initialized;
+      const initialized = initializeNewProjectRepository({
+        session,
+        workspacePath,
+        displayName,
+        slug,
+        description: cleanedDescription,
+      });
+      project = initialized.project;
+      gitInitialized = initialized.gitInitialized;
+      github = initialized.github;
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error), code: "WORKSPACE_CREATE_FAILED" };
     }
-    const project = projectRecordForWorkspace(workspacePath);
-    project.display_name = displayName;
-    project.last_active_session_id = session.session_id;
-    upsertProject(project);
 
     session.workspace_path = project.workspace_path;
     session.project_id = project.project_id;
@@ -902,6 +956,7 @@ export async function create_project(
         target_path: project.workspace_path,
         requested_workspace_path: requestedWorkspacePath,
         git_initialized: gitInitialized,
+        github,
         worker_type: selectedWorkerType,
       },
     });
@@ -912,7 +967,7 @@ export async function create_project(
       scope_id: project.project_id,
       type: "project.created",
       message: `Created project workspace ${project.display_name}.`,
-      data: { project, session_id: session.session_id, requested_workspace_path: requestedWorkspacePath, git_initialized: gitInitialized },
+      data: { project, session_id: session.session_id, requested_workspace_path: requestedWorkspacePath, git_initialized: gitInitialized, github },
     });
     appendOrchestratorEvent({
       scope: "project",
@@ -947,15 +1002,26 @@ export async function create_project(
       project_id: project.project_id,
       task_id: task.task_id,
       worker_type: selectedWorkerType,
+      github_repo_url: project.github_repo_url,
+      github_repo_status: github?.status ?? null,
     };
   }
 
   if (selectedWorkerType !== "local") {
     const { workspacePath } = ensureNewProjectDirectory(cleanedName);
-    const project = projectRecordForWorkspace(workspacePath);
-    project.display_name = displayName;
-    project.last_active_session_id = session.session_id;
-    upsertProject(project);
+    let initialized: ReturnType<typeof initializeNewProjectRepository>;
+    try {
+      initialized = initializeNewProjectRepository({
+        session,
+        workspacePath,
+        displayName,
+        slug,
+        description: cleanedDescription,
+      });
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error), code: "WORKSPACE_CREATE_FAILED" };
+    }
+    const { project, gitInitialized, github } = initialized;
 
     session.workspace_path = project.workspace_path;
     session.project_id = project.project_id;
@@ -976,7 +1042,7 @@ export async function create_project(
       source: "system",
       type: "project.create.requested",
       message: `Create ${displayName} at ${target}`,
-      data: { display_name: displayName, slug, target_path: target, worker_type: selectedWorkerType },
+      data: { display_name: displayName, slug, target_path: target, git_initialized: gitInitialized, github, worker_type: selectedWorkerType },
     });
     upsertSession(session);
 
@@ -985,7 +1051,7 @@ export async function create_project(
       scope_id: project.project_id,
       type: "project.created",
       message: `Created project workspace ${project.display_name}.`,
-      data: { project, session_id: session.session_id },
+      data: { project, session_id: session.session_id, git_initialized: gitInitialized, github },
     });
     appendOrchestratorEvent({
       scope: "project",
@@ -1730,6 +1796,17 @@ async function createProjectFromResolvedName(
 
 async function handleNewProjectIntent(session: SessionState, cleaned: string) {
   let intake: Awaited<ReturnType<typeof resolveProjectIntake>>;
+  const startedMs = Date.now();
+  appendOrchestratorEvent({
+    scope: "session",
+    scope_id: session.session_id,
+    type: "project_intake.codex_started",
+    message: "Started Codex project-intake decision.",
+    data: {
+      session_id: session.session_id,
+      model: config.localCodex.model || null,
+    },
+  });
   try {
     intake = await resolveProjectIntake(session, cleaned);
   } catch (error) {
@@ -1741,10 +1818,22 @@ async function handleNewProjectIntent(session: SessionState, cleaned: string) {
       scope_id: session.session_id,
       type: "project_intake.failed",
       message,
-      data: { session_id: session.session_id },
+      data: { session_id: session.session_id, duration_ms: Date.now() - startedMs },
     });
     return null;
   }
+  appendOrchestratorEvent({
+    scope: "session",
+    scope_id: session.session_id,
+    type: "project_intake.codex_completed",
+    message: `${intake.decision.action}: ${intake.decision.reason}`,
+    data: {
+      session_id: session.session_id,
+      duration_ms: Date.now() - startedMs,
+      action: intake.decision.action,
+      confidence: intake.decision.confidence,
+    },
+  });
 
   const latest = getSession(session.session_id) ?? session;
   for (const event of intake.rawEvents) {
@@ -2186,7 +2275,7 @@ async function handlePendingConversationAction(session: SessionState, cleaned: s
         : null;
       latest.current_status = "waiting_for_approval";
       latest.status = "waiting_for_approval";
-      latest.latest_codex_message = revisedMegaplan ? localCodexApprovalMessage(revised, revisedMegaplan) : revised.user_visible_response;
+      latest.latest_codex_message = revisedMegaplan ? localCodexApprovalMessage(revised, revisedMegaplan, revisedProject) : revised.user_visible_response;
       upsertSession(latest);
       appendOrchestratorEvent({
         scope: "planning",

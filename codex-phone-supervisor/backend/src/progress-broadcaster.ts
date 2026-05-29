@@ -44,6 +44,13 @@ function truncate(value: string, max = 260) {
   return cleaned.length > max ? `${cleaned.slice(0, max)}...` : cleaned;
 }
 
+function formatDuration(value: unknown) {
+  const ms = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
+}
+
 function normalizeProgressText(value: string) {
   return value.replace(/\s+/g, " ").trim().toLowerCase();
 }
@@ -203,6 +210,13 @@ function sessionsForEvent(event: OrchestratorEvent) {
 function isMajorForVoice(eventType: string) {
   return [
     "task.created",
+    "project_intake.codex_started",
+    "project_intake.codex_completed",
+    "project_intake.failed",
+    "planner.codex_cli.started",
+    "planner.codex_cli.completed",
+    "planner.codex_cli.failed",
+    "megaplan.created",
     "worker.started",
     "worker.stale",
     "worker.failed",
@@ -240,6 +254,21 @@ function progressTextForEvent(event: OrchestratorEvent, session: SessionState, c
 
   if (event.type === "session.message.received") return voice ? "I heard you. I’m checking the current state." : "Received your message. I’m checking the orchestrator state now.";
   if (event.type === "orchestrator.decision.started") return voice ? "I’m planning the next step." : "Planning the next orchestrator step from the current session state.";
+  if (event.type === "project_intake.codex_started") return voice ? "Codex is deciding the project target." : "Codex is checking whether this is a new repo, a repo correction, or a normal follow-up.";
+  if (event.type === "project_intake.codex_completed") {
+    const duration = formatDuration(data.duration_ms);
+    return duration ? `Project intake finished in ${duration}.` : "Project intake finished.";
+  }
+  if (event.type === "project_intake.failed") return `Project intake failed: ${truncate(event.message, voice ? 120 : 220)}`;
+  if (event.type === "planner.codex_cli.started") return voice ? "Codex is drafting the technical plan." : "Codex is drafting the technical requirements, responsibility split, and Megaplan inputs.";
+  if (event.type === "planner.codex_cli.completed") {
+    const duration = formatDuration(data.duration_ms);
+    return duration ? `Codex planning finished in ${duration}.` : "Codex planning finished.";
+  }
+  if (event.type === "planner.codex_cli.failed") return `Codex planning failed: ${truncate(event.message, voice ? 120 : 220)}`;
+  if (event.type === "github.repo.ready") return "GitHub repo is ready and attached as the project origin.";
+  if (event.type === "github.repo.failed") return `GitHub repo creation failed: ${truncate(event.message, voice ? 120 : 220)}`;
+  if (event.type === "megaplan.created") return "Megaplan is ready for approval.";
   if (event.type === "task.created") return task ? `Created task ${task.task_id}: ${truncate(task.user_goal, 120)}.` : event.message;
   if (event.type === "task.planned") return task ? `Planned task ${task.task_id}. Next step: ${task.next_steps[0] ?? task.plan[0] ?? "assign a worker"}.` : event.message;
   if (event.type === "worker.created") {

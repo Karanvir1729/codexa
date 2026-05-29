@@ -134,6 +134,20 @@ function codexAuthMethodEnv() {
   throw new Error("HEAD_DEVELOPER_CODEX_AUTH_METHOD must be one of: none, codex_home_bundle, secret_manager_api_key.");
 }
 
+function githubRepoCreateModeEnv() {
+  const value = optionalEnv("CODEX_PHONE_SUPERVISOR_GITHUB_REPO_CREATE") || optionalEnv("HEAD_DEVELOPER_GITHUB_REPO_CREATE");
+  if (!value) return testMode ? "never" : "auto";
+  if (["auto", "always", "never"].includes(value)) return value;
+  throw new Error("CODEX_PHONE_SUPERVISOR_GITHUB_REPO_CREATE must be one of: auto, always, never.");
+}
+
+function githubVisibilityEnv() {
+  const value = optionalEnv("CODEX_PHONE_SUPERVISOR_GITHUB_REPO_VISIBILITY") || optionalEnv("HEAD_DEVELOPER_GITHUB_REPO_VISIBILITY");
+  if (!value) return "private";
+  if (["private", "public", "internal"].includes(value)) return value;
+  throw new Error("CODEX_PHONE_SUPERVISOR_GITHUB_REPO_VISIBILITY must be one of: private, public, internal.");
+}
+
 if (validateTwilioSignatures && !twilioAuthToken) {
   throw new Error("TWILIO_AUTH_TOKEN is required when TWILIO_VALIDATE_SIGNATURES is enabled.");
 }
@@ -372,6 +386,12 @@ export const config = {
     supervisor_model_provider: supervisorModelProvider === "codex_cli" ? "Codex CLI" : supervisorModelProvider,
     planner_model_provider: supervisorModelProvider === "codex_cli" ? "Codex CLI" : supervisorModelProvider,
     worker_code_model: "Codex CLI",
+  },
+  github: {
+    repoCreate: githubRepoCreateModeEnv(),
+    repoVisibility: githubVisibilityEnv(),
+    owner: optionalEnv("CODEX_PHONE_SUPERVISOR_GITHUB_OWNER") || optionalEnv("GITHUB_OWNER"),
+    ghCommand: optionalEnv("CODEX_PHONE_SUPERVISOR_GH_COMMAND") || "gh",
   },
   orchestrator: {
     environment: optionalEnv("HEAD_DEVELOPER_ENV") || (testMode ? "dev" : "prod"),

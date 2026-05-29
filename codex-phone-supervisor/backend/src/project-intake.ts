@@ -98,8 +98,11 @@ function buildProjectIntakePrompt(session: SessionState, userText: string) {
     "Do not edit files. Do not run shell commands. Do not ask for credentials. Return only JSON matching the schema.",
     "",
     "Important behavior:",
-    "- If the user asks to build a new app, website, game, agent, or tool but the local project name is missing, ask one concise question in assistant_message.",
+    "- If the user asks to build a new app, website, game, agent, or tool but the local project name is missing, ask one compact intake question in assistant_message.",
+    "- For missing project-name turns, collect the project name and the most important architecture-changing technical requirements in the same message when useful: stack/runtime, static vs full-stack, persistence, auth, payments/checkout, core UX, validation/preview expectations, and whether Codex should conduct product/domain/UX/technical research first.",
+    "- For game requests, include project name plus gameplay type, platform/runtime, input style, persistence, validation/preview expectations, and research need when those details are missing.",
     "- If the user provides a name after a prior project-intake question, return create_project with only the intended project name, not the whole sentence.",
+    "- If the user's answer includes technical requirements along with the project name, fold those requirements into description so the planner does not need to ask again for the same details.",
     "- If the user says something like 'call it X', 'called X', 'name it X', or corrects 'No, call the project X', return create_project with project_name X.",
     "- If the user explicitly gives a target repo/workspace path such as '/Users/name/x' or says 'make a repo at /path/name', return create_project with workspace_path set to that exact target path and project_name set to the intended repo name.",
     "- If the user changes the pending plan target repo/location before approval, create/select the new target project before planning again; do not keep the old generated project target.",
@@ -328,12 +331,13 @@ export async function resolveProjectIntake(session: SessionState, userText: stri
           source: "codex" as const,
           type: "project_intake.codex_decision",
           message: decision.assistant_message,
-          data: { provider: "deterministic_test_double", decision },
+          data: { provider: "deterministic_test_double", decision, duration_ms: 0 },
         },
       ],
     };
   }
 
+  const startedMs = Date.now();
   const schemaPath = buildProjectIntakeSchema(session.session_id);
   const prompt = buildProjectIntakePrompt(session, userText);
   const args = [
@@ -393,7 +397,10 @@ export async function resolveProjectIntake(session: SessionState, userText: stri
       source: "codex",
       type: "project_intake.codex_started",
       message: "Started Codex project-intake decision.",
-      data: { args: ["exec", "--json", "--output-schema", "[schema]", "-C", config.defaultWorkspacePath, "-s", "read-only", "[prompt omitted]"] },
+      data: {
+        args: ["exec", "--json", "--output-schema", "[schema]", "-C", config.defaultWorkspacePath, "-s", "read-only", "[prompt omitted]"],
+        started_at: startedAt,
+      },
     },
     ...codexEvents.map((event) => ({
       id: randomUUID(),
@@ -411,7 +418,7 @@ export async function resolveProjectIntake(session: SessionState, userText: stri
       source: "codex",
       type: "project_intake.codex_decision",
       message: decision.assistant_message,
-      data: { provider: "codex_cli", decision },
+      data: { provider: "codex_cli", decision, duration_ms: Date.now() - startedMs },
     },
   ];
   return { decision, rawEvents };

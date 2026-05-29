@@ -128,6 +128,10 @@ export interface ProjectRecord {
   git_branch: string | null;
   repo_path?: string | null;
   git_initialized?: boolean;
+  github_repo_url?: string | null;
+  github_repo_full_name?: string | null;
+  github_repo_created?: boolean | null;
+  github_repo_error?: string | null;
   default_branch?: string | null;
   latest_commit_hash?: string | null;
   docs_path?: string | null;
