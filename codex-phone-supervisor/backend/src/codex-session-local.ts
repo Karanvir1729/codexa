@@ -28,6 +28,7 @@ import type {
   CommandEventRecord,
   LocalCodexFlowchartSummary,
   LocalCodexFlowchartNodeKind,
+  LocalCodexSubagentAdvisorUpdate,
   LocalCodexSubagentReport,
   LocalCodexValidationCommandResult,
   LocalCodexValidationResult,
@@ -235,7 +236,7 @@ function buildSchemaFile(taskId: string) {
               required: ["id", "kind", "label", "status", "summary", "depends_on"],
               properties: {
                 id: { type: "string" },
-                kind: { type: "string", enum: ["user_request", "requirement_summary", "plan", "megaplan", "approval", "codex_session", "subagent", "flowchart_maker", "validation", "preview", "final_summary"] },
+                kind: { type: "string", enum: ["user_request", "requirement_summary", "plan", "megaplan", "approval", "codex_session", "subagent_advisor", "subagent", "flowchart_maker", "validation", "preview", "final_summary"] },
                 label: { type: "string" },
                 status: { type: "string" },
                 summary: { type: "string" },
@@ -340,7 +341,7 @@ export function buildLocalCodexImplementationPrompt(input: {
     "As work progresses, state concise CLI progress updates for any logical subagents you create, including each subagent's Codex-chosen name, current status, and user-facing summary.",
     "Do not include file paths, code, commands, internal IDs, branch names, or stack traces in subagent progress updates.",
     "Use $codex-flowchart-summary to produce the final flowchart_summary field. The supervisor persists that JSON as the browser flowchart source of truth.",
-    "flowchart_summary must be user-facing: include the user request, requirement summary, Megaplan creation, approval gate, one Codex session, your chosen subagents, parallel flowchart maker, validation, preview if available, and final summary.",
+    "flowchart_summary must be user-facing: include the user request, requirement summary, Megaplan creation, approval gate, one Codex session, the parallel subagent advisor, your chosen subagents, parallel flowchart maker, validation, preview if available, and final summary.",
     "flowchart_summary must include every subagent you actually used or reported; do not merge several real subagents into one generic node. If you truly used no subagents, say so honestly.",
     "flowchart_summary must not include file paths, command strings, code snippets, package names, stack traces, stdout/stderr, branch names, internal IDs, worktree paths, or repo paths.",
     "",
@@ -454,6 +455,19 @@ function writeHeadDeveloperFlowchartJson(workspacePath: string, flowchart: Local
   return flowchartPath;
 }
 
+function writeHeadDeveloperSubagentAdvisorJson(workspacePath: string, update: LocalCodexSubagentAdvisorUpdate) {
+  const docsDir = path.join(workspacePath, ".head-developer");
+  fs.mkdirSync(docsDir, { recursive: true });
+  const advisorPath = path.join(docsDir, "subagent-advisor.json");
+  fs.writeFileSync(advisorPath, `${JSON.stringify({
+    schema_version: 1,
+    generated_at: nowIso(),
+    generator: "parallel_codex_subagent_advisor",
+    subagent_advisor: update,
+  }, null, 2)}\n`);
+  return advisorPath;
+}
+
 function initializeHeadDeveloperDocs(input: {
   project: ProjectRecord;
   task: TaskRecord;
@@ -544,6 +558,7 @@ const localFlowchartNodeKinds = new Set<LocalCodexFlowchartNodeKind>([
   "megaplan",
   "approval",
   "codex_session",
+  "subagent_advisor",
   "subagent",
   "flowchart_maker",
   "validation",
@@ -659,25 +674,41 @@ function ensureSystemProcessNodes(summary: LocalCodexFlowchartSummary): LocalCod
       depends_on: ["megaplan"],
     });
   }
+  if (!hasKind("subagent_advisor")) {
+    const codexStatus = flowNodeStatus(summary, "codex_session");
+    const currentApprovalId = nodes.find((node) => node.kind === "approval")?.id ?? "";
+    nodes.push({
+      id: "subagent-advisor",
+      kind: "subagent_advisor",
+      label: "Subagent advisor",
+      status: /running|working|in progress/i.test(codexStatus) ? "watching" : "updated",
+      summary: "Parallel Codex process watches for useful internal subagent opportunities.",
+      depends_on: codexSessionId ? [codexSessionId] : currentApprovalId ? [currentApprovalId] : [],
+    });
+  }
   if (!hasKind("flowchart_maker")) {
     const codexStatus = flowNodeStatus(summary, "codex_session");
+    const currentSubagentAdvisorId = nodes.find((node) => node.kind === "subagent_advisor")?.id ?? "";
     nodes.push({
       id: "flowchart-maker",
       kind: "flowchart_maker",
       label: "Flowchart maker",
       status: /running|working|in progress/i.test(codexStatus) ? "running" : "updated",
       summary: "Parallel Codex process converts live summaries into this graph.",
-      depends_on: codexSessionId ? [codexSessionId] : [],
+      depends_on: [codexSessionId, currentSubagentAdvisorId].filter(Boolean),
     });
   }
 
   const megaplanId = nodes.find((node) => node.kind === "megaplan")?.id ?? "";
   const approvalId = nodes.find((node) => node.kind === "approval")?.id ?? "";
+  const subagentAdvisorId = nodes.find((node) => node.kind === "subagent_advisor")?.id ?? "";
   const flowchartMakerId = nodes.find((node) => node.kind === "flowchart_maker")?.id ?? "";
   addFlowEdge(edges, preMegaplanId, megaplanId, "megaplan");
   addFlowEdge(edges, megaplanId, approvalId, "approval");
   addFlowEdge(edges, approvalId, codexSessionId, "starts");
+  addFlowEdge(edges, codexSessionId || approvalId, subagentAdvisorId, "subagent advice");
   addFlowEdge(edges, codexSessionId, flowchartMakerId, "summarizes");
+  addFlowEdge(edges, subagentAdvisorId, flowchartMakerId, "advisor input");
   addFlowEdge(edges, flowchartMakerId, finalSummaryId, "updates");
 
   return { ...summary, nodes, edges };
@@ -740,12 +771,20 @@ function fallbackFlowchartSummary(input: {
       depends_on: ["approval-gate"],
     },
     {
+      id: "subagent-advisor",
+      kind: "subagent_advisor",
+      label: "Subagent advisor",
+      status: input.task.status === "running" ? "watching" : "updated",
+      summary: "Parallel Codex process watches for useful internal subagent opportunities.",
+      depends_on: ["codex-session"],
+    },
+    {
       id: "flowchart-maker",
       kind: "flowchart_maker",
       label: "Flowchart maker",
       status: input.task.status === "running" ? "running" : "updated",
       summary: "Parallel Codex process converts live summaries into this graph.",
-      depends_on: ["codex-session"],
+      depends_on: ["codex-session", "subagent-advisor"],
     },
   ];
   const subagentIds = input.report.subagents.map((subagent, index) => {
@@ -799,6 +838,9 @@ function fallbackFlowchartSummary(input: {
 const FLOWCHART_MAKER_TIMEOUT_MS = 5_000;
 const FLOWCHART_WATCHER_INTERVAL_MS = 1_000;
 const FLOWCHART_UPDATE_THROTTLE_MS = 1_000;
+const SUBAGENT_ADVISOR_WATCHER_TIMEOUT_MS = 5_000;
+const SUBAGENT_ADVISOR_WATCHER_INTERVAL_MS = 1_000;
+const SUBAGENT_ADVISOR_UPDATE_THROTTLE_MS = 1_000;
 const liveRolloutPaths = new Map<string, string>();
 const flowchartMakerState = new Map<string, {
   stream: string;
@@ -809,6 +851,15 @@ const flowchartMakerState = new Map<string, {
   watcherStartedAt: string | null;
   beforeFiles: string[];
   lastWorkspaceSignature: string;
+  latestWorkspaceActivity: string;
+}>();
+const subagentAdvisorWatcherState = new Map<string, {
+  stream: string;
+  running: boolean;
+  pending: boolean;
+  lastStartedMs: number;
+  watcher: NodeJS.Timeout | null;
+  watcherStartedAt: string | null;
   latestWorkspaceActivity: string;
 }>();
 
@@ -932,9 +983,31 @@ function flowchartMakerForTask(taskId: string) {
   return created;
 }
 
+function subagentAdvisorForTask(taskId: string) {
+  const current = subagentAdvisorWatcherState.get(taskId);
+  if (current) return current;
+  const created = {
+    stream: "",
+    running: false,
+    pending: false,
+    lastStartedMs: 0,
+    watcher: null,
+    watcherStartedAt: null,
+    latestWorkspaceActivity: "",
+  };
+  subagentAdvisorWatcherState.set(taskId, created);
+  return created;
+}
+
 function appendFlowchartMakerStream(taskId: string, text: string) {
   if (!text) return;
   const state = flowchartMakerForTask(taskId);
+  state.stream = `${state.stream}\n${text}`.slice(-12_000);
+}
+
+function appendSubagentAdvisorStream(taskId: string, text: string) {
+  if (!text) return;
+  const state = subagentAdvisorForTask(taskId);
   state.stream = `${state.stream}\n${text}`.slice(-12_000);
 }
 
@@ -972,7 +1045,7 @@ function buildFlowchartMakerSchemaFile(taskId: string) {
           required: ["id", "kind", "label", "status", "summary", "depends_on"],
           properties: {
             id: { type: "string" },
-            kind: { type: "string", enum: ["user_request", "requirement_summary", "plan", "megaplan", "approval", "codex_session", "subagent", "flowchart_maker", "validation", "preview", "final_summary"] },
+            kind: { type: "string", enum: ["user_request", "requirement_summary", "plan", "megaplan", "approval", "codex_session", "subagent_advisor", "subagent", "flowchart_maker", "validation", "preview", "final_summary"] },
             label: { type: "string" },
             status: { type: "string" },
             summary: { type: "string" },
@@ -999,6 +1072,39 @@ function buildFlowchartMakerSchemaFile(taskId: string) {
   return schemaPath;
 }
 
+function buildSubagentAdvisorWatcherSchemaFile(taskId: string) {
+  fs.mkdirSync(config.runtimeDir, { recursive: true });
+  const schemaPath = path.join(config.runtimeDir, `${taskId}.subagent-advisor-live.schema.json`);
+  const schema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["recommended", "confidence", "status", "summary", "suggested_subagents", "user_check_in_needed"],
+    properties: {
+      recommended: { type: "boolean" },
+      confidence: { type: "number" },
+      status: { type: "string", enum: ["watching", "use_subagents", "single_lane_ok", "needs_user_check_in", "unknown"] },
+      summary: { type: "string" },
+      suggested_subagents: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["name", "responsibility", "reason", "status"],
+          properties: {
+            name: { type: "string" },
+            responsibility: { type: "string" },
+            reason: { type: "string" },
+            status: { type: "string", enum: ["candidate", "active", "not_needed", "needs_user_check_in"] },
+          },
+        },
+      },
+      user_check_in_needed: { type: "boolean" },
+    },
+  };
+  fs.writeFileSync(schemaPath, JSON.stringify(schema, null, 2));
+  return schemaPath;
+}
+
 function parseFlowchartMakerText(text: string) {
   if (!text.trim()) return null;
   try {
@@ -1006,6 +1112,53 @@ function parseFlowchartMakerText(text: string) {
   } catch {
     return null;
   }
+}
+
+function subagentAdvisorText(value: unknown, fallback = "") {
+  return flowchartText(value, fallback).slice(0, 220);
+}
+
+function parseSubagentAdvisorWatcherText(text: string): Omit<LocalCodexSubagentAdvisorUpdate, "updated_at" | "source"> | null {
+  if (!text.trim()) return null;
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const status = typeof parsed.status === "string" && ["watching", "use_subagents", "single_lane_ok", "needs_user_check_in", "unknown"].includes(parsed.status)
+      ? parsed.status as LocalCodexSubagentAdvisorUpdate["status"]
+      : "unknown";
+    const suggested = Array.isArray(parsed.suggested_subagents)
+      ? parsed.suggested_subagents.map((item, index) => {
+        const record = item && typeof item === "object" ? item as Record<string, unknown> : {};
+        const rawStatus = typeof record.status === "string" ? record.status : "";
+        return {
+          name: subagentAdvisorText(record.name, `Opportunity ${index + 1}`),
+          responsibility: subagentAdvisorText(record.responsibility, ""),
+          reason: subagentAdvisorText(record.reason, ""),
+          status: ["candidate", "active", "not_needed", "needs_user_check_in"].includes(rawStatus)
+            ? rawStatus as LocalCodexSubagentAdvisorUpdate["suggested_subagents"][number]["status"]
+            : "candidate",
+        };
+      }).filter((item) => item.name && item.responsibility).slice(0, 8)
+      : [];
+    const confidence = typeof parsed.confidence === "number" ? parsed.confidence : Number(parsed.confidence);
+    return {
+      recommended: Boolean(parsed.recommended),
+      confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0,
+      status,
+      summary: subagentAdvisorText(parsed.summary, "Subagent advisor checked the live implementation stream."),
+      suggested_subagents: suggested,
+      user_check_in_needed: Boolean(parsed.user_check_in_needed),
+      error: null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function subagentAdvisorSummaryText(update: LocalCodexSubagentAdvisorUpdate) {
+  const suggestions = update.suggested_subagents
+    .map((item) => `${item.name}: ${item.responsibility}`)
+    .join("; ");
+  return suggestions ? `${update.summary} Suggested lanes: ${suggestions}.` : update.summary;
 }
 
 function buildFlowchartMakerPrompt(input: {
@@ -1025,7 +1178,7 @@ function buildFlowchartMakerPrompt(input: {
     "Do not write files. Do not inspect the repo. Do not include code, file paths, command strings, internal IDs, stdout/stderr, worktree names, branch names, package names, or stack traces.",
     "Preserve the subagent names chosen by Codex. Include every reported_subagents entry as a separate subagent node.",
     "During live runs, infer subagent nodes only from Codex-authored implementation progress and do not invent names. If names are not available yet, show the Codex session as planning or running without fake subagent nodes.",
-    "Include system process nodes for Megaplan creation, approval gate, and the parallel flowchart maker so the user can understand how this UI is orchestrating Codex.",
+    "Include system process nodes for Megaplan creation, approval gate, the parallel subagent advisor, and the parallel flowchart maker so the user can understand how this UI is orchestrating Codex.",
     "This is a live update; represent partial progress honestly when the implementation is still running.",
     "",
     JSON.stringify({
@@ -1047,6 +1200,17 @@ function buildFlowchartMakerPrompt(input: {
       preview: input.previewLoaded === null || input.previewLoaded === undefined ? null : {
         loaded: input.previewLoaded,
       },
+      subagent_advisor: input.task.codex_subagent_advisor ? {
+        status: input.task.codex_subagent_advisor.status,
+        summary: flowchartText(input.task.codex_subagent_advisor.summary),
+        recommended: input.task.codex_subagent_advisor.recommended,
+        user_check_in_needed: input.task.codex_subagent_advisor.user_check_in_needed,
+        suggested_subagents: input.task.codex_subagent_advisor.suggested_subagents.map((item) => ({
+          name: flowchartText(item.name),
+          responsibility: flowchartText(item.responsibility),
+          status: item.status,
+        })),
+      } : null,
       flowchart_watcher: {
         mode: "continuous parallel Codex flowchart watcher",
         interval_ms: FLOWCHART_WATCHER_INTERVAL_MS,
@@ -1054,10 +1218,198 @@ function buildFlowchartMakerPrompt(input: {
         priority: "rapid truthful flowchart creation",
         latest_workspace_activity: flowchartText(flowchartMakerForTask(input.task.task_id).latestWorkspaceActivity),
       },
-      required_system_nodes: ["Megaplan skill", "Approval gate", "Flowchart maker"],
+      required_system_nodes: ["Megaplan skill", "Approval gate", "Subagent advisor", "Flowchart maker"],
       implementation_stream_summary: flowchartText(input.stream, input.stream),
     }, null, 2),
   ].join("\n");
+}
+
+function buildSubagentAdvisorWatcherPrompt(input: {
+  task: TaskRecord;
+  session: SessionState;
+  stream: string;
+}) {
+  return [
+    "You are the fast parallel Codex subagent advisor for a live local Codex implementation run.",
+    "Your job is to continuously identify where internal logical Codex subagents would help, based only on supplied live summaries.",
+    "The implementation lead remains the source of truth and chooses the actual subagent count and names. You only advise on opportunities.",
+    "Return quickly within 5 seconds. Prefer a useful partial assessment over waiting.",
+    "Do not inspect files, write files, run commands, or include code, file paths, command strings, package names, branch names, internal IDs, or stack traces.",
+    "Do not invent that a subagent exists. Mark suggestions as candidate unless the supplied stream says Codex actually started that subagent.",
+    "Recommend subagents when distinct product/UI, backend/API, shared logic, data, tests, docs, integration, validation, research, or release responsibilities are visible.",
+    "If adding subagents would materially change approved scope, set user_check_in_needed true.",
+    "Return only JSON matching the supplied schema.",
+    "",
+    JSON.stringify({
+      user_request: flowchartText(input.task.user_goal),
+      requirement_summary: flowchartText(input.session.requirement_summary || input.task.user_goal),
+      task_status: input.task.status,
+      current_reported_subagents: (input.task.codex_subagents ?? []).map((agent) => ({
+        name: flowchartText(agent.name),
+        status: agent.status,
+        summary: flowchartText(agent.summary || agent.responsibility),
+      })),
+      existing_advisor_summary: input.task.codex_subagent_advisor ? {
+        status: input.task.codex_subagent_advisor.status,
+        summary: flowchartText(input.task.codex_subagent_advisor.summary),
+        suggestions: input.task.codex_subagent_advisor.suggested_subagents.map((item) => ({
+          name: flowchartText(item.name),
+          responsibility: flowchartText(item.responsibility),
+          status: item.status,
+        })),
+      } : null,
+      live_implementation_summary: flowchartText(input.stream, input.stream),
+    }, null, 2),
+  ].join("\n");
+}
+
+function scheduleSubagentAdvisorUpdate(input: {
+  taskId: string;
+  sessionId: string;
+  project: ProjectRecord;
+  chunk?: string;
+  force?: boolean;
+}) {
+  if (input.chunk) appendSubagentAdvisorStream(input.taskId, input.chunk);
+  const state = subagentAdvisorForTask(input.taskId);
+  const now = Date.now();
+  if (!input.force && now - state.lastStartedMs < SUBAGENT_ADVISOR_UPDATE_THROTTLE_MS) return;
+  if (state.running) {
+    state.pending = true;
+    return;
+  }
+  state.running = true;
+  state.pending = false;
+  state.lastStartedMs = now;
+  void runSubagentAdvisorWatcherOnce(input)
+    .catch((error) => {
+      appendOrchestratorEvent({
+        scope: "task",
+        scope_id: input.taskId,
+        type: "local_codex_subagent_advisor.failed",
+        message: error instanceof Error ? error.message : String(error),
+        data: { task_id: input.taskId },
+      });
+    })
+    .finally(() => {
+      state.running = false;
+      if (state.pending) {
+        state.pending = false;
+        scheduleSubagentAdvisorUpdate({ ...input, force: true, chunk: "" });
+      }
+    });
+}
+
+async function runSubagentAdvisorWatcherOnce(input: {
+  taskId: string;
+  sessionId: string;
+  project: ProjectRecord;
+}) {
+  const task = getTask(input.taskId);
+  const session = getSession(input.sessionId);
+  if (!task || !session) return;
+  const state = subagentAdvisorForTask(input.taskId);
+  const schemaPath = buildSubagentAdvisorWatcherSchemaFile(input.taskId);
+  const finalMessagePath = path.join(config.runtimeDir, `${input.taskId}.subagent-advisor-live.final.json`);
+  const prompt = buildSubagentAdvisorWatcherPrompt({
+    task,
+    session,
+    stream: state.stream,
+  });
+  const args = [
+    "exec",
+    ...codexFastReadOnlyArgs(),
+    "--json",
+    "--color",
+    "never",
+    "--output-schema",
+    schemaPath,
+    "--output-last-message",
+    finalMessagePath,
+    "-C",
+    input.project.workspace_path,
+    "--skip-git-repo-check",
+    "-s",
+    "read-only",
+    "-",
+  ];
+  appendOrchestratorEvent({
+    scope: "task",
+    scope_id: input.taskId,
+    type: "local_codex_subagent_advisor.started",
+    message: "Started local Codex subagent advisor update.",
+    data: { task_id: input.taskId, session_id: input.sessionId },
+  });
+  const child = spawn(config.codexCommand, args, {
+    cwd: input.project.workspace_path,
+    env: {
+      ...process.env,
+      CODEX_HOME: config.codexHome,
+      NO_COLOR: "1",
+      FORCE_COLOR: "0",
+    },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    child.kill("SIGTERM");
+  }, SUBAGENT_ADVISOR_WATCHER_TIMEOUT_MS);
+  child.stdin?.on("error", () => undefined);
+  child.stdin?.end(prompt);
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk.toString();
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+  const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", (code, signal) => resolve({ code, signal }));
+  });
+  clearTimeout(timer);
+  if (timedOut) throw new Error("Codex subagent advisor timed out after 5 seconds.");
+  if (exit.code !== 0) throw new Error(`Codex subagent advisor exited with code ${exit.code ?? "null"}${stderr ? `: ${preview(stderr, 500)}` : ""}`);
+  const finalText = extractFinalAgentText(parseCodexJsonl(`${stdout}\n${stderr}`)) || safeRead(finalMessagePath);
+  const parsed = parseSubagentAdvisorWatcherText(finalText);
+  if (!parsed) throw new Error("Codex subagent advisor did not return valid JSON.");
+  const latestTask = getTask(input.taskId);
+  const latestSession = getSession(input.sessionId);
+  if (!latestTask || !latestSession) return;
+  const update: LocalCodexSubagentAdvisorUpdate = {
+    ...parsed,
+    updated_at: nowIso(),
+    source: "parallel_codex_subagent_advisor",
+  };
+  latestTask.codex_subagent_advisor = update;
+  latestTask.updated_at = update.updated_at;
+  upsertTask(latestTask);
+  writeHeadDeveloperSubagentAdvisorJson(input.project.workspace_path, update);
+  const summary = subagentAdvisorSummaryText(update);
+  appendFlowchartMakerStream(input.taskId, `SUBAGENT ADVISOR: ${summary}`);
+  scheduleFlowchartSummaryUpdate({
+    taskId: input.taskId,
+    sessionId: input.sessionId,
+    project: input.project,
+    chunk: `SUBAGENT ADVISOR: ${summary}`,
+    force: true,
+  });
+  const latestMessage = latestSession.latest_codex_message;
+  appendSessionEvent(latestSession, "local_codex_subagent_advisor.updated", "codex", summary, {
+    task_id: input.taskId,
+    subagent_advisor: update,
+  });
+  latestSession.latest_codex_message = latestMessage;
+  upsertSession(latestSession);
+  appendOrchestratorEvent({
+    scope: "task",
+    scope_id: input.taskId,
+    type: "local_codex_subagent_advisor.updated",
+    message: summary,
+    data: { task_id: input.taskId, subagent_advisor: update },
+  });
 }
 
 function startFlowchartWatcher(input: {
@@ -1146,6 +1498,81 @@ function stopFlowchartWatcher(taskId: string, reason: string) {
     scope_id: taskId,
     type: "local_codex_flowchart.watcher.stopped",
     message: `Stopped continuous parallel Codex flowchart watcher: ${reason}.`,
+    data: { task_id: taskId, reason },
+  });
+}
+
+function startSubagentAdvisorWatcher(input: {
+  taskId: string;
+  sessionId: string;
+  project: ProjectRecord;
+  beforeFiles: string[];
+}) {
+  const state = subagentAdvisorForTask(input.taskId);
+  if (state.watcher) return;
+  state.watcherStartedAt = nowIso();
+  appendOrchestratorEvent({
+    scope: "task",
+    scope_id: input.taskId,
+    type: "local_codex_subagent_advisor.watcher.started",
+    message: "Started continuous parallel Codex subagent advisor.",
+    data: {
+      task_id: input.taskId,
+      session_id: input.sessionId,
+      interval_ms: SUBAGENT_ADVISOR_WATCHER_INTERVAL_MS,
+      max_codex_pass_ms: SUBAGENT_ADVISOR_WATCHER_TIMEOUT_MS,
+    },
+  });
+  appendSubagentAdvisorStream(input.taskId, "SUBAGENT ADVISOR WATCHER: continuous parallel watcher started.");
+  scheduleSubagentAdvisorUpdate({
+    taskId: input.taskId,
+    sessionId: input.sessionId,
+    project: input.project,
+    chunk: "SUBAGENT ADVISOR WATCHER: started continuous live subagent-opportunity checks.",
+    force: true,
+  });
+  state.watcher = setInterval(() => {
+    const latestTask = getTask(input.taskId);
+    if (!latestTask || isTerminalTaskStatus(latestTask.status)) {
+      stopSubagentAdvisorWatcher(input.taskId, "task is no longer running");
+      return;
+    }
+    const activity = workspaceActivitySummary(input.project.workspace_path, input.beforeFiles);
+    if (activity.summary !== state.latestWorkspaceActivity) {
+      state.latestWorkspaceActivity = activity.summary;
+      appendSubagentAdvisorStream(input.taskId, activity.summary);
+    }
+    appendOrchestratorEvent({
+      scope: "task",
+      scope_id: input.taskId,
+      type: "local_codex_subagent_advisor.watcher.tick",
+      message: state.latestWorkspaceActivity || "Subagent advisor ticked while local Codex was running.",
+      data: {
+        task_id: input.taskId,
+        session_id: input.sessionId,
+        interval_ms: SUBAGENT_ADVISOR_WATCHER_INTERVAL_MS,
+      },
+    });
+    scheduleSubagentAdvisorUpdate({
+      taskId: input.taskId,
+      sessionId: input.sessionId,
+      project: input.project,
+      chunk: state.latestWorkspaceActivity || "SUBAGENT ADVISOR WATCHER: local Codex is still running.",
+      force: true,
+    });
+  }, SUBAGENT_ADVISOR_WATCHER_INTERVAL_MS);
+}
+
+function stopSubagentAdvisorWatcher(taskId: string, reason: string) {
+  const state = subagentAdvisorWatcherState.get(taskId);
+  if (!state?.watcher) return;
+  clearInterval(state.watcher);
+  state.watcher = null;
+  appendOrchestratorEvent({
+    scope: "task",
+    scope_id: taskId,
+    type: "local_codex_subagent_advisor.watcher.stopped",
+    message: `Stopped continuous parallel Codex subagent advisor: ${reason}.`,
     data: { task_id: taskId, reason },
   });
 }
@@ -1547,6 +1974,19 @@ async function runCodexCli(input: {
     chunk: "Codex CLI session started. Waiting for Codex to choose and name useful subagents.",
     force: true,
   });
+  scheduleSubagentAdvisorUpdate({
+    taskId: input.task.task_id,
+    sessionId: input.session.session_id,
+    project: input.project,
+    chunk: "Codex CLI session started. Subagent advisor is watching for useful responsibility lanes.",
+    force: true,
+  });
+  startSubagentAdvisorWatcher({
+    taskId: input.task.task_id,
+    sessionId: input.session.session_id,
+    project: input.project,
+    beforeFiles: input.beforeFiles,
+  });
   startFlowchartWatcher({
     taskId: input.task.task_id,
     sessionId: input.session.session_id,
@@ -1580,6 +2020,12 @@ async function runCodexCli(input: {
       project: input.project,
       chunk: text,
     });
+    scheduleSubagentAdvisorUpdate({
+      taskId: input.task.task_id,
+      sessionId: input.session.session_id,
+      project: input.project,
+      chunk: text,
+    });
     appendStreamSessionEvent({
       session: input.session,
       type: "local_codex_session.stdout",
@@ -1593,6 +2039,12 @@ async function runCodexCli(input: {
     const text = chunk.toString();
     stderr += text;
     scheduleFlowchartSummaryUpdate({
+      taskId: input.task.task_id,
+      sessionId: input.session.session_id,
+      project: input.project,
+      chunk: text,
+    });
+    scheduleSubagentAdvisorUpdate({
       taskId: input.task.task_id,
       sessionId: input.session.session_id,
       project: input.project,
@@ -1615,6 +2067,7 @@ async function runCodexCli(input: {
     });
   } finally {
     stopFlowchartWatcher(input.task.task_id, "local Codex CLI process exited");
+    stopSubagentAdvisorWatcher(input.task.task_id, "local Codex CLI process exited");
   }
   syncLiveCodexRollout({
     taskId: input.task.task_id,

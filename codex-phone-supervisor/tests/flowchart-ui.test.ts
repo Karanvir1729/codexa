@@ -24,9 +24,12 @@ test("dashboard flowchart nodes are clickable and open the details panel", () =>
   assert.match(source, /data-testid="codex-browser-chat-resume"/);
   assert.match(source, /Normal terminal chat resume:/);
   assert.match(source, /codex_conversation_resume_command/);
-  assert.match(source, /Rapid truthful runtime graph from the live parallel Codex flowchart watcher JSON/);
-  assert.match(source, /Megaplan, approval, Codex-chosen subagents, flowchart maker/);
-  assert.match(source, /Flowchart priority: fast updates, honest partial state, and every Codex-reported subagent shown as its own node/);
+  assert.match(source, /Rapid truthful runtime graph from live parallel Codex watcher JSON/);
+  assert.match(source, /subagent advisor, Codex-chosen subagents, flowchart maker/);
+  assert.match(source, /live subagent-opportunity advice/);
+  assert.match(source, /"subagent_advisor"/);
+  assert.match(source, /hasTaskScopedLocalFlowchartNodes/);
+  assert.match(source, /hasPendingSessionPlanning/);
   assert.match(source, /compactFlowchartLayout/);
   assert.match(source, /FLOW_COLUMNS = 4/);
   assert.match(source, /ResizeObserver/);

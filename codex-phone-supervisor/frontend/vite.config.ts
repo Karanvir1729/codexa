@@ -47,6 +47,7 @@ export default defineConfig(({ mode }) => {
       "import.meta.env.VITE_SUPERVISOR_USER_ID": JSON.stringify(env.VITE_SUPERVISOR_USER_ID),
     },
     server: {
+      host: "127.0.0.1",
       port,
     },
     build: {

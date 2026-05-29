@@ -222,6 +222,7 @@ export interface TaskRecord {
   execution_backend?: "codex_session_local" | "worker_orchestrator" | null;
   local_state_path?: string | null;
   codex_subagents?: LocalCodexSubagentReport[];
+  codex_subagent_advisor?: LocalCodexSubagentAdvisorUpdate | null;
   codex_flowchart_summary?: LocalCodexFlowchartSummary | null;
   codex_flowchart_json_path?: string | null;
   local_validation_result?: LocalCodexValidationResult | null;
@@ -255,6 +256,25 @@ export interface LocalCodexSubagentReport {
   summary: string;
 }
 
+export interface LocalCodexSubagentOpportunity {
+  name: string;
+  responsibility: string;
+  reason: string;
+  status: "candidate" | "active" | "not_needed" | "needs_user_check_in";
+}
+
+export interface LocalCodexSubagentAdvisorUpdate {
+  recommended: boolean;
+  confidence: number;
+  status: "watching" | "use_subagents" | "single_lane_ok" | "needs_user_check_in" | "unknown";
+  summary: string;
+  suggested_subagents: LocalCodexSubagentOpportunity[];
+  user_check_in_needed: boolean;
+  updated_at: string;
+  source: "parallel_codex_subagent_advisor";
+  error?: string | null;
+}
+
 export type LocalCodexFlowchartNodeKind =
   | "user_request"
   | "requirement_summary"
@@ -262,6 +282,7 @@ export type LocalCodexFlowchartNodeKind =
   | "megaplan"
   | "approval"
   | "codex_session"
+  | "subagent_advisor"
   | "subagent"
   | "flowchart_maker"
   | "validation"
@@ -776,6 +797,7 @@ export type FlowchartNodeType =
   | "user_request"
   | "codex_plan"
   | "codex_session"
+  | "subagent_advisor"
   | "codex_subagent"
   | "flowchart_maker"
   | "files_changed"

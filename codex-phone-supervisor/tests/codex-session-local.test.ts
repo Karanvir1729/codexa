@@ -335,7 +335,7 @@ test("flowchart maker is a separate read-only Codex session capped at five secon
   assert.match(source, /Optimize for rapid truthful updates/);
   assert.match(source, /Include every reported_subagents entry as a separate subagent node/);
   assert.match(source, /do not invent names/);
-  assert.match(source, /Megaplan creation, approval gate, and the parallel flowchart maker/);
+  assert.match(source, /Megaplan creation, approval gate, the parallel subagent advisor, and the parallel flowchart maker/);
   assert.match(source, /required_system_nodes/);
   assert.match(source, /ensureSystemProcessNodes/);
   assert.match(source, /latest_workspace_activity/);
@@ -349,8 +349,12 @@ test("flowchart maker is a separate read-only Codex session capped at five secon
   assert.match(flowchartSource, /readLocalCodexFlowchartJson/);
   assert.match(flowchartSource, /live Codex updates/);
   assert.match(flowchartSource, /codex_flow_pending:\$\{task\.task_id\}:megaplan/);
+  assert.match(flowchartSource, /codex_flow_pending:\$\{task\.task_id\}:user-request/);
+  assert.match(flowchartSource, /codex_flow_pending:\$\{task\.task_id\}:requirements/);
   assert.match(flowchartSource, /label: "Megaplan skill"/);
   assert.match(flowchartSource, /label: "Approval gate"/);
+  assert.match(flowchartSource, /type: "subagent_advisor"/);
+  assert.match(flowchartSource, /label: "Subagent advisor"/);
   assert.match(flowchartSource, /type: "flowchart_maker"/);
   assert.match(flowchartSource, /Separate short-lived Codex process turns live implementation summaries into this graph/);
   assert.match(flowchartSource, /!summary\.nodes\.some\(\(node\) => node\.kind === "subagent"\)/);
@@ -385,6 +389,18 @@ test("subagent advisor is a separate read-only Codex process capped at five seco
   assert.match(localCodexSource, /pre-implementation subagent check-in/);
   assert.match(localCodexSource, /actual count and names/);
   assert.match(localCodexSource, /status needs_approval/);
+  assert.match(localCodexSource, /SUBAGENT_ADVISOR_WATCHER_TIMEOUT_MS = 5_000/);
+  assert.match(localCodexSource, /SUBAGENT_ADVISOR_WATCHER_INTERVAL_MS = 1_000/);
+  assert.match(localCodexSource, /continuous parallel Codex subagent advisor/);
+  assert.match(localCodexSource, /local_codex_subagent_advisor\.watcher\.started/);
+  assert.match(localCodexSource, /local_codex_subagent_advisor\.watcher\.tick/);
+  assert.match(localCodexSource, /local_codex_subagent_advisor\.watcher\.stopped/);
+  assert.match(localCodexSource, /local_codex_subagent_advisor\.updated/);
+  assert.match(localCodexSource, /writeHeadDeveloperSubagentAdvisorJson/);
+  assert.match(localCodexSource, /"subagent-advisor\.json"/);
+  assert.match(localCodexSource, /generator: "parallel_codex_subagent_advisor"/);
+  assert.match(localCodexSource, /Codex subagent advisor timed out after 5 seconds/);
+  assert.match(localCodexSource, /The implementation lead remains the source of truth and chooses the actual subagent count and names/);
 });
 
 test("continuous flowchart watcher writes live JSON while Codex is still running", () => {
@@ -425,6 +441,20 @@ if (finalPath.includes("flowchart-summary")) {
       { from: "codex-session", to: "page-builder", label: "subagent" },
       { from: "page-builder", to: "validation", label: "next" }
     ]
+  });
+  process.exit(0);
+}
+if (finalPath.includes("subagent-advisor-live")) {
+  writeJson({
+    recommended: true,
+    confidence: 0.84,
+    status: "use_subagents",
+    summary: "The page and docs responsibilities can stay visibly split.",
+    suggested_subagents: [
+      { name: "Page Experience", responsibility: "Build the user-facing page.", reason: "The UI work is distinct.", status: "candidate" },
+      { name: "Documentation", responsibility: "Document usage and validation.", reason: "Docs are a separate responsibility.", status: "candidate" }
+    ],
+    user_check_in_needed: false
   });
   process.exit(0);
 }
@@ -473,6 +503,7 @@ setTimeout(() => {
     const midTask = getTask(started.task.task_id);
     const midEvents = listOrchestratorEvents(started.task.task_id).map((event) => event.type);
     const midFlowchartExists = Boolean(midTask?.codex_flowchart_json_path && fs.existsSync(midTask.codex_flowchart_json_path));
+    const midAdvisorExists = Boolean(fs.existsSync(${JSON.stringify(path.join(projectDir, ".head-developer", "subagent-advisor.json"))}));
     const deadline = Date.now() + 20000;
     let task = getTask(started.task.task_id);
     while (Date.now() < deadline && task && task.status === "running") {
@@ -488,6 +519,13 @@ setTimeout(() => {
       watcherTicked: midEvents.includes("local_codex_flowchart.watcher.tick"),
       watcherUpdated: midEvents.includes("local_codex_flowchart.updated"),
       watcherStopped: finalEvents.includes("local_codex_flowchart.watcher.stopped"),
+      advisorStarted: midEvents.includes("local_codex_subagent_advisor.watcher.started"),
+      advisorTicked: midEvents.includes("local_codex_subagent_advisor.watcher.tick"),
+      advisorUpdated: midEvents.includes("local_codex_subagent_advisor.updated"),
+      advisorStopped: finalEvents.includes("local_codex_subagent_advisor.watcher.stopped"),
+      midAdvisorExists,
+      advisorStatus: midTask?.codex_subagent_advisor?.status ?? null,
+      advisorSuggestions: midTask?.codex_subagent_advisor?.suggested_subagents?.map((item) => item.name) ?? [],
       finalStatus: task?.status ?? null,
       workerCount: listWorkers().length,
       command: command?.command ?? null,
@@ -503,6 +541,13 @@ setTimeout(() => {
     watcherTicked?: boolean;
     watcherUpdated?: boolean;
     watcherStopped?: boolean;
+    advisorStarted?: boolean;
+    advisorTicked?: boolean;
+    advisorUpdated?: boolean;
+    advisorStopped?: boolean;
+    midAdvisorExists?: boolean;
+    advisorStatus?: string | null;
+    advisorSuggestions?: string[];
     finalStatus?: string | null;
     workerCount?: number;
     command?: string | null;
@@ -514,6 +559,13 @@ setTimeout(() => {
   assert.equal(payload.watcherTicked, true);
   assert.equal(payload.watcherUpdated, true);
   assert.equal(payload.watcherStopped, true);
+  assert.equal(payload.advisorStarted, true);
+  assert.equal(payload.advisorTicked, true);
+  assert.equal(payload.advisorUpdated, true);
+  assert.equal(payload.advisorStopped, true);
+  assert.equal(payload.midAdvisorExists, true);
+  assert.equal(payload.advisorStatus, "use_subagents");
+  assert.ok(payload.advisorSuggestions?.includes("Page Experience"));
   assert.equal(payload.finalStatus, "completed");
   assert.equal(payload.workerCount, 0);
   assert.match(payload.command ?? "", /model_reasoning_effort="xhigh"/);
@@ -670,6 +722,7 @@ test("flowchart renders Codex-chosen logical subagents without external workers"
   assert.ok(payload.summaryTypes?.includes("codex_plan"));
   assert.ok(payload.summaryTypes?.includes("user_approval"));
   assert.ok(payload.summaryTypes?.includes("codex_session"));
+  assert.ok(payload.summaryTypes?.includes("subagent_advisor"));
   assert.ok(payload.summaryTypes?.includes("codex_subagent"));
   assert.ok(payload.summaryTypes?.includes("flowchart_maker"));
   assert.ok(payload.summaryTypes?.includes("validation"));
@@ -681,6 +734,7 @@ test("flowchart renders Codex-chosen logical subagents without external workers"
   assert.match(payload.summaryText ?? "", /Interface Agent/);
   assert.match(payload.summaryText ?? "", /Megaplan skill/);
   assert.match(payload.summaryText ?? "", /Approval gate/);
+  assert.match(payload.summaryText ?? "", /Subagent advisor/);
   assert.match(payload.summaryText ?? "", /Flowchart maker/);
   assert.doesNotMatch(payload.summaryText ?? "", /shared\/game\.js|public\/index\.html|\/workspace|npm test|npm run/);
 });
@@ -931,8 +985,12 @@ test("full-stack Wordle conversation proposes direct local Codex orchestration b
   assert.match(payload.megaplanText ?? "", /Codex Runtime/);
   assert.match(payload.megaplanText ?? "", /Model: gpt-5\.5/);
   assert.match(payload.megaplanText ?? "", /full local access/);
+  assert.ok(payload.flowTypes?.includes("user_request"));
+  assert.ok(payload.flowTypes?.includes("requirement_summary"));
+  assert.ok(payload.flowTypes?.includes("subagent_advisor"));
   assert.ok(payload.flowTypes?.includes("codex_plan"));
   assert.ok(payload.flowTypes?.includes("user_approval"));
+  assert.ok(payload.flowLabels?.includes("Subagent advisor"));
   assert.ok(payload.flowLabels?.includes("Megaplan"));
   assert.equal(payload.workerCount, 0);
 });

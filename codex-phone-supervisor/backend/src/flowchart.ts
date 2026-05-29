@@ -107,6 +107,13 @@ function summaryText(value: string, max = 180) {
     .trim(), max);
 }
 
+function subagentAdvisorSummaryTextForFlowchart(advisor: NonNullable<TaskRecord["codex_subagent_advisor"]>) {
+  const suggestions = advisor.suggested_subagents
+    .map((item) => `${item.name}: ${item.responsibility}`)
+    .join("; ");
+  return suggestions ? `${advisor.summary} Suggested lanes: ${suggestions}.` : advisor.summary;
+}
+
 const localFlowchartSummaryKinds = new Set([
   "user_request",
   "requirement_summary",
@@ -114,6 +121,7 @@ const localFlowchartSummaryKinds = new Set([
   "megaplan",
   "approval",
   "codex_session",
+  "subagent_advisor",
   "subagent",
   "flowchart_maker",
   "validation",
@@ -168,25 +176,41 @@ function withLocalSystemProcessNodes(summary: NormalizedLocalFlowchartSummary): 
       depends_on: ["megaplan"],
     });
   }
+  if (!hasKind("subagent_advisor")) {
+    const codexStatus = localSummaryKindStatus(summary, "codex_session");
+    const currentApprovalId = nodes.find((node) => node.kind === "approval")?.id ?? "";
+    nodes.push({
+      id: "subagent-advisor",
+      kind: "subagent_advisor",
+      label: "Subagent advisor",
+      status: /running|working|in progress/i.test(codexStatus) ? "watching" : "updated",
+      summary: "Parallel Codex process watches for useful internal subagent opportunities.",
+      depends_on: codexSessionId ? [codexSessionId] : currentApprovalId ? [currentApprovalId] : [],
+    });
+  }
   if (!hasKind("flowchart_maker")) {
     const codexStatus = localSummaryKindStatus(summary, "codex_session");
+    const currentSubagentAdvisorId = nodes.find((node) => node.kind === "subagent_advisor")?.id ?? "";
     nodes.push({
       id: "flowchart-maker",
       kind: "flowchart_maker",
       label: "Flowchart maker",
       status: /running|working|in progress/i.test(codexStatus) ? "running" : "updated",
       summary: "Parallel Codex process converts live summaries into this graph.",
-      depends_on: codexSessionId ? [codexSessionId] : [],
+      depends_on: [codexSessionId, currentSubagentAdvisorId].filter(Boolean),
     });
   }
 
   const megaplanId = nodes.find((node) => node.kind === "megaplan")?.id ?? "";
   const approvalId = nodes.find((node) => node.kind === "approval")?.id ?? "";
+  const subagentAdvisorId = nodes.find((node) => node.kind === "subagent_advisor")?.id ?? "";
   const flowchartMakerId = nodes.find((node) => node.kind === "flowchart_maker")?.id ?? "";
   addLocalSummaryEdge(edges, preMegaplanId, megaplanId, "megaplan");
   addLocalSummaryEdge(edges, megaplanId, approvalId, "approval");
   addLocalSummaryEdge(edges, approvalId, codexSessionId, "starts");
+  addLocalSummaryEdge(edges, codexSessionId || approvalId, subagentAdvisorId, "subagent advice");
   addLocalSummaryEdge(edges, codexSessionId, flowchartMakerId, "summarizes");
+  addLocalSummaryEdge(edges, subagentAdvisorId, flowchartMakerId, "advisor input");
   addLocalSummaryEdge(edges, flowchartMakerId, finalSummaryId, "updates");
 
   return { ...summary, nodes, edges };
@@ -252,6 +276,7 @@ function localSummaryNodeType(kind: string): FlowchartNode["type"] {
   if (kind === "plan") return "codex_plan";
   if (kind === "megaplan") return "codex_plan";
   if (kind === "approval") return "user_approval";
+  if (kind === "subagent_advisor") return "subagent_advisor";
   if (kind === "subagent") return "codex_subagent";
   if (kind === "flowchart_maker") return "flowchart_maker";
   if (kind === "user_request") return "user_request";
@@ -270,8 +295,9 @@ function localSummaryColumn(kind: string) {
   if (kind === "megaplan") return 4;
   if (kind === "approval") return 5;
   if (kind === "codex_session") return 5;
-  if (kind === "subagent") return 6;
-  if (kind === "flowchart_maker") return 6;
+  if (kind === "subagent_advisor") return 6;
+  if (kind === "subagent") return 7;
+  if (kind === "flowchart_maker") return 7;
   if (kind === "validation") return 7;
   if (kind === "preview") return 8;
   if (kind === "final_summary") return 9;
@@ -280,7 +306,7 @@ function localSummaryColumn(kind: string) {
 
 function localSummaryVisualState(status: string): FlowchartVisualState {
   if (/fail|blocked/i.test(status)) return "failed";
-  if (/running|in progress|working/i.test(status)) return "running";
+  if (/running|in progress|working|watching/i.test(status)) return "running";
   if (/waiting|approval/i.test(status)) return "waiting_for_approval";
   if (/approved|created|updated|complete|done|pass|loaded|ready|received|summarized/i.test(status)) return "completed";
   return "planning";
@@ -407,18 +433,38 @@ export function buildFlowchartState(): FlowchartState {
     const plannerDecision = session.planner_output ?? null;
     const planningId = session.planning_decision_id ?? plannerDecision?.planning_decision_id ?? null;
     if (planningId && plannerDecision) {
+      const requestSummary = session.pending_action?.original_user_goal
+        || session.active_task
+        || plannerDecision.requirements_summary
+        || session.summary_text;
+      const requirementsSummary = plannerDecision.requirements_summary || requestSummary;
+      const userRequestNodeId = `user_request:${planningId}`;
+      addNode(nodes, {
+        id: userRequestNodeId,
+        type: "user_request",
+        label: "User request",
+        status: "received",
+        visual_state: "completed",
+        badges: [channelLabel(session.channel)],
+        summary: requestSummary,
+        detail: {
+          session_id: session.session_id,
+          user_request: requestSummary,
+        },
+      }, index * 8 - 0.25, 2);
+      addEdge(edges, sessionNodeId, userRequestNodeId, "user request");
       const requirementNodeId = `requirement_summary:${planningId}`;
       addNode(nodes, {
         id: requirementNodeId,
         type: "requirement_summary",
         label: "Requirements",
-        status: session.requirement_summary ? "summarized" : "missing",
-        visual_state: session.requirement_summary ? "completed" : "warning",
+        status: requirementsSummary ? "summarized" : "missing",
+        visual_state: requirementsSummary ? "completed" : "warning",
         badges: ["planner context"],
-        summary: session.requirement_summary || plannerDecision.requirements_summary,
-        detail: { session_id: session.session_id, requirements_summary: session.requirement_summary ?? plannerDecision.requirements_summary },
+        summary: requirementsSummary,
+        detail: { session_id: session.session_id, requirements_summary: requirementsSummary },
       }, index * 8, 2);
-      addEdge(edges, sessionNodeId, requirementNodeId, "user message");
+      addEdge(edges, userRequestNodeId, requirementNodeId, "requirements");
 
       const decisionNodeId = `planner_decision:${planningId}`;
       addNode(nodes, {
@@ -432,6 +478,27 @@ export function buildFlowchartState(): FlowchartState {
         detail: { session_id: session.session_id, planner_model: session.planner_model, decision: plannerDecision },
       }, index * 8 + 1, 2);
       addEdge(edges, requirementNodeId, decisionNodeId, "planner decision");
+
+      if (plannerDecision.subagent_advice) {
+        const advisorNodeId = `subagent_advisor:${planningId}`;
+        addNode(nodes, {
+          id: advisorNodeId,
+          type: "subagent_advisor",
+          label: "Subagent advisor",
+          status: plannerDecision.subagent_advice.recommended ? "use_subagents" : "single_lane_ok",
+          visual_state: "completed",
+          badges: ["fast Codex advisor", plannerDecision.subagent_advice.source],
+          summary: plannerDecision.subagent_advice.user_check_in || plannerDecision.subagent_advice.reason,
+          detail: {
+            session_id: session.session_id,
+            subagent_advice: plannerDecision.subagent_advice,
+            kind: "subagent_advisor",
+            status: plannerDecision.subagent_advice.recommended ? "use_subagents" : "single_lane_ok",
+            summary: plannerDecision.subagent_advice.user_check_in || plannerDecision.subagent_advice.reason,
+          },
+        }, index * 8 + 1.5, 3);
+        addEdge(edges, decisionNodeId, advisorNodeId, "subagent advice");
+      }
 
       if (plannerDecision.open_questions.length || plannerDecision.decision_type === "ask_clarification") {
         const questionNodeId = `clarification_question:${planningId}`;
@@ -481,6 +548,7 @@ export function buildFlowchartState(): FlowchartState {
           },
         }, index * 8 + 3.5, 3);
         addEdge(edges, decisionNodeId, megaplanNodeId, "megaplan");
+        if (plannerDecision.subagent_advice) addEdge(edges, `subagent_advisor:${planningId}`, megaplanNodeId, "advisor input");
       }
 
       if (plannerDecision.proposed_task_split.length) {
@@ -724,13 +792,44 @@ export function buildFlowchartState(): FlowchartState {
       return;
     }
 
-    const sessionNodeId = `codex_flow_pending:${task.task_id}`;
+    const pendingRequestNodeId = `codex_flow_pending:${task.task_id}:user-request`;
+    const pendingRequirementsNodeId = `codex_flow_pending:${task.task_id}:requirements`;
+    const sessionNodeId = `codex_flow_pending:${task.task_id}:codex-session`;
     const liveSubagents = (task.codex_subagents ?? []).filter((subagent) => subagent.name?.trim());
+    const subagentAdvisor = task.codex_subagent_advisor ?? null;
     const pendingSummary = task.status === "running"
       ? liveSubagents.length
         ? "Live Codex subagent updates are visible while the parallel flowchart JSON is being regenerated."
         : "A separate short-lived Codex session is generating this browser flowchart from live implementation updates."
       : "This local Codex run does not have a generated flowchart summary yet.";
+    addNode(nodes, {
+      id: pendingRequestNodeId,
+      type: "user_request",
+      label: "User request",
+      status: "received",
+      visual_state: "completed",
+      badges: ["request"],
+      summary: summaryText(task.user_goal),
+      detail: {
+        kind: "user_request",
+        status: "received",
+        summary: summaryText(task.user_goal, 500),
+      },
+    }, index * 12, 1);
+    addNode(nodes, {
+      id: pendingRequirementsNodeId,
+      type: "requirement_summary",
+      label: "Requirements",
+      status: task.status === "running" ? "summarized" : "pending",
+      visual_state: task.status === "running" ? "completed" : "planning",
+      badges: ["requirements"],
+      summary: summaryText(task.user_goal),
+      detail: {
+        kind: "requirement_summary",
+        status: task.status === "running" ? "summarized" : "pending",
+        summary: summaryText(task.user_goal, 500),
+      },
+    }, index * 12 + 0.1, 2);
     const pendingMegaplanNodeId = `codex_flow_pending:${task.task_id}:megaplan`;
     addNode(nodes, {
       id: pendingMegaplanNodeId,
@@ -745,7 +844,7 @@ export function buildFlowchartState(): FlowchartState {
         status: "created",
         summary: "Codex turns clarified requirements into an approval-ready Megaplan.",
       },
-    }, index * 12, 3);
+    }, index * 12 + 0.2, 3);
     const pendingApprovalNodeId = `codex_flow_pending:${task.task_id}:approval-gate`;
     addNode(nodes, {
       id: pendingApprovalNodeId,
@@ -760,24 +859,46 @@ export function buildFlowchartState(): FlowchartState {
         status: "approved",
         summary: "Complex work waits for user approval before implementation starts.",
       },
-    }, index * 12 + 0.25, 4);
+    }, index * 12 + 0.3, 4);
     addNode(nodes, {
       id: sessionNodeId,
       type: "codex_session",
-      label: liveSubagents.length ? "Codex CLI session" : "Codex flowchart summary",
-      status: task.status === "running" ? liveSubagents.length ? "running" : "generating" : "summary pending",
+      label: "Codex CLI session",
+      status: task.status === "running" ? "running" : "summary pending",
       visual_state: task.status === "running" ? "running" : "planning",
-      badges: [liveSubagents.length ? "live Codex updates" : "parallel Codex flowchart"],
+      badges: [liveSubagents.length ? "live Codex updates" : "one local Codex session"],
       summary: pendingSummary,
       detail: {
         kind: "codex_session",
-        status: task.status === "running" ? liveSubagents.length ? "running" : "generating" : "summary pending",
+        status: task.status === "running" ? "running" : "summary pending",
         summary: pendingSummary,
       },
-    }, index * 12 + 0.5, 5);
-    addEdge(edges, "orchestrator:control-plane", pendingMegaplanNodeId, "megaplan");
+    }, index * 12 + 0.4, 5);
+    addEdge(edges, "orchestrator:control-plane", pendingRequestNodeId, "request");
+    addEdge(edges, pendingRequestNodeId, pendingRequirementsNodeId, "requirements");
+    addEdge(edges, pendingRequirementsNodeId, pendingMegaplanNodeId, "megaplan");
     addEdge(edges, pendingMegaplanNodeId, pendingApprovalNodeId, "approval");
     addEdge(edges, pendingApprovalNodeId, sessionNodeId, "starts");
+    const pendingSubagentAdvisorNodeId = `codex_flow_pending:${task.task_id}:subagent-advisor`;
+    addNode(nodes, {
+      id: pendingSubagentAdvisorNodeId,
+      type: "subagent_advisor",
+      label: "Subagent advisor",
+      status: subagentAdvisor?.status ?? (task.status === "running" ? "watching" : "summary pending"),
+      visual_state: task.status === "running" ? "running" : "planning",
+      badges: ["parallel Codex advisor"],
+      summary: subagentAdvisor
+        ? summaryText(subagentAdvisorSummaryTextForFlowchart(subagentAdvisor))
+        : "Separate short-lived Codex process watches for places where Codex could use internal subagents.",
+      detail: {
+        kind: "subagent_advisor",
+        status: subagentAdvisor?.status ?? (task.status === "running" ? "watching" : "summary pending"),
+        summary: subagentAdvisor
+          ? summaryText(subagentAdvisorSummaryTextForFlowchart(subagentAdvisor), 500)
+          : "Separate short-lived Codex process watches for places where Codex could use internal subagents.",
+      },
+    }, index * 12 + 0.6, 6);
+    addEdge(edges, sessionNodeId, pendingSubagentAdvisorNodeId, "subagent advice");
     const pendingFlowchartMakerNodeId = `codex_flow_pending:${task.task_id}:flowchart-maker`;
     addNode(nodes, {
       id: pendingFlowchartMakerNodeId,
@@ -792,8 +913,9 @@ export function buildFlowchartState(): FlowchartState {
         status: task.status === "running" ? "running" : "summary pending",
         summary: "Separate short-lived Codex process turns live implementation summaries into this graph.",
       },
-    }, index * 12 + 0.75, 6);
+    }, index * 12 + 0.75, 7);
     addEdge(edges, sessionNodeId, pendingFlowchartMakerNodeId, "flowchart");
+    addEdge(edges, pendingSubagentAdvisorNodeId, pendingFlowchartMakerNodeId, "advisor input");
     liveSubagents.forEach((subagent, subagentIndex) => {
       const subagentId = summaryText(subagent.name, 48).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || `subagent-${subagentIndex + 1}`;
       const nodeId = `codex_flow:${task.task_id}:live-${subagentId}`;
@@ -811,7 +933,7 @@ export function buildFlowchartState(): FlowchartState {
           status: summaryText(subagent.status, 80),
           summary: summaryText(subagent.summary || subagent.responsibility, 500),
         },
-      }, index * 12 + subagentIndex + 1, 6);
+      }, index * 12 + subagentIndex + 1, 7);
       addEdge(edges, sessionNodeId, nodeId, "subagent");
     });
   });
