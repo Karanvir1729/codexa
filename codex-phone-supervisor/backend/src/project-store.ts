@@ -78,6 +78,8 @@ export function projectRecordForWorkspace(workspacePath: string, existing?: Proj
     github_repo_full_name: existing?.github_repo_full_name ?? null,
     github_repo_created: existing?.github_repo_created ?? null,
     github_repo_error: existing?.github_repo_error ?? null,
+    github_last_push_at: existing?.github_last_push_at ?? null,
+    github_last_push_error: existing?.github_last_push_error ?? null,
     default_branch: existing?.default_branch ?? branch ?? "main",
     latest_commit_hash: gitValue(realPath, "rev-parse", "HEAD") ?? existing?.latest_commit_hash ?? null,
     docs_path: existing?.docs_path ?? path.join(realPath, ".head-developer"),

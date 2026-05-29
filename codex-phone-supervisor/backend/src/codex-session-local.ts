@@ -9,6 +9,7 @@ import { CommandRunner } from "./command-runner.js";
 import { classifyCommand } from "./command-policy.js";
 import { generateRunSummary } from "./summary.js";
 import { startPreviewForSession } from "./preview.js";
+import { pushProjectToGitHub, type GitHubProjectPushResult } from "./github-repo.js";
 import {
   appendAuditEvent,
   appendOrchestratorEvent,
@@ -1671,6 +1672,32 @@ async function completeLocalCodexRun(input: {
     ].filter(Boolean).join("\n");
     fs.writeFileSync(path.join(input.project.workspace_path, ".head-developer", "VALIDATION.md"), `${validationDoc}\n`);
 
+    let githubPush: GitHubProjectPushResult | null = null;
+    if (task.status === "completed") {
+      githubPush = pushProjectToGitHub({
+        project: input.project,
+        taskId: task.task_id,
+      });
+      appendOrchestratorEvent({
+        scope: "project",
+        scope_id: input.project.project_id,
+        type: githubPush.status === "pushed"
+          ? "github.push.completed"
+          : githubPush.status === "failed"
+            ? "github.push.failed"
+            : "github.push.skipped",
+        message: githubPush.reason,
+        data: { project_id: input.project.project_id, task_id: task.task_id, github_push: githubPush },
+      });
+      if (githubPush.status === "pushed" || githubPush.status === "no_changes") {
+        input.project.latest_commit_hash = githubPush.commit ?? input.project.latest_commit_hash ?? null;
+        input.project.github_last_push_at = nowIso();
+        input.project.github_last_push_error = null;
+      } else if (githubPush.status === "failed") {
+        input.project.github_last_push_error = githubPush.error;
+      }
+    }
+
     const summary = generateRunSummary(task.task_id);
     upsertRunSummary({
       ...summary,
@@ -1696,12 +1723,18 @@ async function completeLocalCodexRun(input: {
     session.commands_failed = unique([...session.commands_failed, ...validation.commands.filter((command) => command.status === "failed").map((command) => command.command)]);
     session.summary_text = task.final_summary ?? task.latest_summary;
     session.latest_summary = session.summary_text;
-    session.latest_codex_message = task.status === "completed" ? `Built by one local Codex orchestrator session. ${task.final_summary}` : validation.summary;
+    const githubPushText = githubPush?.status === "pushed" && input.project.github_repo_url
+      ? ` GitHub: pushed to ${input.project.github_repo_url}.`
+      : githubPush?.status === "failed"
+        ? ` GitHub push failed: ${githubPush.error}`
+        : "";
+    session.latest_codex_message = task.status === "completed" ? `Built by one local Codex orchestrator session. ${task.final_summary}${githubPushText}` : validation.summary;
     session.last_updated = nowIso();
     appendSessionEvent(session, "local_codex_session.finished", task.status === "completed" ? "codex" : "system", session.latest_codex_message, {
       task,
       validation,
       subagents: task.codex_subagents,
+      github_push: githubPush,
     });
     upsertSession(session);
 
@@ -1711,6 +1744,9 @@ async function completeLocalCodexRun(input: {
       requirement_summary: session.requirement_summary ?? input.project.requirement_summary,
       approved_plan: session.approved_plan ?? input.project.approved_plan,
       approval_status: session.approval_status ?? input.project.approval_status,
+      latest_commit_hash: input.project.latest_commit_hash,
+      github_last_push_at: input.project.github_last_push_at ?? null,
+      github_last_push_error: input.project.github_last_push_error ?? null,
       updated_at: nowIso(),
     });
 

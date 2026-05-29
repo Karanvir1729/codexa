@@ -132,6 +132,8 @@ export interface ProjectRecord {
   github_repo_full_name?: string | null;
   github_repo_created?: boolean | null;
   github_repo_error?: string | null;
+  github_last_push_at?: string | null;
+  github_last_push_error?: string | null;
   default_branch?: string | null;
   latest_commit_hash?: string | null;
   docs_path?: string | null;

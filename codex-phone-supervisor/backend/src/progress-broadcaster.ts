@@ -220,6 +220,8 @@ function isMajorForVoice(eventType: string) {
     "subagent_advisor.codex_cli.completed",
     "subagent_advisor.codex_cli.failed",
     "subagent_advisor.codex_cli.timed_out",
+    "github.push.completed",
+    "github.push.failed",
     "megaplan.created",
     "worker.started",
     "worker.stale",
@@ -279,6 +281,8 @@ function progressTextForEvent(event: OrchestratorEvent, session: SessionState, c
   if (event.type === "subagent_advisor.codex_cli.timed_out") return "Subagent advisor hit the 5 second cap; Codex will continue with the conservative planner context and still ask before implementation.";
   if (event.type === "github.repo.ready") return "GitHub repo is ready and attached as the project origin.";
   if (event.type === "github.repo.failed") return `GitHub repo creation failed: ${truncate(event.message, voice ? 120 : 220)}`;
+  if (event.type === "github.push.completed") return "Generated project files were pushed to the GitHub repo.";
+  if (event.type === "github.push.failed") return `GitHub push failed: ${truncate(event.message, voice ? 120 : 220)}`;
   if (event.type === "megaplan.created") return "Megaplan is ready for approval.";
   if (event.type === "task.created") return task ? `Created task ${task.task_id}: ${truncate(task.user_goal, 120)}.` : event.message;
   if (event.type === "task.planned") return task ? `Planned task ${task.task_id}. Next step: ${task.next_steps[0] ?? task.plan[0] ?? "assign a worker"}.` : event.message;

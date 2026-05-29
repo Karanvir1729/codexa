@@ -116,6 +116,8 @@ test("codex_session_local invokes Codex with same-account full access settings",
   assert.match(source, /--dangerously-bypass-approvals-and-sandbox/);
   assert.match(source, /config\.localCodex\.sandbox === "danger-full-access"/);
   assert.match(source, /plugins_source: "same CODEX_HOME and user Codex config"/);
+  assert.match(source, /pushProjectToGitHub/);
+  assert.match(source, /github\.push\.completed/);
   assert.match(source, /IMPROVEMENTS\.md/);
   assert.match(source, /Bugs Found/);
   assert.match(source, /Feature Ideas/);

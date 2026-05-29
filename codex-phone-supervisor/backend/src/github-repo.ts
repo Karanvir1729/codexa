@@ -20,6 +20,23 @@ export type GitHubRepoProvisionResult =
       command?: string;
     };
 
+export type GitHubProjectPushResult =
+  | {
+      status: "pushed" | "no_changes" | "skipped";
+      reason: string;
+      branch: string | null;
+      commit: string | null;
+      remote: string | null;
+    }
+  | {
+      status: "failed";
+      reason: string;
+      error: string;
+      branch: string | null;
+      commit: string | null;
+      remote: string | null;
+    };
+
 function summarizeOutput(value: string) {
   return value.replace(/\s+/g, " ").trim().slice(0, 600);
 }
@@ -28,6 +45,7 @@ function run(command: string, args: string[], cwd: string) {
   const result = spawnSync(command, args, {
     cwd,
     encoding: "utf8",
+    timeout: 120_000,
     env: {
       ...process.env,
       NO_COLOR: "1",
@@ -37,7 +55,7 @@ function run(command: string, args: string[], cwd: string) {
   return {
     status: result.status ?? 1,
     stdout: result.stdout || "",
-    stderr: result.stderr || "",
+    stderr: result.stderr || result.error?.message || "",
     signal: result.signal,
   };
 }
@@ -49,6 +67,11 @@ function git(workspacePath: string, ...args: string[]) {
 function gitValue(workspacePath: string, ...args: string[]) {
   const result = git(workspacePath, ...args);
   return result.status === 0 ? result.stdout.trim() : null;
+}
+
+function gitSuccess(workspacePath: string, ...args: string[]) {
+  const result = git(workspacePath, ...args);
+  return result.status === 0 ? null : summarizeOutput(`${result.stderr}\n${result.stdout}`);
 }
 
 export function ensureLocalGitRepository(workspacePath: string) {
@@ -87,6 +110,37 @@ function parseGhRepoJson(output: string) {
 function ghAuthIsReady(workspacePath: string) {
   const result = run(config.github.ghCommand, ["auth", "status", "-h", "github.com"], workspacePath);
   return result.status === 0;
+}
+
+function statusPaths(workspacePath: string) {
+  const result = git(workspacePath, "status", "--porcelain", "-z", "--untracked-files=all");
+  if (result.status !== 0) return [];
+  const parts = result.stdout.split("\0").filter(Boolean);
+  const paths: string[] = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    const entry = parts[index] ?? "";
+    const status = entry.slice(0, 2);
+    const file = entry.slice(3);
+    if (file) paths.push(file);
+    if (/R|C/.test(status)) {
+      const next = parts[index + 1];
+      if (next) {
+        paths.push(next);
+        index += 1;
+      }
+    }
+  }
+  return paths;
+}
+
+function blockedGitHubPushFiles(files: string[]) {
+  return files.filter((file) => {
+    const normalized = file.replace(/\\/g, "/");
+    return /(^|\/)\.env(?:$|\.)/i.test(normalized)
+      || /(^|\/)(?:auth\.json|credentials(?:\.json)?|service-account(?:\.json)?|private[-_]?key|id_rsa|id_ed25519)$/i.test(normalized)
+      || /(^|\/)\.?(?:aws|gcloud|config\/gcloud)\//i.test(normalized)
+      || /(^|\/)(?:secrets?|tokens?)(?:\/|$)/i.test(normalized);
+  });
 }
 
 export function ensureGitHubRepositoryForProject(input: {
@@ -160,3 +214,91 @@ export function ensureGitHubRepositoryForProject(input: {
   };
 }
 
+export function pushProjectToGitHub(input: {
+  project: ProjectRecord;
+  taskId: string;
+  message?: string;
+}): GitHubProjectPushResult {
+  const workspacePath = input.project.workspace_path;
+  const remote = gitValue(workspacePath, "remote", "get-url", "origin");
+  const branch = gitValue(workspacePath, "branch", "--show-current") || input.project.default_branch || "main";
+  if (!input.project.github_repo_url || input.project.github_repo_created !== true) {
+    return {
+      status: "skipped",
+      reason: "Automatic GitHub push is limited to repos created by this supervisor.",
+      branch,
+      commit: null,
+      remote,
+    };
+  }
+  if (!remote) {
+    return {
+      status: "failed",
+      reason: "GitHub repo is attached in project state but no origin remote is configured.",
+      error: "Missing origin remote.",
+      branch,
+      commit: null,
+      remote,
+    };
+  }
+  const changedPaths = statusPaths(workspacePath);
+  const blocked = blockedGitHubPushFiles(changedPaths);
+  if (blocked.length) {
+    return {
+      status: "failed",
+      reason: "Refusing to push because the project contains files that look like secrets or credentials.",
+      error: `Blocked file(s): ${blocked.join(", ")}`,
+      branch,
+      commit: null,
+      remote,
+    };
+  }
+  const emailError = gitSuccess(workspacePath, "config", "user.email", "head-developer@example.local");
+  if (emailError) return { status: "failed", reason: "Could not configure git user.email.", error: emailError, branch, commit: null, remote };
+  const nameError = gitSuccess(workspacePath, "config", "user.name", "Head Developer");
+  if (nameError) return { status: "failed", reason: "Could not configure git user.name.", error: nameError, branch, commit: null, remote };
+  const addError = gitSuccess(workspacePath, "add", "-A");
+  if (addError) return { status: "failed", reason: "Could not stage generated project files.", error: addError, branch, commit: null, remote };
+  const diff = git(workspacePath, "diff", "--cached", "--quiet");
+  if (diff.status === 0) {
+    const commit = gitValue(workspacePath, "rev-parse", "HEAD");
+    return {
+      status: "no_changes",
+      reason: "No generated project changes needed pushing.",
+      branch,
+      commit,
+      remote,
+    };
+  }
+  const commitMessage = input.message || `Build project via local Codex (${input.taskId})`;
+  const commit = git(workspacePath, "commit", "-m", commitMessage);
+  if (commit.status !== 0) {
+    return {
+      status: "failed",
+      reason: "Could not commit generated project files before pushing to GitHub.",
+      error: summarizeOutput(`${commit.stderr}\n${commit.stdout}`),
+      branch,
+      commit: null,
+      remote,
+    };
+  }
+  const commitHash = gitValue(workspacePath, "rev-parse", "HEAD");
+  const push = git(workspacePath, "push", "-u", "origin", branch);
+  if (push.status !== 0) {
+    return {
+      status: "failed",
+      reason: "Could not push generated project files to GitHub.",
+      error: summarizeOutput(`${push.stderr}\n${push.stdout}`),
+      branch,
+      commit: commitHash,
+      remote,
+    };
+  }
+  return {
+    status: "pushed",
+    reason: "Committed and pushed generated project files to GitHub.",
+    branch,
+    commit: commitHash,
+    remote,
+  };
+}
