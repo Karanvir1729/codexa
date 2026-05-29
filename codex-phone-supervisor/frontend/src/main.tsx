@@ -366,26 +366,62 @@ function compactFlowchartLayout(nodes: FlowchartNode[], columns = FLOW_COLUMNS) 
     cursor += 1;
   };
 
-  ["orchestrator", "user_request", "requirement_summary", "codex_plan", "user_approval", "codex_session", "subagent_advisor", "flowchart_maker"].forEach(placeInFlow);
+  const hasParallelPipeline = subagents.length > 1 && columnCount >= 3;
 
-  const subagentStartRow = Math.max(1, Math.ceil(cursor / columnCount));
-  subagents.forEach((node, index) => {
-    placements.set(node.id, {
-      row: subagentStartRow + Math.floor(index / columnCount),
-      column: index % columnCount,
+  if (hasParallelPipeline) {
+    const mainColumn = 0;
+    const subagentColumn = Math.min(1, columnCount - 2);
+    const validationColumn = columnCount - 1;
+    let mainRow = 0;
+    const placeMain = (type: string) => {
+      const items = byType.get(type) ?? [];
+      while (items.length) {
+        placements.set(items.shift()!.id, { row: mainRow, column: mainColumn });
+        mainRow += 1;
+      }
+    };
+    ["orchestrator", "user_request", "requirement_summary", "codex_plan", "user_approval", "codex_session"].forEach(placeMain);
+    const codexNode = sorted.find((node) => node.type === "codex_session");
+    const codexPlacement = codexNode ? placements.get(codexNode.id) : null;
+    const pipelineStartRow = Math.max(1, codexPlacement?.row ?? mainRow);
+    const helperRow = Math.max(0, pipelineStartRow - 1);
+    placeNext("subagent_advisor", helperRow, subagentColumn);
+    placeNext("flowchart_maker", helperRow, validationColumn);
+    subagents.forEach((node, index) => {
+      placements.set(node.id, {
+        row: pipelineStartRow + index,
+        column: subagentColumn,
+      });
     });
-  });
-  const closingRow = subagentStartRow + Math.max(1, Math.ceil(subagents.length / columnCount));
-  const closingStartColumn = columnCount >= 3 ? columnCount - 3 : 0;
-  ["validation", "preview", "quality_check", "final_summary"].forEach((type, index) => {
-    placeNext(type, closingRow + Math.floor((closingStartColumn + index) / columnCount), (closingStartColumn + index) % columnCount);
-  });
+    const validationRow = pipelineStartRow + Math.floor((subagents.length - 1) / 2);
+    placeNext("validation", validationRow, validationColumn);
+    placeNext("preview", validationRow + 1, validationColumn);
+    placeNext("quality_check", validationRow + 2, validationColumn);
+    placeNext("final_summary", validationRow + 3, validationColumn);
+  } else {
+    ["orchestrator", "user_request", "requirement_summary", "codex_plan", "user_approval", "codex_session", "subagent_advisor", "flowchart_maker"].forEach(placeInFlow);
+    const subagentStartRow = Math.max(1, Math.ceil(cursor / columnCount));
+    subagents.forEach((node, index) => {
+      placements.set(node.id, {
+        row: subagentStartRow + Math.floor(index / columnCount),
+        column: index % columnCount,
+      });
+    });
+    const closingRow = subagentStartRow + Math.max(1, Math.ceil(subagents.length / columnCount));
+    const closingStartColumn = columnCount >= 3 ? columnCount - 3 : 0;
+    ["validation", "preview", "quality_check", "final_summary"].forEach((type, index) => {
+      placeNext(type, closingRow + Math.floor((closingStartColumn + index) / columnCount), (closingStartColumn + index) % columnCount);
+    });
+  }
+
+  const usedRows = [...placements.values()].map((placement) => placement.row);
+  const overflowStartRow = (usedRows.length ? Math.max(...usedRows) : 0) + 1;
 
   let overflowIndex = 0;
   for (const leftovers of byType.values()) {
     for (const node of leftovers) {
       placements.set(node.id, {
-        row: closingRow + 1 + Math.floor(overflowIndex / columnCount),
+        row: overflowStartRow + Math.floor(overflowIndex / columnCount),
         column: overflowIndex % columnCount,
       });
       overflowIndex += 1;
@@ -394,7 +430,7 @@ function compactFlowchartLayout(nodes: FlowchartNode[], columns = FLOW_COLUMNS) 
 
   return sorted.map((node) => {
     const placement = placements.get(node.id) ?? {
-      row: closingRow + 1 + Math.floor(overflowIndex / columnCount),
+      row: overflowStartRow + Math.floor(overflowIndex / columnCount),
       column: overflowIndex++ % columnCount,
     };
     return {
@@ -407,20 +443,45 @@ function compactFlowchartLayout(nodes: FlowchartNode[], columns = FLOW_COLUMNS) 
   });
 }
 
-function parallelAgentBand(nodes: FlowchartNode[]) {
+function parallelCircuit(nodes: FlowchartNode[]) {
+  const codex = nodes.find((node) => node.type === "codex_session");
+  const validation = nodes.find((node) => node.type === "validation");
   const subagents = nodes.filter((node) => node.type === "codex_subagent");
-  if (subagents.length < 2) return null;
-  const minX = Math.min(...subagents.map((node) => node.position.x));
-  const maxX = Math.max(...subagents.map((node) => node.position.x + FLOW_NODE_WIDTH));
-  const minY = Math.min(...subagents.map((node) => node.position.y));
-  const maxY = Math.max(...subagents.map((node) => node.position.y + FLOW_NODE_HEIGHT));
+  if (!codex || !validation || subagents.length < 2) return null;
+  const subagentCenters = subagents.map((node) => ({
+    id: node.id,
+    y: node.position.y + FLOW_NODE_HEIGHT / 2,
+    left: node.position.x,
+    right: node.position.x + FLOW_NODE_WIDTH,
+  })).sort((a, b) => a.y - b.y);
+  const codexRight = codex.position.x + FLOW_NODE_WIDTH;
+  const validationLeft = validation.position.x;
+  const subagentColumns = new Set(subagentCenters.map((lane) => lane.left));
+  if (subagentColumns.size !== 1 || subagentCenters[0].left <= codexRight || validationLeft <= subagentCenters[0].right) return null;
+  const splitBusX = Math.round(codexRight + Math.max(18, (subagentCenters[0].left - codexRight) * 0.34));
+  const joinBusX = Math.round(subagentCenters[0].right + Math.max(18, (validationLeft - subagentCenters[0].right) * 0.66));
+  const sourceY = codex.position.y + FLOW_NODE_HEIGHT / 2;
+  const validationY = validation.position.y + FLOW_NODE_HEIGHT / 2;
+  const busTop = Math.min(sourceY, subagentCenters[0].y);
+  const busBottom = Math.max(validationY, subagentCenters[subagentCenters.length - 1].y);
   return {
-    left: Math.max(8, minX - 14),
-    top: Math.max(8, minY - 34),
-    width: maxX - minX + 28,
-    height: maxY - minY + 48,
+    codexRight,
+    sourceY,
+    validationLeft,
+    validationY,
+    splitBusX,
+    joinBusX,
+    busTop,
+    busBottom,
+    subagentCenters,
     count: subagents.length,
   };
+}
+
+function isParallelCircuitEdge(edge: FlowchartEdge, from: FlowchartNode, to: FlowchartNode) {
+  return /parallel/i.test(edge.label)
+    || (from.type === "codex_session" && to.type === "codex_subagent")
+    || (from.type === "codex_subagent" && to.type === "validation");
 }
 
 function flowEdgePath(from: FlowchartNode, to: FlowchartNode) {
@@ -451,18 +512,6 @@ function flowEdgePath(from: FlowchartNode, to: FlowchartNode) {
   const endY = toCenterY;
   const midX = Math.round((startX + endX) / 2);
   return `M ${startX} ${startY} L ${midX} ${startY} L ${midX} ${endY} L ${endX} ${endY}`;
-}
-
-function isParallelFlowEdge(edge: FlowchartEdge, from: FlowchartNode, to: FlowchartNode) {
-  return /parallel/i.test(edge.label)
-    || (from.type === "codex_session" && to.type === "codex_subagent")
-    || (from.type === "codex_subagent" && (to.type === "validation" || to.type === "quality_check"));
-}
-
-function flowEdgeStyle(edge: FlowchartEdge, from: FlowchartNode, to: FlowchartNode): React.SVGProps<SVGPathElement> {
-  return isParallelFlowEdge(edge, from, to)
-    ? { stroke: "#7c3aed", strokeWidth: 2.25, strokeDasharray: "7 5" }
-    : { stroke: "#64748b", strokeWidth: 1.5 };
 }
 
 function renderInlineMarkdown(text: string) {
@@ -1067,7 +1116,12 @@ function App() {
   const selectedNode = visibleFlowchartNodes.find((node) => node.id === selectedNodeId) ?? visibleFlowchartNodes.find((node) => node.type === "orchestrator") ?? null;
   const graphSize = flowGraphSize(visibleFlowchartNodes);
   const nodeById = new Map(visibleFlowchartNodes.map((node) => [node.id, node]));
-  const parallelBand = parallelAgentBand(visibleFlowchartNodes);
+  const activeParallelCircuit = parallelCircuit(visibleFlowchartNodes);
+  const visibleFlowchartEdgesForRender = visibleFlowchartEdges.filter((edge) => {
+    const from = nodeById.get(edge.from);
+    const to = nodeById.get(edge.to);
+    return !activeParallelCircuit || !from || !to || !isParallelCircuitEdge(edge, from, to);
+  });
   const latestCommandNode = visibleFlowchartNodes.find((node) => node.type === "command");
   const latestCommand = latestCommandNode?.label || session?.commands_completed.at(-1) || session?.commands_failed.at(-1) || "None";
   const selectedNodeDetail = selectedNode ? asRecord(selectedNode.detail) : {};
@@ -1175,7 +1229,7 @@ function App() {
               Built by one local Codex session. Orchestrator: Codex CLI | Subagents: Codex internal logical subagents | Source of truth: local repo
             </div>
             <div style={{ color: "#475569", fontSize: 13, marginTop: 4 }}>
-              Flowchart priority: fast updates, honest partial state, live subagent-opportunity advice, graphical parallel subagent lanes, final quality-check evidence, and every Codex-reported subagent shown as its own node.
+              Flowchart priority: fast updates, honest partial state, live subagent-opportunity advice, a vertical parallel subagent pipeline, final quality-check evidence, and every Codex-reported subagent shown as its own node.
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -1188,52 +1242,68 @@ function App() {
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12 }}>
           <div ref={flowPanelRef} style={{ position: "relative", minHeight: 420, maxHeight: 680, overflow: "auto", border: "1px solid #cbd5e1", borderRadius: 8, background: "#f8fafc" }}>
             <div style={{ position: "relative", width: graphSize.width, height: graphSize.height }}>
-              {parallelBand ? (
-                <div
-                  data-testid="parallel-agent-lanes"
-                  style={{
-                    position: "absolute",
-                    left: parallelBand.left,
-                    top: parallelBand.top,
-                    width: parallelBand.width,
-                    height: parallelBand.height,
-                    border: "1.5px dashed #7c3aed",
-                    borderRadius: 10,
-                    background: "rgba(124, 58, 237, 0.055)",
-                    pointerEvents: "none",
-                    zIndex: 0,
-                  }}
-                >
-                  <div style={{
-                    position: "absolute",
-                    left: 10,
-                    top: -12,
-                    padding: "2px 8px",
-                    borderRadius: 999,
-                    background: "#f8fafc",
-                    color: "#4c1d95",
-                    border: "1px solid #c4b5fd",
-                    fontSize: 11,
-                    fontWeight: 700,
-                  }}>
-                    Parallel Codex subagents ({parallelBand.count})
-                  </div>
-                </div>
-              ) : null}
               <svg width={graphSize.width} height={graphSize.height} style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 1 }}>
                 <defs>
                   <marker id="flow-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
                     <path d="M 0 0 L 8 4 L 0 8 z" fill="#475569" />
                   </marker>
+                  <marker id="flow-arrow-parallel" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
+                    <path d="M 0 0 L 8 4 L 0 8 z" fill="#6d28d9" />
+                  </marker>
                 </defs>
-                {visibleFlowchartEdges.map((edge) => {
+                {activeParallelCircuit ? (
+                  <g data-testid="parallel-agent-pipeline">
+                    <text x={activeParallelCircuit.splitBusX} y={Math.max(14, activeParallelCircuit.busTop - 14)} fill="#4c1d95" fontSize="11" fontWeight="700">
+                      Parallel Codex subagents ({activeParallelCircuit.count})
+                    </text>
+                    <path
+                      d={`M ${activeParallelCircuit.codexRight} ${activeParallelCircuit.sourceY} L ${activeParallelCircuit.splitBusX} ${activeParallelCircuit.sourceY} L ${activeParallelCircuit.splitBusX} ${activeParallelCircuit.busTop} L ${activeParallelCircuit.splitBusX} ${activeParallelCircuit.busBottom}`}
+                      stroke="#6d28d9"
+                      strokeWidth={2}
+                      fill="none"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <path
+                      d={`M ${activeParallelCircuit.joinBusX} ${activeParallelCircuit.busTop} L ${activeParallelCircuit.joinBusX} ${activeParallelCircuit.busBottom} M ${activeParallelCircuit.joinBusX} ${activeParallelCircuit.validationY} L ${activeParallelCircuit.validationLeft} ${activeParallelCircuit.validationY}`}
+                      stroke="#6d28d9"
+                      strokeWidth={2}
+                      fill="none"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      markerEnd="url(#flow-arrow-parallel)"
+                    />
+                    {activeParallelCircuit.subagentCenters.map((lane) => (
+                      <g key={lane.id}>
+                        <path
+                          d={`M ${activeParallelCircuit.splitBusX} ${lane.y} L ${lane.left} ${lane.y}`}
+                          stroke="#6d28d9"
+                          strokeWidth={2}
+                          fill="none"
+                          strokeLinecap="round"
+                          markerEnd="url(#flow-arrow-parallel)"
+                        />
+                        <path
+                          d={`M ${lane.right} ${lane.y} L ${activeParallelCircuit.joinBusX} ${lane.y}`}
+                          stroke="#6d28d9"
+                          strokeWidth={2}
+                          fill="none"
+                          strokeLinecap="round"
+                        />
+                        <circle cx={activeParallelCircuit.splitBusX} cy={lane.y} r={3} fill="#6d28d9" />
+                        <circle cx={activeParallelCircuit.joinBusX} cy={lane.y} r={3} fill="#6d28d9" />
+                      </g>
+                    ))}
+                    <title>Parallel Codex subagent pipeline</title>
+                  </g>
+                ) : null}
+                {visibleFlowchartEdgesForRender.map((edge) => {
                   const from = nodeById.get(edge.from);
                   const to = nodeById.get(edge.to);
                   if (!from || !to) return null;
-                  const edgeStyle = flowEdgeStyle(edge, from, to);
                   return (
                     <g key={edge.id}>
-                      <path d={flowEdgePath(from, to)} {...edgeStyle} fill="none" strokeLinejoin="round" markerEnd="url(#flow-arrow)" />
+                      <path d={flowEdgePath(from, to)} stroke="#64748b" strokeWidth={1.5} fill="none" strokeLinejoin="round" markerEnd="url(#flow-arrow)" />
                       <title>{edge.label}</title>
                     </g>
                   );
