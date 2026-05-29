@@ -171,6 +171,7 @@ type MegaplanRecord = {
     name: string;
     path: string;
     link: string;
+    web_url: string | null;
     branch: string | null;
     commit: string | null;
     remote_url: string | null;
@@ -1255,7 +1256,8 @@ function App() {
         {megaplan ? (
           <>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10, padding: "10px 16px", borderBottom: "1px solid #d8dee4", fontSize: 13, color: "#24292f" }}>
-              <span><strong>Repo:</strong> <a href={megaplan.repo.link} target="_blank" rel="noreferrer">{megaplan.repo.name}</a></span>
+              <span><strong>Repo:</strong> {megaplan.repo.web_url ? <a href={megaplan.repo.web_url} target="_blank" rel="noreferrer">{megaplan.repo.name}</a> : megaplan.repo.name}</span>
+              {megaplan.repo.web_url ? <span><strong>Repo URL:</strong> <a href={megaplan.repo.web_url} target="_blank" rel="noreferrer">{megaplan.repo.web_url}</a></span> : null}
               <span><strong>Branch:</strong> {megaplan.repo.branch ?? "unknown"}</span>
               {megaplan.repo.commit ? <span><strong>Commit:</strong> {megaplan.repo.commit}</span> : null}
               <span><strong>Updated:</strong> {new Date(megaplan.updated_at).toLocaleString()}</span>

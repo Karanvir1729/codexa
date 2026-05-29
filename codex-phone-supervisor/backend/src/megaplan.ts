@@ -16,6 +16,7 @@ export interface MegaplanRecord {
     name: string;
     path: string;
     link: string;
+    web_url: string | null;
     branch: string | null;
     commit: string | null;
     remote_url: string | null;
@@ -42,15 +43,29 @@ function isGeneratedProjectWorkspace(workspacePath: string) {
   }
 }
 
+function webUrlFromGitRemote(remote: string | null) {
+  const value = remote?.trim();
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value)) return value.replace(/\.git$/i, "");
+  const scpLike = value.match(/^git@([^:]+):(.+?)(?:\.git)?$/i);
+  if (scpLike) return `https://${scpLike[1]}/${scpLike[2]}`;
+  const sshUrl = value.match(/^ssh:\/\/git@([^/]+)\/(.+?)(?:\.git)?$/i);
+  if (sshUrl) return `https://${sshUrl[1]}/${sshUrl[2]}`;
+  return null;
+}
+
 function repoMetadata(project: ProjectRecord) {
+  const projectRemote = gitValue(project.workspace_path, "remote", "get-url", "origin");
+  const projectWebUrl = project.github_repo_url ?? webUrlFromGitRemote(projectRemote);
   if (isGeneratedProjectWorkspace(project.workspace_path)) {
     return {
-      name: project.display_name || path.basename(project.workspace_path),
+      name: project.github_repo_full_name || project.display_name || path.basename(project.workspace_path),
       path: project.workspace_path,
-      link: `file://${project.workspace_path}`,
-      branch: project.git_branch ?? null,
-      commit: project.latest_commit_hash?.slice(0, 7) ?? null,
-      remote_url: null,
+      link: projectWebUrl ?? `file://${project.workspace_path}`,
+      web_url: projectWebUrl,
+      branch: gitValue(project.workspace_path, "branch", "--show-current") || project.git_branch || null,
+      commit: gitValue(project.workspace_path, "rev-parse", "--short", "HEAD") ?? project.latest_commit_hash?.slice(0, 7) ?? null,
+      remote_url: projectRemote,
     };
   }
 
@@ -58,14 +73,48 @@ function repoMetadata(project: ProjectRecord) {
     ? project.repo_path
     : gitValue(project.workspace_path, "rev-parse", "--show-toplevel") ?? project.workspace_path;
   const remote = gitValue(repoPath, "remote", "get-url", "origin");
+  const webUrl = project.github_repo_url ?? webUrlFromGitRemote(remote);
   return {
-    name: project.repo_name || path.basename(repoPath),
+    name: project.github_repo_full_name || project.repo_name || path.basename(repoPath),
     path: repoPath,
-    link: remote && /^https?:\/\//i.test(remote) ? remote : `file://${repoPath}`,
+    link: webUrl ?? `file://${repoPath}`,
+    web_url: webUrl,
     branch: gitValue(repoPath, "branch", "--show-current") || project.git_branch || null,
     commit: gitValue(repoPath, "rev-parse", "--short", "HEAD"),
     remote_url: remote,
   };
+}
+
+function repositoryDetailLines(repo: MegaplanRecord["repo"]) {
+  return [
+    `- Repo: ${repo.name}`,
+    repo.web_url ? `- Repo URL: [${repo.web_url}](${repo.web_url})` : "- Repo URL: Not attached yet.",
+    `- Branch: ${repo.branch ?? "unknown"}`,
+    repo.commit ? `- Commit: ${repo.commit}` : "",
+    `- Local path: \`${repo.path}\``,
+  ].filter(Boolean);
+}
+
+function repositorySection(repo: MegaplanRecord["repo"]) {
+  return [
+    "## Repository",
+    "",
+    ...repositoryDetailLines(repo),
+    "",
+  ];
+}
+
+function syncRepositorySection(markdown: string, repo: MegaplanRecord["repo"]) {
+  const lines = markdown.split(/\r?\n/);
+  const start = lines.findIndex((line) => line.trim() === "## Repository");
+  if (start === -1) return markdown;
+  const next = lines.findIndex((line, index) => index > start && /^##\s+/.test(line.trim()));
+  const end = next === -1 ? lines.length : next;
+  return [
+    ...lines.slice(0, start),
+    ...repositorySection(repo),
+    ...lines.slice(end),
+  ].join("\n");
 }
 
 function markdownList(items: string[]) {
@@ -142,13 +191,7 @@ export function buildMegaplanMarkdown(input: {
       "- To start: reply `approve` in the Codex chat",
       "- To revise: describe the change before approving",
       "",
-      "## Repository",
-      "",
-      `- Repo: [${repo.name}](${repo.link})`,
-      `- Branch: ${repo.branch ?? "unknown"}`,
-      repo.commit ? `- Commit: ${repo.commit}` : "",
-      `- Local path: \`${repo.path}\``,
-      "",
+      ...repositorySection(repo),
       "## User Request",
       "",
       input.userGoal.trim() || input.session.active_task || "No user request recorded.",
@@ -271,12 +314,19 @@ export function getMegaplanForSession(sessionId: string): MegaplanRecord | null 
   if (!project) return null;
   const target = path.join(project.workspace_path, ".head-developer", "MEGAPLAN.md");
   if (!fs.existsSync(target)) return null;
+  const repo = repoMetadata(project);
+  let content = fs.readFileSync(target, "utf8");
+  const syncedContent = syncRepositorySection(content, repo);
+  if (syncedContent !== content) {
+    content = syncedContent.trimEnd() + "\n";
+    fs.writeFileSync(target, content);
+  }
   return {
     project_id: project.project_id,
     session_id: session.session_id,
     path: target,
-    content: fs.readFileSync(target, "utf8"),
+    content,
     updated_at: fs.statSync(target).mtime.toISOString(),
-    repo: repoMetadata(project),
+    repo,
   };
 }

@@ -41,6 +41,8 @@ test("dashboard flowchart nodes are clickable and open the details panel", () =>
   assert.match(source, /Approve Megaplan/);
   assert.match(source, /Branch:/);
   assert.match(source, /Repo:/);
+  assert.match(source, /Repo URL:/);
+  assert.match(source, /megaplan\.repo\.web_url/);
   assert.match(source, /displayFlowText/);
   assert.match(source, /node\.id\.startsWith\("codex_flow:"\)/);
   assert.match(source, /node\.id\.startsWith\("codex_flow_pending:"\)/);

@@ -242,6 +242,60 @@ process.stdin.on("end", () => {
   assert.ok(payload.eventTypes?.includes("codex_conversation_mirror.completed"));
 });
 
+test("Megaplan repository section uses GitHub repo URL instead of local file link", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "megaplan-github-url-"));
+  const storeDir = path.join(root, "store");
+  const workspaceRoot = path.join(root, "workspace");
+  const projectDir = path.join(workspaceRoot, "repo-url-smoke");
+  const codexHome = path.join(root, "codex-home");
+  fs.mkdirSync(projectDir, { recursive: true });
+  fs.mkdirSync(codexHome, { recursive: true });
+  spawnSync("git", ["init", "-b", "main"], { cwd: projectDir, encoding: "utf8" });
+  spawnSync("git", ["remote", "add", "origin", "https://github.com/Karanvir1729/repo-url-smoke.git"], { cwd: projectDir, encoding: "utf8" });
+
+  const script = `
+    ${bootstrapEnv(storeDir, workspaceRoot, codexHome)}
+    const fs = await import("node:fs");
+    const { createSession } = await import("./codex-phone-supervisor/backend/src/session.ts");
+    const { upsertSession } = await import("./codex-phone-supervisor/backend/src/store.ts");
+    const { projectRecordForWorkspace, upsertProject } = await import("./codex-phone-supervisor/backend/src/project-store.ts");
+    const { writeMegaplan, getMegaplanForSession } = await import("./codex-phone-supervisor/backend/src/megaplan.ts");
+    const project = projectRecordForWorkspace(${JSON.stringify(projectDir)});
+    project.display_name = "Repo URL Smoke";
+    project.github_repo_url = "https://github.com/Karanvir1729/repo-url-smoke";
+    project.github_repo_full_name = "Karanvir1729/repo-url-smoke";
+    project.github_repo_created = true;
+    upsertProject(project);
+    const session = createSession("Repo URL Smoke", project.workspace_path);
+    session.session_id = "session_repo_url_smoke";
+    session.project_id = project.project_id;
+    session.current_project_id = project.project_id;
+    session.workspace_path = project.workspace_path;
+    upsertSession(session);
+    const written = writeMegaplan({ session, project, userGoal: "Build a tiny app.", decision: null });
+    const stale = written.content.replace("https://github.com/Karanvir1729/repo-url-smoke", "file://" + project.workspace_path);
+    fs.writeFileSync(written.path, stale);
+    const readBack = getMegaplanForSession(session.session_id);
+    console.log(JSON.stringify({
+      repoLink: written.repo.link,
+      repoWebUrl: written.repo.web_url,
+      content: written.content,
+      syncedContent: readBack?.content,
+      syncedRepoWebUrl: readBack?.repo.web_url
+    }));
+  `;
+  const result = runIsolated(script);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}") as { repoLink?: string; repoWebUrl?: string; content?: string; syncedContent?: string; syncedRepoWebUrl?: string };
+  assert.equal(payload.repoLink, "https://github.com/Karanvir1729/repo-url-smoke");
+  assert.equal(payload.repoWebUrl, "https://github.com/Karanvir1729/repo-url-smoke");
+  assert.match(payload.content ?? "", /Repo URL: \[https:\/\/github\.com\/Karanvir1729\/repo-url-smoke\]/);
+  assert.doesNotMatch(payload.content ?? "", /Repo: \[Repo URL Smoke\]\(file:\/\//);
+  assert.match(payload.syncedContent ?? "", /Repo URL: \[https:\/\/github\.com\/Karanvir1729\/repo-url-smoke\]/);
+  assert.doesNotMatch(payload.syncedContent ?? "", /Repo URL: \[file:\/\//);
+  assert.equal(payload.syncedRepoWebUrl, "https://github.com/Karanvir1729/repo-url-smoke");
+});
+
 test("flowchart maker is a separate read-only Codex session capped at five seconds", () => {
   const source = fs.readFileSync(path.join(process.cwd(), "codex-phone-supervisor", "backend", "src", "codex-session-local.ts"), "utf8");
   const flowchartSource = fs.readFileSync(path.join(process.cwd(), "codex-phone-supervisor", "backend", "src", "flowchart.ts"), "utf8");
