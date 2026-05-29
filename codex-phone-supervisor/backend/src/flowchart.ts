@@ -142,7 +142,11 @@ function localSummaryKindStatus(summary: NormalizedLocalFlowchartSummary, kind: 
 
 function addLocalSummaryEdge(edges: NormalizedLocalFlowchartSummary["edges"], from: string, to: string, label: string) {
   if (!from || !to || from === to) return;
-  if (edges.some((edge) => edge.from === from && edge.to === to)) return;
+  const existing = edges.find((edge) => edge.from === from && edge.to === to);
+  if (existing) {
+    if (/parallel/i.test(label) && !/parallel/i.test(existing.label)) existing.label = label;
+    return;
+  }
   edges.push({ from, to, label });
 }
 
@@ -221,12 +225,17 @@ function withLocalSystemProcessNodes(summary: NormalizedLocalFlowchartSummary, q
   const qualityCheckId = nodes.find((node) => node.kind === "quality_check")?.id ?? "";
   const currentValidationId = nodes.find((node) => node.kind === "validation")?.id ?? "";
   const currentPreviewId = nodes.find((node) => node.kind === "preview")?.id ?? "";
+  const subagentIds = nodes.filter((node) => node.kind === "subagent").map((node) => node.id);
   addLocalSummaryEdge(edges, preMegaplanId, megaplanId, "megaplan");
   addLocalSummaryEdge(edges, megaplanId, approvalId, "approval");
   addLocalSummaryEdge(edges, approvalId, codexSessionId, "starts");
   addLocalSummaryEdge(edges, codexSessionId || approvalId, subagentAdvisorId, "subagent advice");
   addLocalSummaryEdge(edges, codexSessionId, flowchartMakerId, "summarizes");
   addLocalSummaryEdge(edges, subagentAdvisorId, flowchartMakerId, "advisor input");
+  for (const subagentId of subagentIds) {
+    addLocalSummaryEdge(edges, codexSessionId, subagentId, "parallel lane");
+    addLocalSummaryEdge(edges, subagentId, currentValidationId, "parallel join");
+  }
   addLocalSummaryEdge(edges, currentPreviewId || currentValidationId || codexSessionId, qualityCheckId, "quality check");
   addLocalSummaryEdge(edges, qualityCheckId, finalSummaryId, "quality gate");
   addLocalSummaryEdge(edges, flowchartMakerId, finalSummaryId, "updates");
@@ -730,6 +739,7 @@ export function buildFlowchartState(): FlowchartState {
     if (generatedSummary?.nodes.length) {
       const summary = generatedSummary;
       const summaryNodeIds = new Set(summary.nodes.map((node) => node.id));
+      const summarySubagentCount = summary.nodes.filter((node) => node.kind === "subagent").length;
       const perKindCount = new Map<string, number>();
       const firstNode = summary.nodes[0];
       summary.nodes.forEach((node, nodeIndex) => {
@@ -742,7 +752,9 @@ export function buildFlowchartState(): FlowchartState {
           label: summaryText(node.label, 64),
           status: summaryText(node.status, 48),
           visual_state: localSummaryVisualState(node.status),
-          badges: node.kind === "subagent" ? ["Codex-chosen subagent"] : [node.kind.replace(/_/g, " ")],
+          badges: node.kind === "subagent"
+            ? summarySubagentCount > 1 ? ["parallel lane", "Codex-chosen subagent"] : ["Codex-chosen subagent"]
+            : [node.kind.replace(/_/g, " ")],
           summary: summaryText(node.summary),
           detail: {
             kind: node.kind,
@@ -797,7 +809,7 @@ export function buildFlowchartState(): FlowchartState {
             label: summaryText(subagent.name, 64),
             status: summaryText(subagent.status, 48),
             visual_state: localSummaryVisualState(subagent.status),
-            badges: ["Codex-chosen subagent"],
+            badges: liveSubagents.length > 1 ? ["parallel lane", "Codex-chosen subagent"] : ["Codex-chosen subagent"],
             summary: summaryText(subagent.summary || subagent.responsibility),
             detail: {
               kind: "subagent",
@@ -956,7 +968,7 @@ export function buildFlowchartState(): FlowchartState {
           : "Local validation waits for Codex implementation output.",
       },
     }, index * 12 + 0.9, 8);
-    addEdge(edges, sessionNodeId, pendingValidationNodeId, "validation");
+    if (!liveSubagents.length) addEdge(edges, sessionNodeId, pendingValidationNodeId, "validation");
     const pendingPreviewNodeId = `codex_flow_pending:${task.task_id}:preview`;
     addNode(nodes, {
       id: pendingPreviewNodeId,
@@ -1013,7 +1025,7 @@ export function buildFlowchartState(): FlowchartState {
       },
     }, index * 12 + 1.05, 11);
     addEdge(edges, pendingQualityNodeId, pendingFinalNodeId, "final summary");
-    liveSubagents.forEach((subagent, subagentIndex) => {
+        liveSubagents.forEach((subagent, subagentIndex) => {
       const subagentId = summaryText(subagent.name, 48).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || `subagent-${subagentIndex + 1}`;
       const nodeId = `codex_flow:${task.task_id}:live-${subagentId}`;
       addNode(nodes, {
@@ -1022,7 +1034,7 @@ export function buildFlowchartState(): FlowchartState {
         label: summaryText(subagent.name, 64),
         status: summaryText(subagent.status, 48),
         visual_state: localSummaryVisualState(subagent.status),
-        badges: ["Codex-chosen subagent"],
+            badges: liveSubagents.length > 1 ? ["parallel lane", "Codex-chosen subagent"] : ["Codex-chosen subagent"],
         summary: summaryText(subagent.summary || subagent.responsibility),
         detail: {
           kind: "subagent",
@@ -1031,7 +1043,8 @@ export function buildFlowchartState(): FlowchartState {
           summary: summaryText(subagent.summary || subagent.responsibility, 500),
         },
       }, index * 12 + subagentIndex + 1, 7);
-      addEdge(edges, sessionNodeId, nodeId, "subagent");
+      addEdge(edges, sessionNodeId, nodeId, "parallel lane");
+      addEdge(edges, nodeId, pendingValidationNodeId, "parallel join");
     });
   });
 

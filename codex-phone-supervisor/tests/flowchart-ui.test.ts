@@ -28,9 +28,16 @@ test("dashboard flowchart nodes are clickable and open the details panel", () =>
   assert.match(source, /subagent advisor, Codex-chosen subagents, flowchart maker/);
   assert.match(source, /final quality check/);
   assert.match(source, /live subagent-opportunity advice/);
+  assert.match(source, /graphical parallel subagent lanes/);
   assert.match(source, /final quality-check evidence/);
   assert.match(source, /"subagent_advisor"/);
   assert.match(source, /"quality_check"/);
+  assert.match(source, /parallelAgentBand/);
+  assert.match(source, /data-testid="parallel-agent-lanes"/);
+  assert.match(source, /Parallel Codex subagents/);
+  assert.match(source, /flowEdgeStyle/);
+  assert.match(source, /isParallelFlowEdge/);
+  assert.match(source, /strokeDasharray: "7 5"/);
   assert.match(source, /hasTaskScopedLocalFlowchartNodes/);
   assert.match(source, /hasPendingSessionPlanning/);
   assert.match(source, /compactFlowchartLayout/);

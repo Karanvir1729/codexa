@@ -314,6 +314,7 @@ function flowNodeStyle(node: FlowchartNode): React.CSSProperties {
     cursor: "pointer",
     boxShadow: "0 1px 3px rgba(15, 23, 42, 0.10)",
     overflow: "hidden",
+    zIndex: 2,
   };
 }
 
@@ -406,6 +407,22 @@ function compactFlowchartLayout(nodes: FlowchartNode[], columns = FLOW_COLUMNS) 
   });
 }
 
+function parallelAgentBand(nodes: FlowchartNode[]) {
+  const subagents = nodes.filter((node) => node.type === "codex_subagent");
+  if (subagents.length < 2) return null;
+  const minX = Math.min(...subagents.map((node) => node.position.x));
+  const maxX = Math.max(...subagents.map((node) => node.position.x + FLOW_NODE_WIDTH));
+  const minY = Math.min(...subagents.map((node) => node.position.y));
+  const maxY = Math.max(...subagents.map((node) => node.position.y + FLOW_NODE_HEIGHT));
+  return {
+    left: Math.max(8, minX - 14),
+    top: Math.max(8, minY - 34),
+    width: maxX - minX + 28,
+    height: maxY - minY + 48,
+    count: subagents.length,
+  };
+}
+
 function flowEdgePath(from: FlowchartNode, to: FlowchartNode) {
   const fromCenterX = from.position.x + FLOW_NODE_WIDTH / 2;
   const fromCenterY = from.position.y + FLOW_NODE_HEIGHT / 2;
@@ -434,6 +451,18 @@ function flowEdgePath(from: FlowchartNode, to: FlowchartNode) {
   const endY = toCenterY;
   const midX = Math.round((startX + endX) / 2);
   return `M ${startX} ${startY} L ${midX} ${startY} L ${midX} ${endY} L ${endX} ${endY}`;
+}
+
+function isParallelFlowEdge(edge: FlowchartEdge, from: FlowchartNode, to: FlowchartNode) {
+  return /parallel/i.test(edge.label)
+    || (from.type === "codex_session" && to.type === "codex_subagent")
+    || (from.type === "codex_subagent" && (to.type === "validation" || to.type === "quality_check"));
+}
+
+function flowEdgeStyle(edge: FlowchartEdge, from: FlowchartNode, to: FlowchartNode): React.SVGProps<SVGPathElement> {
+  return isParallelFlowEdge(edge, from, to)
+    ? { stroke: "#7c3aed", strokeWidth: 2.25, strokeDasharray: "7 5" }
+    : { stroke: "#64748b", strokeWidth: 1.5 };
 }
 
 function renderInlineMarkdown(text: string) {
@@ -1038,6 +1067,7 @@ function App() {
   const selectedNode = visibleFlowchartNodes.find((node) => node.id === selectedNodeId) ?? visibleFlowchartNodes.find((node) => node.type === "orchestrator") ?? null;
   const graphSize = flowGraphSize(visibleFlowchartNodes);
   const nodeById = new Map(visibleFlowchartNodes.map((node) => [node.id, node]));
+  const parallelBand = parallelAgentBand(visibleFlowchartNodes);
   const latestCommandNode = visibleFlowchartNodes.find((node) => node.type === "command");
   const latestCommand = latestCommandNode?.label || session?.commands_completed.at(-1) || session?.commands_failed.at(-1) || "None";
   const selectedNodeDetail = selectedNode ? asRecord(selectedNode.detail) : {};
@@ -1145,7 +1175,7 @@ function App() {
               Built by one local Codex session. Orchestrator: Codex CLI | Subagents: Codex internal logical subagents | Source of truth: local repo
             </div>
             <div style={{ color: "#475569", fontSize: 13, marginTop: 4 }}>
-              Flowchart priority: fast updates, honest partial state, live subagent-opportunity advice, final quality-check evidence, and every Codex-reported subagent shown as its own node.
+              Flowchart priority: fast updates, honest partial state, live subagent-opportunity advice, graphical parallel subagent lanes, final quality-check evidence, and every Codex-reported subagent shown as its own node.
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -1158,7 +1188,39 @@ function App() {
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12 }}>
           <div ref={flowPanelRef} style={{ position: "relative", minHeight: 420, maxHeight: 680, overflow: "auto", border: "1px solid #cbd5e1", borderRadius: 8, background: "#f8fafc" }}>
             <div style={{ position: "relative", width: graphSize.width, height: graphSize.height }}>
-              <svg width={graphSize.width} height={graphSize.height} style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+              {parallelBand ? (
+                <div
+                  data-testid="parallel-agent-lanes"
+                  style={{
+                    position: "absolute",
+                    left: parallelBand.left,
+                    top: parallelBand.top,
+                    width: parallelBand.width,
+                    height: parallelBand.height,
+                    border: "1.5px dashed #7c3aed",
+                    borderRadius: 10,
+                    background: "rgba(124, 58, 237, 0.055)",
+                    pointerEvents: "none",
+                    zIndex: 0,
+                  }}
+                >
+                  <div style={{
+                    position: "absolute",
+                    left: 10,
+                    top: -12,
+                    padding: "2px 8px",
+                    borderRadius: 999,
+                    background: "#f8fafc",
+                    color: "#4c1d95",
+                    border: "1px solid #c4b5fd",
+                    fontSize: 11,
+                    fontWeight: 700,
+                  }}>
+                    Parallel Codex subagents ({parallelBand.count})
+                  </div>
+                </div>
+              ) : null}
+              <svg width={graphSize.width} height={graphSize.height} style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 1 }}>
                 <defs>
                   <marker id="flow-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
                     <path d="M 0 0 L 8 4 L 0 8 z" fill="#475569" />
@@ -1168,9 +1230,10 @@ function App() {
                   const from = nodeById.get(edge.from);
                   const to = nodeById.get(edge.to);
                   if (!from || !to) return null;
+                  const edgeStyle = flowEdgeStyle(edge, from, to);
                   return (
                     <g key={edge.id}>
-                      <path d={flowEdgePath(from, to)} stroke="#64748b" strokeWidth={1.5} fill="none" strokeLinejoin="round" markerEnd="url(#flow-arrow)" />
+                      <path d={flowEdgePath(from, to)} {...edgeStyle} fill="none" strokeLinejoin="round" markerEnd="url(#flow-arrow)" />
                       <title>{edge.label}</title>
                     </g>
                   );

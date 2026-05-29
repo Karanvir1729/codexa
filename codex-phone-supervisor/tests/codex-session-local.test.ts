@@ -367,6 +367,8 @@ test("flowchart maker is a separate read-only Codex session capped at five secon
   assert.match(flowchartSource, /type: "flowchart_maker"/);
   assert.match(flowchartSource, /type: "quality_check"/);
   assert.match(flowchartSource, /label: "Quality check"/);
+  assert.match(flowchartSource, /parallel lane/);
+  assert.match(flowchartSource, /parallel join/);
   assert.match(flowchartSource, /Separate short-lived Codex process turns live implementation summaries into this graph/);
   assert.match(flowchartSource, /!summary\.nodes\.some\(\(node\) => node\.kind === "subagent"\)/);
   assert.match(flowchartSource, /parallel Codex flowchart/);
@@ -801,12 +803,13 @@ test("flowchart renders Codex-chosen logical subagents without external workers"
       labels: flowchart.nodes.map((node) => node.label),
       summaryTypes: summaryNodes.map((node) => node.type),
       summaryLabels: summaryNodes.map((node) => node.label),
+      summaryEdgeLabels: flowchart.edges.filter((edge) => edge.from.startsWith("codex_flow:") && edge.to.startsWith("codex_flow:")).map((edge) => edge.label),
       summaryText: JSON.stringify(summaryNodes)
     }));
   `;
   const result = runIsolated(script);
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}") as { workerCount?: number; types?: string[]; labels?: string[]; summaryTypes?: string[]; summaryLabels?: string[]; summaryText?: string };
+  const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}") as { workerCount?: number; types?: string[]; labels?: string[]; summaryTypes?: string[]; summaryLabels?: string[]; summaryEdgeLabels?: string[]; summaryText?: string };
   assert.equal(payload.workerCount, 0);
   assert.ok(payload.summaryTypes?.includes("user_request"));
   assert.ok(payload.summaryTypes?.includes("codex_plan"));
@@ -828,6 +831,9 @@ test("flowchart renders Codex-chosen logical subagents without external workers"
   assert.match(payload.summaryText ?? "", /Subagent advisor/);
   assert.match(payload.summaryText ?? "", /Flowchart maker/);
   assert.match(payload.summaryText ?? "", /Quality check/);
+  assert.ok(payload.summaryEdgeLabels?.includes("parallel lane"));
+  assert.ok(payload.summaryEdgeLabels?.includes("parallel join"));
+  assert.match(payload.summaryText ?? "", /parallel lane/);
   assert.doesNotMatch(payload.summaryText ?? "", /shared\/game\.js|public\/index\.html|\/workspace|npm test|npm run/);
 });
 
