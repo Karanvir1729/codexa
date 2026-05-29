@@ -338,7 +338,8 @@ function compactFlowchartLayout(nodes: FlowchartNode[], columns = FLOW_COLUMNS) 
     ["codex_subagent", 8],
     ["validation", 9],
     ["preview", 10],
-    ["final_summary", 11],
+    ["quality_check", 11],
+    ["final_summary", 12],
   ]);
   const sorted = [...nodes].sort((a, b) => {
     const priority = (typePriority.get(a.type) ?? 99) - (typePriority.get(b.type) ?? 99);
@@ -375,7 +376,7 @@ function compactFlowchartLayout(nodes: FlowchartNode[], columns = FLOW_COLUMNS) 
   });
   const closingRow = subagentStartRow + Math.max(1, Math.ceil(subagents.length / columnCount));
   const closingStartColumn = columnCount >= 3 ? columnCount - 3 : 0;
-  ["validation", "preview", "final_summary"].forEach((type, index) => {
+  ["validation", "preview", "quality_check", "final_summary"].forEach((type, index) => {
     placeNext(type, closingRow + Math.floor((closingStartColumn + index) / columnCount), (closingStartColumn + index) % columnCount);
   });
 
@@ -1139,12 +1140,12 @@ function App() {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
           <div>
             <h2 style={{ marginBottom: 4 }}>Codex Session Flowchart</h2>
-            <div style={{ color: "#555", fontSize: 13 }}>Rapid truthful runtime graph from live parallel Codex watcher JSON: request, requirements, Megaplan, approval, Codex session, subagent advisor, Codex-chosen subagents, flowchart maker, validation, preview, and final summary.</div>
+            <div style={{ color: "#555", fontSize: 13 }}>Rapid truthful runtime graph from live parallel Codex watcher JSON: request, requirements, Megaplan, approval, Codex session, subagent advisor, Codex-chosen subagents, flowchart maker, validation, preview, final quality check, and final summary.</div>
             <div style={{ color: "#374151", fontSize: 13, marginTop: 4 }}>
               Built by one local Codex session. Orchestrator: Codex CLI | Subagents: Codex internal logical subagents | Source of truth: local repo
             </div>
             <div style={{ color: "#475569", fontSize: 13, marginTop: 4 }}>
-              Flowchart priority: fast updates, honest partial state, live subagent-opportunity advice, and every Codex-reported subagent shown as its own node.
+              Flowchart priority: fast updates, honest partial state, live subagent-opportunity advice, final quality-check evidence, and every Codex-reported subagent shown as its own node.
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

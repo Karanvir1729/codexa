@@ -28,11 +28,13 @@ import type {
   CommandEventRecord,
   LocalCodexFlowchartSummary,
   LocalCodexFlowchartNodeKind,
+  LocalCodexQualityCheckResult,
   LocalCodexSubagentAdvisorUpdate,
   LocalCodexSubagentReport,
   LocalCodexValidationCommandResult,
   LocalCodexValidationResult,
   PlannerDecision,
+  PreviewMetadata,
   ProjectRecord,
   SessionState,
   SupervisorEvent,
@@ -236,7 +238,7 @@ function buildSchemaFile(taskId: string) {
               required: ["id", "kind", "label", "status", "summary", "depends_on"],
               properties: {
                 id: { type: "string" },
-                kind: { type: "string", enum: ["user_request", "requirement_summary", "plan", "megaplan", "approval", "codex_session", "subagent_advisor", "subagent", "flowchart_maker", "validation", "preview", "final_summary"] },
+                kind: { type: "string", enum: ["user_request", "requirement_summary", "plan", "megaplan", "approval", "codex_session", "subagent_advisor", "subagent", "flowchart_maker", "validation", "preview", "quality_check", "final_summary"] },
                 label: { type: "string" },
                 status: { type: "string" },
                 summary: { type: "string" },
@@ -314,7 +316,7 @@ export function buildLocalCodexImplementationPrompt(input: {
     "You are Codex, the local orchestrator and implementation lead. The user is talking to you directly through this CLI-backed session.",
     "Use internal Codex subagents when useful, and for non-trivial work strongly prefer multiple named logical subagents so the browser flowchart shows the real responsibility split.",
     "Execution model: one local Codex CLI orchestrator session owns this repo.",
-    `Runtime mode: implementation coding uses ${config.localCodex.reasoningEffort || "Codex default"} reasoning; short planning, intake, chat mirror, subagent-advisor, and flowchart helper sessions use ${config.localCodex.planningReasoningEffort || "Codex default"} reasoning.`,
+    `Runtime mode: implementation coding and final quality check use ${config.localCodex.reasoningEffort || "Codex default"} reasoning; short planning, intake, chat mirror, subagent-advisor, and flowchart helper sessions use ${config.localCodex.planningReasoningEffort || "Codex default"} reasoning.`,
     "You choose how many logical subagents to use and what to name them. Consider product/UI, backend/API, shared logic, data, tests, docs, integration, validation, and research responsibilities only when they fit the task.",
     "Do not collapse distinct UI, API, shared logic, tests, docs, validation, and integration work into one generic subagent when separate responsibility lanes would be more truthful.",
     subagentAdvice?.recommended === false
@@ -341,7 +343,8 @@ export function buildLocalCodexImplementationPrompt(input: {
     "As work progresses, state concise CLI progress updates for any logical subagents you create, including each subagent's Codex-chosen name, current status, and user-facing summary.",
     "Do not include file paths, code, commands, internal IDs, branch names, or stack traces in subagent progress updates.",
     "Use $codex-flowchart-summary to produce the final flowchart_summary field. The supervisor persists that JSON as the browser flowchart source of truth.",
-    "flowchart_summary must be user-facing: include the user request, requirement summary, Megaplan creation, approval gate, one Codex session, the parallel subagent advisor, your chosen subagents, parallel flowchart maker, validation, preview if available, and final summary.",
+    "After your implementation session finishes, a separate final quality check Codex session will audit the repo against the Megaplan, validation evidence, functionality, and browser UI quality when applicable. Do not skip your own validation just because that final reviewer exists.",
+    "flowchart_summary must be user-facing: include the user request, requirement summary, Megaplan creation, approval gate, one Codex session, the parallel subagent advisor, your chosen subagents, parallel flowchart maker, validation, preview if available, final quality check, and final summary.",
     "flowchart_summary must include every subagent you actually used or reported; do not merge several real subagents into one generic node. If you truly used no subagents, say so honestly.",
     "flowchart_summary must not include file paths, command strings, code snippets, package names, stack traces, stdout/stderr, branch names, internal IDs, worktree paths, or repo paths.",
     "",
@@ -430,6 +433,7 @@ function headDeveloperDocs(input: {
     ].join("\n"),
     "RUNBOOK.md": "Run local validation from this repo. Start preview through the supervisor preview endpoint when an app entry exists.\n",
     "VALIDATION.md": "Validation will be updated from local command events after the Codex session completes.\n",
+    "QUALITY_CHECK.md": "Final quality check will be updated by a separate local Codex reviewer after validation and preview checks.\n",
   };
 }
 
@@ -441,8 +445,8 @@ function writeHeadDeveloperState(workspacePath: string, value: Record<string, un
   return statePath;
 }
 
-function writeHeadDeveloperFlowchartJson(workspacePath: string, flowchart: LocalCodexFlowchartSummary) {
-  const normalizedFlowchart = ensureSystemProcessNodes(flowchart);
+function writeHeadDeveloperFlowchartJson(workspacePath: string, flowchart: LocalCodexFlowchartSummary, qualityCheck?: LocalCodexQualityCheckResult | null) {
+  const normalizedFlowchart = ensureSystemProcessNodes(flowchart, qualityCheck);
   const docsDir = path.join(workspacePath, ".head-developer");
   fs.mkdirSync(docsDir, { recursive: true });
   const flowchartPath = path.join(docsDir, "flowchart.json");
@@ -466,6 +470,50 @@ function writeHeadDeveloperSubagentAdvisorJson(workspacePath: string, update: Lo
     subagent_advisor: update,
   }, null, 2)}\n`);
   return advisorPath;
+}
+
+function writeHeadDeveloperQualityCheck(workspacePath: string, result: LocalCodexQualityCheckResult) {
+  const docsDir = path.join(workspacePath, ".head-developer");
+  fs.mkdirSync(docsDir, { recursive: true });
+  const jsonPath = path.join(docsDir, "QUALITY_CHECK.json");
+  fs.writeFileSync(jsonPath, `${JSON.stringify({
+    schema_version: 1,
+    generated_at: nowIso(),
+    generator: "local_codex_quality_check",
+    quality_check: result,
+  }, null, 2)}\n`);
+  const findings = result.findings.length
+    ? result.findings.map((finding) => `- ${finding.severity.toUpperCase()}: ${finding.title} - ${finding.summary}`).join("\n")
+    : "- None.";
+  const fixes = result.recommended_fixes.length
+    ? result.recommended_fixes.map((fix) => `- ${fix}`).join("\n")
+    : "- None.";
+  fs.writeFileSync(path.join(docsDir, "QUALITY_CHECK.md"), [
+    "# Final Quality Check",
+    "",
+    `Status: ${result.status}`,
+    "",
+    result.summary,
+    "",
+    "## Coverage",
+    "",
+    `- Meets Megaplan: ${result.meets_megaplan ? "yes" : "no"}`,
+    `- Meets user request: ${result.meets_user_request ? "yes" : "no"}`,
+    `- Functionality checked: ${result.functionality_checked ? "yes" : "no"}`,
+    `- Validation reviewed: ${result.validation_reviewed ? "yes" : "no"}`,
+    `- UI review: ${result.ui_review.status} - ${result.ui_review.summary}`,
+    `- Tools used: ${result.tools_used.length ? result.tools_used.join(", ") : "none recorded"}`,
+    "",
+    "## Findings",
+    "",
+    findings,
+    "",
+    "## Recommended Fixes",
+    "",
+    fixes,
+    "",
+  ].join("\n"));
+  return jsonPath;
 }
 
 function initializeHeadDeveloperDocs(input: {
@@ -563,6 +611,7 @@ const localFlowchartNodeKinds = new Set<LocalCodexFlowchartNodeKind>([
   "flowchart_maker",
   "validation",
   "preview",
+  "quality_check",
   "final_summary",
 ]);
 
@@ -643,7 +692,7 @@ function addFlowEdge(edges: LocalCodexFlowchartSummary["edges"], from: string, t
   edges.push({ from, to, label });
 }
 
-function ensureSystemProcessNodes(summary: LocalCodexFlowchartSummary): LocalCodexFlowchartSummary {
+function ensureSystemProcessNodes(summary: LocalCodexFlowchartSummary, qualityCheck?: LocalCodexQualityCheckResult | null): LocalCodexFlowchartSummary {
   const nodes = [...summary.nodes];
   const edges = [...summary.edges];
   const hasKind = (kind: LocalCodexFlowchartNodeKind) => nodes.some((node) => node.kind === kind);
@@ -651,6 +700,8 @@ function ensureSystemProcessNodes(summary: LocalCodexFlowchartSummary): LocalCod
   const requirementsId = firstFlowNodeId(summary, "requirement_summary");
   const planId = firstFlowNodeId(summary, "plan");
   const codexSessionId = firstFlowNodeId(summary, "codex_session");
+  const validationId = firstFlowNodeId(summary, "validation");
+  const previewId = firstFlowNodeId(summary, "preview");
   const finalSummaryId = firstFlowNodeId(summary, "final_summary");
   const preMegaplanId = planId || requirementsId || requestId;
 
@@ -698,17 +749,33 @@ function ensureSystemProcessNodes(summary: LocalCodexFlowchartSummary): LocalCod
       depends_on: [codexSessionId, currentSubagentAdvisorId].filter(Boolean),
     });
   }
+  if (!hasKind("quality_check")) {
+    const qualityStatus = qualityCheck?.status ?? (/running|working|in progress/i.test(flowNodeStatus(summary, "codex_session")) ? "waiting" : "pending");
+    nodes.push({
+      id: "quality-check",
+      kind: "quality_check",
+      label: "Quality check",
+      status: qualityStatus,
+      summary: flowchartText(qualityCheck?.summary, "Final Codex quality checker audits code, Megaplan fit, validation evidence, functionality, and UI quality when applicable."),
+      depends_on: [previewId || validationId || codexSessionId].filter(Boolean),
+    });
+  }
 
   const megaplanId = nodes.find((node) => node.kind === "megaplan")?.id ?? "";
   const approvalId = nodes.find((node) => node.kind === "approval")?.id ?? "";
   const subagentAdvisorId = nodes.find((node) => node.kind === "subagent_advisor")?.id ?? "";
   const flowchartMakerId = nodes.find((node) => node.kind === "flowchart_maker")?.id ?? "";
+  const qualityCheckId = nodes.find((node) => node.kind === "quality_check")?.id ?? "";
+  const currentValidationId = nodes.find((node) => node.kind === "validation")?.id ?? "";
+  const currentPreviewId = nodes.find((node) => node.kind === "preview")?.id ?? "";
   addFlowEdge(edges, preMegaplanId, megaplanId, "megaplan");
   addFlowEdge(edges, megaplanId, approvalId, "approval");
   addFlowEdge(edges, approvalId, codexSessionId, "starts");
   addFlowEdge(edges, codexSessionId || approvalId, subagentAdvisorId, "subagent advice");
   addFlowEdge(edges, codexSessionId, flowchartMakerId, "summarizes");
   addFlowEdge(edges, subagentAdvisorId, flowchartMakerId, "advisor input");
+  addFlowEdge(edges, currentPreviewId || currentValidationId || codexSessionId, qualityCheckId, "quality check");
+  addFlowEdge(edges, qualityCheckId, finalSummaryId, "quality gate");
   addFlowEdge(edges, flowchartMakerId, finalSummaryId, "updates");
 
   return { ...summary, nodes, edges };
@@ -720,6 +787,7 @@ function fallbackFlowchartSummary(input: {
   report: LocalCodexReport;
   validation: LocalCodexValidationResult;
   previewLoaded: boolean | null;
+  qualityCheck?: LocalCodexQualityCheckResult | null;
 }) {
   const nodes: LocalCodexFlowchartSummary["nodes"] = [
     {
@@ -819,12 +887,20 @@ function fallbackFlowchartSummary(input: {
     });
   }
   nodes.push({
+    id: "quality-check",
+    kind: "quality_check",
+    label: "Quality check",
+    status: input.qualityCheck?.status ?? "pending",
+    summary: flowchartText(input.qualityCheck?.summary, "Final Codex quality checker audits the repo against the Megaplan, functionality, validation evidence, and UI quality."),
+    depends_on: input.previewLoaded !== null ? ["preview"] : ["validation"],
+  });
+  nodes.push({
     id: "final-summary",
     kind: "final_summary",
     label: "Final summary",
     status: input.task.status,
     summary: flowchartText(input.report.final_summary || input.report.summary || input.task.latest_summary),
-    depends_on: input.previewLoaded !== null ? ["preview", "flowchart-maker"] : ["validation", "flowchart-maker"],
+    depends_on: ["quality-check", "flowchart-maker"],
   });
   const edges = nodes.flatMap((node) => node.depends_on.map((from) => ({ from, to: node.id, label: "next" })));
   return {
@@ -841,6 +917,7 @@ const FLOWCHART_UPDATE_THROTTLE_MS = 1_000;
 const SUBAGENT_ADVISOR_WATCHER_TIMEOUT_MS = 5_000;
 const SUBAGENT_ADVISOR_WATCHER_INTERVAL_MS = 1_000;
 const SUBAGENT_ADVISOR_UPDATE_THROTTLE_MS = 1_000;
+const QUALITY_CHECK_TIMEOUT_MS = 180_000;
 const liveRolloutPaths = new Map<string, string>();
 const flowchartMakerState = new Map<string, {
   stream: string;
@@ -1045,7 +1122,7 @@ function buildFlowchartMakerSchemaFile(taskId: string) {
           required: ["id", "kind", "label", "status", "summary", "depends_on"],
           properties: {
             id: { type: "string" },
-            kind: { type: "string", enum: ["user_request", "requirement_summary", "plan", "megaplan", "approval", "codex_session", "subagent_advisor", "subagent", "flowchart_maker", "validation", "preview", "final_summary"] },
+            kind: { type: "string", enum: ["user_request", "requirement_summary", "plan", "megaplan", "approval", "codex_session", "subagent_advisor", "subagent", "flowchart_maker", "validation", "preview", "quality_check", "final_summary"] },
             label: { type: "string" },
             status: { type: "string" },
             summary: { type: "string" },
@@ -1105,6 +1182,53 @@ function buildSubagentAdvisorWatcherSchemaFile(taskId: string) {
   return schemaPath;
 }
 
+function buildQualityCheckSchemaFile(taskId: string) {
+  fs.mkdirSync(config.runtimeDir, { recursive: true });
+  const schemaPath = path.join(config.runtimeDir, `${taskId}.quality-check.schema.json`);
+  const schema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["status", "summary", "meets_megaplan", "meets_user_request", "functionality_checked", "validation_reviewed", "ui_review", "tools_used", "checks", "findings", "recommended_fixes"],
+    properties: {
+      status: { type: "string", enum: ["passed", "failed"] },
+      summary: { type: "string" },
+      meets_megaplan: { type: "boolean" },
+      meets_user_request: { type: "boolean" },
+      functionality_checked: { type: "boolean" },
+      validation_reviewed: { type: "boolean" },
+      ui_review: {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "summary", "tools_attempted"],
+        properties: {
+          status: { type: "string", enum: ["passed", "failed", "not_applicable", "not_checked"] },
+          summary: { type: "string" },
+          tools_attempted: { type: "array", items: { type: "string" } },
+        },
+      },
+      tools_used: { type: "array", items: { type: "string" } },
+      checks: { type: "array", items: { type: "string" } },
+      findings: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["severity", "area", "title", "summary"],
+          properties: {
+            severity: { type: "string", enum: ["blocker", "major", "minor", "info"] },
+            area: { type: "string" },
+            title: { type: "string" },
+            summary: { type: "string" },
+          },
+        },
+      },
+      recommended_fixes: { type: "array", items: { type: "string" } },
+    },
+  };
+  fs.writeFileSync(schemaPath, JSON.stringify(schema, null, 2));
+  return schemaPath;
+}
+
 function parseFlowchartMakerText(text: string) {
   if (!text.trim()) return null;
   try {
@@ -1154,6 +1278,65 @@ function parseSubagentAdvisorWatcherText(text: string): Omit<LocalCodexSubagentA
   }
 }
 
+function qualityText(value: unknown, fallback = "", max = 500) {
+  return (typeof value === "string" ? value : fallback).replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+function parseQualityCheckText(text: string): Omit<LocalCodexQualityCheckResult, "updated_at" | "source"> | null {
+  if (!text.trim()) return null;
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const rawStatus = typeof parsed.status === "string" ? parsed.status : "";
+    const status = rawStatus === "passed" || rawStatus === "failed" ? rawStatus : "failed";
+    const uiRecord = parsed.ui_review && typeof parsed.ui_review === "object" ? parsed.ui_review as Record<string, unknown> : {};
+    const rawUiStatus = typeof uiRecord.status === "string" ? uiRecord.status : "";
+    const uiStatus = ["passed", "failed", "not_applicable", "not_checked"].includes(rawUiStatus)
+      ? rawUiStatus as LocalCodexQualityCheckResult["ui_review"]["status"]
+      : "not_checked";
+    const findings = Array.isArray(parsed.findings)
+      ? parsed.findings.map((item) => {
+        const record = item && typeof item === "object" ? item as Record<string, unknown> : {};
+        const rawSeverity = typeof record.severity === "string" ? record.severity : "";
+        return {
+          severity: ["blocker", "major", "minor", "info"].includes(rawSeverity)
+            ? rawSeverity as LocalCodexQualityCheckResult["findings"][number]["severity"]
+            : "info",
+          area: qualityText(record.area, "general", 80),
+          title: qualityText(record.title, "Quality finding", 120),
+          summary: qualityText(record.summary, "", 600),
+        };
+      }).filter((finding) => finding.summary)
+      : [];
+    return {
+      status,
+      summary: qualityText(parsed.summary, "Final quality check completed.", 1000),
+      meets_megaplan: Boolean(parsed.meets_megaplan),
+      meets_user_request: Boolean(parsed.meets_user_request),
+      functionality_checked: Boolean(parsed.functionality_checked),
+      validation_reviewed: Boolean(parsed.validation_reviewed),
+      ui_review: {
+        status: uiStatus,
+        summary: qualityText(uiRecord.summary, "", 700),
+        tools_attempted: Array.isArray(uiRecord.tools_attempted) ? uniquePlainText(uiRecord.tools_attempted.map(String)).slice(0, 12) : [],
+      },
+      tools_used: Array.isArray(parsed.tools_used) ? uniquePlainText(parsed.tools_used.map(String)).slice(0, 20) : [],
+      checks: Array.isArray(parsed.checks) ? uniquePlainText(parsed.checks.map(String)).slice(0, 40) : [],
+      findings,
+      recommended_fixes: Array.isArray(parsed.recommended_fixes) ? uniquePlainText(parsed.recommended_fixes.map(String)).slice(0, 20) : [],
+      error: null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function qualityCheckSummaryText(result: LocalCodexQualityCheckResult) {
+  const blockers = result.findings.filter((finding) => finding.severity === "blocker" || finding.severity === "major");
+  const findingText = blockers.length ? ` Blocking findings: ${blockers.map((finding) => finding.title).join("; ")}.` : "";
+  const uiText = result.ui_review.status === "not_applicable" ? " UI review was not applicable." : ` UI review: ${result.ui_review.status}.`;
+  return `${result.summary}${uiText}${findingText}`.trim();
+}
+
 function subagentAdvisorSummaryText(update: LocalCodexSubagentAdvisorUpdate) {
   const suggestions = update.suggested_subagents
     .map((item) => `${item.name}: ${item.responsibility}`)
@@ -1168,6 +1351,7 @@ function buildFlowchartMakerPrompt(input: {
   report?: LocalCodexReport | null;
   validation?: LocalCodexValidationResult | null;
   previewLoaded?: boolean | null;
+  qualityCheck?: LocalCodexQualityCheckResult | null;
 }) {
   return [
     "Use $codex-flowchart-summary.",
@@ -1178,7 +1362,7 @@ function buildFlowchartMakerPrompt(input: {
     "Do not write files. Do not inspect the repo. Do not include code, file paths, command strings, internal IDs, stdout/stderr, worktree names, branch names, package names, or stack traces.",
     "Preserve the subagent names chosen by Codex. Include every reported_subagents entry as a separate subagent node.",
     "During live runs, infer subagent nodes only from Codex-authored implementation progress and do not invent names. If names are not available yet, show the Codex session as planning or running without fake subagent nodes.",
-    "Include system process nodes for Megaplan creation, approval gate, the parallel subagent advisor, and the parallel flowchart maker so the user can understand how this UI is orchestrating Codex.",
+    "Include system process nodes for Megaplan creation, approval gate, the parallel subagent advisor, the parallel flowchart maker, and the final quality check so the user can understand how this UI is orchestrating Codex.",
     "This is a live update; represent partial progress honestly when the implementation is still running.",
     "",
     JSON.stringify({
@@ -1200,6 +1384,17 @@ function buildFlowchartMakerPrompt(input: {
       preview: input.previewLoaded === null || input.previewLoaded === undefined ? null : {
         loaded: input.previewLoaded,
       },
+      quality_check: input.qualityCheck ? {
+        status: input.qualityCheck.status,
+        summary: flowchartText(input.qualityCheck.summary),
+        ui_review: input.qualityCheck.ui_review.status,
+        finding_count: input.qualityCheck.findings.length,
+      } : input.task.codex_quality_check ? {
+        status: input.task.codex_quality_check.status,
+        summary: flowchartText(input.task.codex_quality_check.summary),
+        ui_review: input.task.codex_quality_check.ui_review.status,
+        finding_count: input.task.codex_quality_check.findings.length,
+      } : null,
       subagent_advisor: input.task.codex_subagent_advisor ? {
         status: input.task.codex_subagent_advisor.status,
         summary: flowchartText(input.task.codex_subagent_advisor.summary),
@@ -1218,7 +1413,7 @@ function buildFlowchartMakerPrompt(input: {
         priority: "rapid truthful flowchart creation",
         latest_workspace_activity: flowchartText(flowchartMakerForTask(input.task.task_id).latestWorkspaceActivity),
       },
-      required_system_nodes: ["Megaplan skill", "Approval gate", "Subagent advisor", "Flowchart maker"],
+      required_system_nodes: ["Megaplan skill", "Approval gate", "Subagent advisor", "Flowchart maker", "Quality check"],
       implementation_stream_summary: flowchartText(input.stream, input.stream),
     }, null, 2),
   ].join("\n");
@@ -1259,6 +1454,62 @@ function buildSubagentAdvisorWatcherPrompt(input: {
         })),
       } : null,
       live_implementation_summary: flowchartText(input.stream, input.stream),
+    }, null, 2),
+  ].join("\n");
+}
+
+function buildQualityCheckPrompt(input: {
+  task: TaskRecord;
+  session: SessionState;
+  project: ProjectRecord;
+  report: LocalCodexReport;
+  validation: LocalCodexValidationResult;
+  preview: PreviewMetadata | null;
+}) {
+  const megaplan = safeRead(path.join(input.project.workspace_path, ".head-developer", "MEGAPLAN.md")).slice(0, 12_000);
+  const improvementLog = safeRead(path.join(input.project.workspace_path, ".head-developer", "IMPROVEMENTS.md")).slice(0, 6_000);
+  return [
+    "You are the final local Codex quality check agent for this project.",
+    "Audit only. Do not modify source files, docs, package files, config files, git history, or project state. Return only JSON matching the supplied schema.",
+    "Use the same local Codex account, skills, plugins, MCP servers, and shell environment available in this CLI session.",
+    `Use ${config.localCodex.reasoningEffort || "Codex default"} reasoning quality. This is a final coding-quality review, not a fast planning pass.`,
+    "Check the finished repo against the approved Megaplan, the user request, the implementation report, validation evidence, and the visible app when a preview URL exists.",
+    "For UI/web apps, you must attempt a real visual/browser review. Prefer Chrome/browser automation when available; if unavailable, use Playwright MCP or Playwright CLI; if those are unavailable, use Computer Use. If none are available, say exactly what was attempted and do not claim a visual review happened.",
+    "For UI quality, inspect layout arrangement, overlap, clipping, responsiveness, core interaction path, obvious console/runtime errors, and whether the screen looks production-quality for the requested product.",
+    "If a preview URL is provided and the UI cannot be inspected with any browser/computer-use tool, set ui_review.status to not_checked and fail the quality check unless the project is clearly non-UI.",
+    "For non-UI projects, set ui_review.status to not_applicable and focus on functionality, command behavior, docs, maintainability, and validation.",
+    "Do not include file paths, command strings, stack traces, internal IDs, branch names, or stdout/stderr in summaries intended for display. Findings can name areas but should stay user-facing.",
+    "Pass only if there are no blockers or major mismatches with the Megaplan/user request and the UI review is sufficient when applicable.",
+    "",
+    JSON.stringify({
+      project: flowchartText(input.project.display_name),
+      user_request: flowchartText(input.task.user_goal),
+      requirement_summary: flowchartText(input.session.requirement_summary || input.task.user_goal),
+      task_status: input.task.status,
+      implementation_summary: qualityText(input.report.summary, "", 1200),
+      final_summary: qualityText(input.report.final_summary, "", 1200),
+      reported_subagents: input.report.subagents.map((agent) => ({
+        name: flowchartText(agent.name),
+        status: agent.status,
+        summary: flowchartText(agent.summary || agent.responsibility),
+      })),
+      validation: {
+        status: input.validation.status,
+        summary: qualityText(input.validation.summary, "", 1200),
+        failures: input.validation.failures,
+        warnings: input.validation.warnings,
+        command_count: input.validation.commands.length,
+        preview_loaded: input.validation.preview_loaded,
+      },
+      preview: input.preview ? {
+        url: input.preview.preview_url,
+        status: input.preview.status,
+        loaded: input.preview.loaded,
+        console_error_count: input.preview.console_errors.length,
+        summary: input.preview.summary,
+      } : null,
+      megaplan_excerpt: qualityText(megaplan, "", 12_000),
+      improvement_log_excerpt: qualityText(improvementLog, "", 6_000),
     }, null, 2),
   ].join("\n");
 }
@@ -1586,6 +1837,7 @@ function scheduleFlowchartSummaryUpdate(input: {
   report?: LocalCodexReport | null;
   validation?: LocalCodexValidationResult | null;
   previewLoaded?: boolean | null;
+  qualityCheck?: LocalCodexQualityCheckResult | null;
 }) {
   if (input.chunk) appendFlowchartMakerStream(input.taskId, input.chunk);
   const state = flowchartMakerForTask(input.taskId);
@@ -1624,6 +1876,7 @@ async function runFlowchartMakerOnce(input: {
   report?: LocalCodexReport | null;
   validation?: LocalCodexValidationResult | null;
   previewLoaded?: boolean | null;
+  qualityCheck?: LocalCodexQualityCheckResult | null;
 }) {
   const task = getTask(input.taskId);
   const session = getSession(input.sessionId);
@@ -1638,6 +1891,7 @@ async function runFlowchartMakerOnce(input: {
     report: input.report,
     validation: input.validation,
     previewLoaded: input.previewLoaded,
+    qualityCheck: input.qualityCheck,
   });
   const args = [
     "exec",
@@ -1701,8 +1955,8 @@ async function runFlowchartMakerOnce(input: {
   const latestTask = getTask(input.taskId);
   const latestSession = getSession(input.sessionId);
   if (!latestTask || !latestSession) return;
-  const normalizedSummary = ensureSystemProcessNodes(summary);
-  const flowchartJsonPath = writeHeadDeveloperFlowchartJson(input.project.workspace_path, normalizedSummary);
+  const normalizedSummary = ensureSystemProcessNodes(summary, input.qualityCheck ?? task.codex_quality_check ?? null);
+  const flowchartJsonPath = writeHeadDeveloperFlowchartJson(input.project.workspace_path, normalizedSummary, input.qualityCheck ?? task.codex_quality_check ?? null);
   latestTask.codex_flowchart_summary = normalizedSummary;
   latestTask.codex_flowchart_json_path = flowchartJsonPath;
   latestTask.updated_at = nowIso();
@@ -1795,6 +2049,8 @@ function createTask(project: ProjectRecord, userGoal: string, prompt: string): T
     codex_subagents: [],
     codex_flowchart_summary: null,
     codex_flowchart_json_path: null,
+    codex_quality_check: null,
+    codex_quality_check_path: null,
     files_changed: [],
     local_validation_result: null,
     final_summary: null,
@@ -1834,6 +2090,238 @@ async function runValidationCommands(input: {
     });
   }
   return results;
+}
+
+function failedQualityCheck(message: string): LocalCodexQualityCheckResult {
+  return {
+    status: "failed",
+    summary: message,
+    meets_megaplan: false,
+    meets_user_request: false,
+    functionality_checked: false,
+    validation_reviewed: false,
+    ui_review: {
+      status: "not_checked",
+      summary: "The final quality check did not complete.",
+      tools_attempted: [],
+    },
+    tools_used: [],
+    checks: [],
+    findings: [{
+      severity: "blocker",
+      area: "quality gate",
+      title: "Final quality check did not complete",
+      summary: message,
+    }],
+    recommended_fixes: ["Rerun the final quality check after resolving the reported issue."],
+    updated_at: nowIso(),
+    source: "local_codex_quality_check",
+    error: message,
+  };
+}
+
+async function runFinalQualityCheck(input: {
+  task: TaskRecord;
+  session: SessionState;
+  project: ProjectRecord;
+  report: LocalCodexReport;
+  validation: LocalCodexValidationResult;
+  preview: PreviewMetadata | null;
+}) {
+  const startedAt = nowIso();
+  const running: LocalCodexQualityCheckResult = {
+    status: "running",
+    summary: "Final Codex quality checker is auditing the repo against the Megaplan, validation evidence, functionality, and UI quality when applicable.",
+    meets_megaplan: false,
+    meets_user_request: false,
+    functionality_checked: false,
+    validation_reviewed: false,
+    ui_review: {
+      status: input.preview ? "not_checked" : "not_applicable",
+      summary: input.preview ? "UI review has not completed yet." : "No UI preview is currently applicable.",
+      tools_attempted: [],
+    },
+    tools_used: [],
+    checks: [],
+    findings: [],
+    recommended_fixes: [],
+    updated_at: startedAt,
+    source: "local_codex_quality_check",
+    error: null,
+  };
+  input.task.codex_quality_check = running;
+  input.task.codex_quality_check_path = writeHeadDeveloperQualityCheck(input.project.workspace_path, running);
+  input.task.updated_at = startedAt;
+  upsertTask(input.task);
+  scheduleFlowchartSummaryUpdate({
+    taskId: input.task.task_id,
+    sessionId: input.session.session_id,
+    project: input.project,
+    chunk: "QUALITY CHECK: Final Codex quality checker started.",
+    force: true,
+    report: input.report,
+    validation: input.validation,
+    previewLoaded: input.preview ? input.preview.status !== "failed" : null,
+    qualityCheck: running,
+  });
+
+  const schemaPath = buildQualityCheckSchemaFile(input.task.task_id);
+  const finalMessagePath = path.join(config.runtimeDir, `${input.task.task_id}.quality-check.final.json`);
+  const args = [
+    "exec",
+    ...codexSharedArgs(),
+    "--json",
+    "--color",
+    "never",
+    "--output-schema",
+    schemaPath,
+    "--output-last-message",
+    finalMessagePath,
+    "-C",
+    input.project.workspace_path,
+    "--skip-git-repo-check",
+    ...codexImplementationAccessArgs(),
+    "-",
+  ];
+  appendOrchestratorEvent({
+    scope: "task",
+    scope_id: input.task.task_id,
+    type: "local_codex_quality_check.started",
+    message: "Started final local Codex quality check.",
+    data: {
+      task_id: input.task.task_id,
+      session_id: input.session.session_id,
+      preview_url: input.preview?.preview_url ?? null,
+      codex_reasoning_effort: config.localCodex.reasoningEffort || null,
+    },
+  });
+  appendSessionEvent(input.session, "local_codex_quality_check.started", "system", "Started final local Codex quality check.", {
+    task_id: input.task.task_id,
+    preview_url: input.preview?.preview_url ?? null,
+    codex_reasoning_effort: config.localCodex.reasoningEffort || null,
+  });
+  upsertSession(input.session);
+  try {
+    const prompt = buildQualityCheckPrompt(input);
+    const child = spawn(config.codexCommand, args, {
+      cwd: input.project.workspace_path,
+      env: {
+        ...process.env,
+        CODEX_HOME: config.codexHome,
+        NO_COLOR: "1",
+        FORCE_COLOR: "0",
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+    }, QUALITY_CHECK_TIMEOUT_MS);
+    child.stdin?.on("error", () => undefined);
+    child.stdin?.end(prompt);
+    child.stdout.on("data", (chunk) => {
+      const text = chunk.toString();
+      stdout += text;
+      scheduleFlowchartSummaryUpdate({
+        taskId: input.task.task_id,
+        sessionId: input.session.session_id,
+        project: input.project,
+        chunk: text,
+      });
+    });
+    child.stderr.on("data", (chunk) => {
+      const text = chunk.toString();
+      stderr += text;
+      scheduleFlowchartSummaryUpdate({
+        taskId: input.task.task_id,
+        sessionId: input.session.session_id,
+        project: input.project,
+        chunk: text,
+      });
+    });
+    const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+      child.on("error", reject);
+      child.on("close", (code, signal) => resolve({ code, signal }));
+    });
+    clearTimeout(timer);
+    if (timedOut) throw new Error(`Codex quality check timed out after ${QUALITY_CHECK_TIMEOUT_MS / 1000} seconds.`);
+    if (exit.code !== 0) throw new Error(`Codex quality check exited with code ${exit.code ?? "null"}${stderr ? `: ${preview(stderr, 500)}` : ""}`);
+    const finalText = extractFinalAgentText(parseCodexJsonl(`${stdout}\n${stderr}`)) || safeRead(finalMessagePath);
+    const parsed = parseQualityCheckText(finalText);
+    if (!parsed) throw new Error("Codex quality check did not return valid JSON.");
+    const result: LocalCodexQualityCheckResult = {
+      ...parsed,
+      updated_at: nowIso(),
+      source: "local_codex_quality_check",
+    };
+    const qualityPath = writeHeadDeveloperQualityCheck(input.project.workspace_path, result);
+    const latestTask = getTask(input.task.task_id) ?? input.task;
+    latestTask.codex_quality_check = result;
+    latestTask.codex_quality_check_path = qualityPath;
+    latestTask.updated_at = result.updated_at;
+    upsertTask(latestTask);
+    const summary = qualityCheckSummaryText(result);
+    appendSessionEvent(input.session, result.status === "passed" ? "local_codex_quality_check.passed" : "local_codex_quality_check.failed", result.status === "passed" ? "codex" : "system", summary, {
+      task_id: input.task.task_id,
+      quality_check: result,
+    });
+    upsertSession(input.session);
+    appendOrchestratorEvent({
+      scope: "task",
+      scope_id: input.task.task_id,
+      type: result.status === "passed" ? "local_codex_quality_check.passed" : "local_codex_quality_check.failed",
+      message: summary,
+      data: { task_id: input.task.task_id, quality_check: result },
+    });
+    scheduleFlowchartSummaryUpdate({
+      taskId: input.task.task_id,
+      sessionId: input.session.session_id,
+      project: input.project,
+      chunk: `QUALITY CHECK: ${summary}`,
+      force: true,
+      report: input.report,
+      validation: input.validation,
+      previewLoaded: input.preview ? input.preview.status !== "failed" : null,
+      qualityCheck: result,
+    });
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const result = failedQualityCheck(message);
+    const qualityPath = writeHeadDeveloperQualityCheck(input.project.workspace_path, result);
+    const latestTask = getTask(input.task.task_id) ?? input.task;
+    latestTask.codex_quality_check = result;
+    latestTask.codex_quality_check_path = qualityPath;
+    latestTask.updated_at = result.updated_at;
+    upsertTask(latestTask);
+    appendSessionEvent(input.session, "local_codex_quality_check.failed", "system", message, {
+      task_id: input.task.task_id,
+      quality_check: result,
+    });
+    upsertSession(input.session);
+    appendOrchestratorEvent({
+      scope: "task",
+      scope_id: input.task.task_id,
+      type: "local_codex_quality_check.failed",
+      message,
+      data: { task_id: input.task.task_id, quality_check: result },
+    });
+    scheduleFlowchartSummaryUpdate({
+      taskId: input.task.task_id,
+      sessionId: input.session.session_id,
+      project: input.project,
+      chunk: `QUALITY CHECK FAILED: ${message}`,
+      force: true,
+      report: input.report,
+      validation: input.validation,
+      previewLoaded: input.preview ? input.preview.status !== "failed" : null,
+      qualityCheck: result,
+    });
+    return result;
+  }
 }
 
 export function validateLocalCodexResult(input: {
@@ -2137,6 +2625,7 @@ async function completeLocalCodexRun(input: {
       reportCommands: report.validation_commands,
     });
     let previewLoaded: boolean | null = null;
+    let previewMetadata: PreviewMetadata | null = null;
     const prelimValidation = validateLocalCodexResult({
       workspacePath: input.project.workspace_path,
       requiredFiles,
@@ -2149,7 +2638,8 @@ async function completeLocalCodexRun(input: {
     });
     if (prelimValidation.status === "passed") {
       const previewResult = await startPreviewForSession(input.sessionId, { taskId: task.task_id, allowIncompleteTask: true });
-      previewLoaded = previewResult.ok ? previewResult.preview.status !== "failed" : null;
+      previewMetadata = previewResult.ok ? previewResult.preview : null;
+      previewLoaded = previewMetadata ? previewMetadata.status !== "failed" : null;
     }
     const validation = validateLocalCodexResult({
       workspacePath: input.project.workspace_path,
@@ -2161,20 +2651,32 @@ async function completeLocalCodexRun(input: {
       codexStatus: codex.commandEvent.exit_code === 0 ? report.status : "failed",
       errors: report.errors,
     });
+    const qualityCheck = await runFinalQualityCheck({
+      task,
+      session,
+      project: input.project,
+      report,
+      validation,
+      preview: previewMetadata,
+    });
     const liveTask = getTask(task.task_id);
     const finalSubagents = report.subagents.length ? report.subagents : (liveTask?.codex_subagents ?? []);
     const reportForSummary = finalSubagents === report.subagents ? report : { ...report, subagents: finalSubagents };
     const taskForSummary = finalSubagents === task.codex_subagents ? task : { ...task, codex_subagents: finalSubagents };
     const flowchartSummary = report.flowchart_summary
       ?? liveTask?.codex_flowchart_summary
-      ?? fallbackFlowchartSummary({ task: taskForSummary, session, report: reportForSummary, validation, previewLoaded });
-    const normalizedFlowchartSummary = ensureSystemProcessNodes(flowchartSummary);
-    const flowchartJsonPath = writeHeadDeveloperFlowchartJson(input.project.workspace_path, normalizedFlowchartSummary);
+      ?? fallbackFlowchartSummary({ task: taskForSummary, session, report: reportForSummary, validation, previewLoaded, qualityCheck });
+    const normalizedFlowchartSummary = ensureSystemProcessNodes(flowchartSummary, qualityCheck);
+    const flowchartJsonPath = writeHeadDeveloperFlowchartJson(input.project.workspace_path, normalizedFlowchartSummary, qualityCheck);
     const completedAt = nowIso();
-    task.status = validation.status === "passed" && report.status === "completed" ? "completed" : "failed";
+    task.status = validation.status === "passed" && report.status === "completed" && qualityCheck.status === "passed" ? "completed" : "failed";
     task.command_count = listCommandEvents({ taskId: task.task_id }).length;
-    task.latest_summary = validation.status === "passed" ? report.summary : validation.summary;
-    task.next_steps = task.status === "completed" ? ["Review the local preview and final summary."] : ["Repair validation failures and rerun local validation."];
+    task.latest_summary = task.status === "completed"
+      ? report.summary
+      : qualityCheck.status === "failed"
+        ? `Final quality check failed: ${qualityCheck.summary}`
+        : validation.summary;
+    task.next_steps = task.status === "completed" ? ["Review the local preview and final summary."] : ["Repair validation or quality-check failures and rerun local validation."];
     task.codex_session_id = codex.commandEvent.codex_session_id ?? null;
     task.codex_rollout_path = codex.commandEvent.codex_rollout_path ?? null;
     task.codex_rollout_host_path = codex.commandEvent.codex_rollout_host_path ?? null;
@@ -2188,6 +2690,8 @@ async function completeLocalCodexRun(input: {
     task.codex_history_confidence = codex.commandEvent.codex_history_confidence ?? null;
     task.codex_history_verification_command = codex.commandEvent.codex_history_verification_command ?? null;
     task.codex_subagents = finalSubagents;
+    task.codex_quality_check = qualityCheck;
+    task.codex_quality_check_path = writeHeadDeveloperQualityCheck(input.project.workspace_path, qualityCheck);
     task.codex_flowchart_summary = normalizedFlowchartSummary;
     task.codex_flowchart_json_path = flowchartJsonPath;
     task.local_validation_result = validation;
@@ -2196,6 +2700,7 @@ async function completeLocalCodexRun(input: {
       report.final_summary || report.summary,
       finalSubagents.length ? `Subagent breakdown: ${finalSubagents.map((agent) => `${agent.name}: ${agent.summary || agent.responsibility}`).join(" | ")}` : "Subagent breakdown: Codex did not report separate logical subagents.",
       `Validation: ${validation.summary}`,
+      `Quality check: ${qualityCheckSummaryText(qualityCheck)}`,
     ].join(" ");
     task.updated_at = completedAt;
     task.local_state_path = writeHeadDeveloperState(input.project.workspace_path, {
@@ -2211,6 +2716,7 @@ async function completeLocalCodexRun(input: {
       completed_at: completedAt,
       files_changed: task.files_changed,
       validation_result: validation,
+      quality_check: qualityCheck,
       subagents: task.codex_subagents,
       flowchart_summary: task.codex_flowchart_summary,
       flowchart_json_path: task.codex_flowchart_json_path,
@@ -2226,6 +2732,7 @@ async function completeLocalCodexRun(input: {
       report: reportForSummary,
       validation,
       previewLoaded,
+      qualityCheck,
     });
 
     const validationDoc = [
@@ -2272,9 +2779,14 @@ async function completeLocalCodexRun(input: {
       technical_summary: `${summary.technical_summary} Built by one local Codex orchestrator session. ${task.final_summary}`,
       files_changed: task.files_changed ?? summary.files_changed,
       tests_run: unique([...summary.tests_run, ...validation.commands.map((command) => command.command)]),
-      failures: validation.failures,
+      failures: unique([
+        ...validation.failures,
+        ...qualityCheck.findings
+          .filter((finding) => finding.severity === "blocker" || finding.severity === "major")
+          .map((finding) => `${finding.title}: ${finding.summary}`),
+      ]),
       current_state: task.status,
-      confidence: validation.status === "passed" ? "high" : "medium",
+      confidence: validation.status === "passed" && qualityCheck.status === "passed" ? "high" : "medium",
       created_at: nowIso(),
     });
 
@@ -2295,11 +2807,12 @@ async function completeLocalCodexRun(input: {
       : githubPush?.status === "failed"
         ? ` GitHub push failed: ${githubPush.error}`
         : "";
-    session.latest_codex_message = task.status === "completed" ? `Built by one local Codex orchestrator session. ${task.final_summary}${githubPushText}` : validation.summary;
+    session.latest_codex_message = task.status === "completed" ? `Built by one local Codex orchestrator session. ${task.final_summary}${githubPushText}` : task.latest_summary;
     session.last_updated = nowIso();
     appendSessionEvent(session, "local_codex_session.finished", task.status === "completed" ? "codex" : "system", session.latest_codex_message, {
       task,
       validation,
+      quality_check: qualityCheck,
       subagents: task.codex_subagents,
       github_push: githubPush,
     });
@@ -2321,8 +2834,8 @@ async function completeLocalCodexRun(input: {
       scope: "task",
       scope_id: task.task_id,
       type: task.status === "completed" ? "local_codex_session.validated" : "local_codex_session.validation_failed",
-      message: task.final_summary ?? validation.summary,
-      data: { task, validation, subagents: task.codex_subagents },
+      message: task.final_summary ?? task.latest_summary,
+      data: { task, validation, quality_check: qualityCheck, subagents: task.codex_subagents },
     });
   } catch (error) {
     const failedTask = getTask(input.taskId);

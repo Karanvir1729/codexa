@@ -126,6 +126,7 @@ const localFlowchartSummaryKinds = new Set([
   "flowchart_maker",
   "validation",
   "preview",
+  "quality_check",
   "final_summary",
 ]);
 
@@ -145,7 +146,7 @@ function addLocalSummaryEdge(edges: NormalizedLocalFlowchartSummary["edges"], fr
   edges.push({ from, to, label });
 }
 
-function withLocalSystemProcessNodes(summary: NormalizedLocalFlowchartSummary): NormalizedLocalFlowchartSummary {
+function withLocalSystemProcessNodes(summary: NormalizedLocalFlowchartSummary, qualityCheck?: TaskRecord["codex_quality_check"] | null): NormalizedLocalFlowchartSummary {
   const nodes = [...summary.nodes];
   const edges = [...summary.edges];
   const hasKind = (kind: string) => nodes.some((node) => node.kind === kind);
@@ -153,6 +154,8 @@ function withLocalSystemProcessNodes(summary: NormalizedLocalFlowchartSummary): 
   const requirementsId = firstLocalSummaryNodeId(summary, "requirement_summary");
   const planId = firstLocalSummaryNodeId(summary, "plan");
   const codexSessionId = firstLocalSummaryNodeId(summary, "codex_session");
+  const validationId = firstLocalSummaryNodeId(summary, "validation");
+  const previewId = firstLocalSummaryNodeId(summary, "preview");
   const finalSummaryId = firstLocalSummaryNodeId(summary, "final_summary");
   const preMegaplanId = planId || requirementsId || requestId;
 
@@ -200,17 +203,32 @@ function withLocalSystemProcessNodes(summary: NormalizedLocalFlowchartSummary): 
       depends_on: [codexSessionId, currentSubagentAdvisorId].filter(Boolean),
     });
   }
+  if (!hasKind("quality_check")) {
+    nodes.push({
+      id: "quality-check",
+      kind: "quality_check",
+      label: "Quality check",
+      status: qualityCheck?.status ?? "pending",
+      summary: summaryText(qualityCheck?.summary ?? "Final Codex quality checker audits the result against the Megaplan, functionality, validation evidence, and UI quality.", 220),
+      depends_on: [previewId || validationId || codexSessionId].filter(Boolean),
+    });
+  }
 
   const megaplanId = nodes.find((node) => node.kind === "megaplan")?.id ?? "";
   const approvalId = nodes.find((node) => node.kind === "approval")?.id ?? "";
   const subagentAdvisorId = nodes.find((node) => node.kind === "subagent_advisor")?.id ?? "";
   const flowchartMakerId = nodes.find((node) => node.kind === "flowchart_maker")?.id ?? "";
+  const qualityCheckId = nodes.find((node) => node.kind === "quality_check")?.id ?? "";
+  const currentValidationId = nodes.find((node) => node.kind === "validation")?.id ?? "";
+  const currentPreviewId = nodes.find((node) => node.kind === "preview")?.id ?? "";
   addLocalSummaryEdge(edges, preMegaplanId, megaplanId, "megaplan");
   addLocalSummaryEdge(edges, megaplanId, approvalId, "approval");
   addLocalSummaryEdge(edges, approvalId, codexSessionId, "starts");
   addLocalSummaryEdge(edges, codexSessionId || approvalId, subagentAdvisorId, "subagent advice");
   addLocalSummaryEdge(edges, codexSessionId, flowchartMakerId, "summarizes");
   addLocalSummaryEdge(edges, subagentAdvisorId, flowchartMakerId, "advisor input");
+  addLocalSummaryEdge(edges, currentPreviewId || currentValidationId || codexSessionId, qualityCheckId, "quality check");
+  addLocalSummaryEdge(edges, qualityCheckId, finalSummaryId, "quality gate");
   addLocalSummaryEdge(edges, flowchartMakerId, finalSummaryId, "updates");
 
   return { ...summary, nodes, edges };
@@ -269,7 +287,7 @@ function readLocalCodexFlowchartJson(task: TaskRecord) {
 
 function localCodexFlowchartSummary(task: TaskRecord) {
   const summary = readLocalCodexFlowchartJson(task) ?? task.codex_flowchart_summary ?? null;
-  return summary ? withLocalSystemProcessNodes(summary) : null;
+  return summary ? withLocalSystemProcessNodes(summary, task.codex_quality_check ?? null) : null;
 }
 
 function localSummaryNodeType(kind: string): FlowchartNode["type"] {
@@ -284,6 +302,7 @@ function localSummaryNodeType(kind: string): FlowchartNode["type"] {
   if (kind === "codex_session") return "codex_session";
   if (kind === "validation") return "validation";
   if (kind === "preview") return "preview";
+  if (kind === "quality_check") return "quality_check";
   if (kind === "final_summary") return "final_summary";
   return "codex_subagent";
 }
@@ -300,7 +319,8 @@ function localSummaryColumn(kind: string) {
   if (kind === "flowchart_maker") return 7;
   if (kind === "validation") return 7;
   if (kind === "preview") return 8;
-  if (kind === "final_summary") return 9;
+  if (kind === "quality_check") return 9;
+  if (kind === "final_summary") return 10;
   return 6;
 }
 
@@ -797,6 +817,7 @@ export function buildFlowchartState(): FlowchartState {
     const sessionNodeId = `codex_flow_pending:${task.task_id}:codex-session`;
     const liveSubagents = (task.codex_subagents ?? []).filter((subagent) => subagent.name?.trim());
     const subagentAdvisor = task.codex_subagent_advisor ?? null;
+    const qualityCheck = task.codex_quality_check ?? null;
     const pendingSummary = task.status === "running"
       ? liveSubagents.length
         ? "Live Codex subagent updates are visible while the parallel flowchart JSON is being regenerated."
@@ -916,6 +937,82 @@ export function buildFlowchartState(): FlowchartState {
     }, index * 12 + 0.75, 7);
     addEdge(edges, sessionNodeId, pendingFlowchartMakerNodeId, "flowchart");
     addEdge(edges, pendingSubagentAdvisorNodeId, pendingFlowchartMakerNodeId, "advisor input");
+    const pendingValidationNodeId = `codex_flow_pending:${task.task_id}:validation`;
+    addNode(nodes, {
+      id: pendingValidationNodeId,
+      type: "validation",
+      label: "Validation",
+      status: task.local_validation_result?.status ?? (task.status === "running" ? "waiting" : "summary pending"),
+      visual_state: task.local_validation_result ? localSummaryVisualState(task.local_validation_result.status) : "planning",
+      badges: ["local validation"],
+      summary: task.local_validation_result?.summary
+        ? summaryText(task.local_validation_result.summary)
+        : "Local validation waits for Codex implementation output.",
+      detail: {
+        kind: "validation",
+        status: task.local_validation_result?.status ?? (task.status === "running" ? "waiting" : "summary pending"),
+        summary: task.local_validation_result?.summary
+          ? summaryText(task.local_validation_result.summary, 500)
+          : "Local validation waits for Codex implementation output.",
+      },
+    }, index * 12 + 0.9, 8);
+    addEdge(edges, sessionNodeId, pendingValidationNodeId, "validation");
+    const pendingPreviewNodeId = `codex_flow_pending:${task.task_id}:preview`;
+    addNode(nodes, {
+      id: pendingPreviewNodeId,
+      type: "preview",
+      label: "Preview",
+      status: task.latest_preview?.status ?? "waiting",
+      visual_state: task.latest_preview ? previewVisualState(task.latest_preview) : "planning",
+      badges: ["local preview"],
+      summary: task.latest_preview?.summary
+        ? summaryText(task.latest_preview.summary)
+        : "Local preview starts when validation passes and an app entry is available.",
+      detail: {
+        kind: "preview",
+        status: task.latest_preview?.status ?? "waiting",
+        summary: task.latest_preview?.summary
+          ? summaryText(task.latest_preview.summary, 500)
+          : "Local preview starts when validation passes and an app entry is available.",
+      },
+    }, index * 12 + 0.95, 9);
+    addEdge(edges, pendingValidationNodeId, pendingPreviewNodeId, "preview");
+    const pendingQualityNodeId = `codex_flow_pending:${task.task_id}:quality-check`;
+    addNode(nodes, {
+      id: pendingQualityNodeId,
+      type: "quality_check",
+      label: "Quality check",
+      status: qualityCheck?.status ?? "waiting",
+      visual_state: qualityCheck ? localSummaryVisualState(qualityCheck.status) : "planning",
+      badges: ["final Codex reviewer"],
+      summary: qualityCheck?.summary
+        ? summaryText(qualityCheck.summary)
+        : "Final Codex quality checker verifies Megaplan fit, functionality, validation evidence, and UI quality.",
+      detail: {
+        kind: "quality_check",
+        status: qualityCheck?.status ?? "waiting",
+        summary: qualityCheck?.summary
+          ? summaryText(qualityCheck.summary, 500)
+          : "Final Codex quality checker verifies Megaplan fit, functionality, validation evidence, and UI quality.",
+      },
+    }, index * 12 + 1, 10);
+    addEdge(edges, pendingPreviewNodeId, pendingQualityNodeId, "quality check");
+    const pendingFinalNodeId = `codex_flow_pending:${task.task_id}:final-summary`;
+    addNode(nodes, {
+      id: pendingFinalNodeId,
+      type: "final_summary",
+      label: "Final summary",
+      status: task.final_summary ? task.status : "waiting",
+      visual_state: task.final_summary ? statusVisualState(task.status) : "planning",
+      badges: ["grounded summary"],
+      summary: task.final_summary ? summaryText(task.final_summary) : "Final summary waits for validation and quality-check evidence.",
+      detail: {
+        kind: "final_summary",
+        status: task.final_summary ? task.status : "waiting",
+        summary: task.final_summary ? summaryText(task.final_summary, 500) : "Final summary waits for validation and quality-check evidence.",
+      },
+    }, index * 12 + 1.05, 11);
+    addEdge(edges, pendingQualityNodeId, pendingFinalNodeId, "final summary");
     liveSubagents.forEach((subagent, subagentIndex) => {
       const subagentId = summaryText(subagent.name, 48).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || `subagent-${subagentIndex + 1}`;
       const nodeId = `codex_flow:${task.task_id}:live-${subagentId}`;

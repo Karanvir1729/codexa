@@ -223,6 +223,8 @@ export interface TaskRecord {
   local_state_path?: string | null;
   codex_subagents?: LocalCodexSubagentReport[];
   codex_subagent_advisor?: LocalCodexSubagentAdvisorUpdate | null;
+  codex_quality_check?: LocalCodexQualityCheckResult | null;
+  codex_quality_check_path?: string | null;
   codex_flowchart_summary?: LocalCodexFlowchartSummary | null;
   codex_flowchart_json_path?: string | null;
   local_validation_result?: LocalCodexValidationResult | null;
@@ -275,6 +277,34 @@ export interface LocalCodexSubagentAdvisorUpdate {
   error?: string | null;
 }
 
+export interface LocalCodexQualityFinding {
+  severity: "blocker" | "major" | "minor" | "info";
+  area: string;
+  title: string;
+  summary: string;
+}
+
+export interface LocalCodexQualityCheckResult {
+  status: "running" | "passed" | "failed";
+  summary: string;
+  meets_megaplan: boolean;
+  meets_user_request: boolean;
+  functionality_checked: boolean;
+  validation_reviewed: boolean;
+  ui_review: {
+    status: "passed" | "failed" | "not_applicable" | "not_checked";
+    summary: string;
+    tools_attempted: string[];
+  };
+  tools_used: string[];
+  checks: string[];
+  findings: LocalCodexQualityFinding[];
+  recommended_fixes: string[];
+  updated_at: string;
+  source: "local_codex_quality_check";
+  error?: string | null;
+}
+
 export type LocalCodexFlowchartNodeKind =
   | "user_request"
   | "requirement_summary"
@@ -287,6 +317,7 @@ export type LocalCodexFlowchartNodeKind =
   | "flowchart_maker"
   | "validation"
   | "preview"
+  | "quality_check"
   | "final_summary";
 
 export interface LocalCodexFlowchartNodeReport {
@@ -802,6 +833,7 @@ export type FlowchartNodeType =
   | "flowchart_maker"
   | "files_changed"
   | "validation"
+  | "quality_check"
   | "final_summary";
 
 export type FlowchartVisualState = "idle" | "planning" | "waiting_for_approval" | "completed" | "failed" | "running" | "warning";

@@ -26,8 +26,11 @@ test("dashboard flowchart nodes are clickable and open the details panel", () =>
   assert.match(source, /codex_conversation_resume_command/);
   assert.match(source, /Rapid truthful runtime graph from live parallel Codex watcher JSON/);
   assert.match(source, /subagent advisor, Codex-chosen subagents, flowchart maker/);
+  assert.match(source, /final quality check/);
   assert.match(source, /live subagent-opportunity advice/);
+  assert.match(source, /final quality-check evidence/);
   assert.match(source, /"subagent_advisor"/);
+  assert.match(source, /"quality_check"/);
   assert.match(source, /hasTaskScopedLocalFlowchartNodes/);
   assert.match(source, /hasPendingSessionPlanning/);
   assert.match(source, /compactFlowchartLayout/);

@@ -77,6 +77,7 @@ test("codex_session_local prompt names Codex as the direct CLI orchestrator", ()
       hasSubagentApprovalBoundary: /subagent strategy would materially change scope/.test(prompt) && /status needs_approval/.test(prompt),
       hasTruthfulFlowchartGuardrails: /flowchart_summary must include every subagent/.test(prompt) && /If you truly used no subagents/.test(prompt),
       hasSystemFlowchartNodes: /Megaplan creation, approval gate/.test(prompt) && /parallel flowchart maker/.test(prompt),
+      hasFinalQualityCheck: /separate final quality check Codex session/.test(prompt) && /final quality check/.test(prompt),
       allowsPlugins: /tools, skills, plugins, and MCP servers available in this same local account/.test(prompt),
       hasFullAccess: /You have full local CLI access/.test(prompt),
       hasImprovementLoop: /Continuous improvement is part of your role/.test(prompt) && /\\.head-developer\\/IMPROVEMENTS\\.md/.test(prompt),
@@ -97,6 +98,7 @@ test("codex_session_local prompt names Codex as the direct CLI orchestrator", ()
   assert.equal(payload.hasSubagentApprovalBoundary, true);
   assert.equal(payload.hasTruthfulFlowchartGuardrails, true);
   assert.equal(payload.hasSystemFlowchartNodes, true);
+  assert.equal(payload.hasFinalQualityCheck, true);
   assert.equal(payload.allowsPlugins, true);
   assert.equal(payload.hasFullAccess, true);
   assert.equal(payload.hasImprovementLoop, true);
@@ -126,6 +128,11 @@ test("codex_session_local invokes Codex with same-account full access settings",
   assert.match(source, /--dangerously-bypass-approvals-and-sandbox/);
   assert.match(source, /config\.localCodex\.sandbox === "danger-full-access"/);
   assert.match(source, /plugins_source: "same CODEX_HOME and user Codex config"/);
+  assert.match(source, /QUALITY_CHECK\.json/);
+  assert.match(source, /local_codex_quality_check/);
+  assert.match(source, /Chrome\/browser automation/);
+  assert.match(source, /Playwright MCP or Playwright CLI/);
+  assert.match(source, /Computer Use/);
   assert.match(source, /pushProjectToGitHub/);
   assert.match(source, /github\.push\.completed/);
   assert.match(source, /IMPROVEMENTS\.md/);
@@ -335,8 +342,10 @@ test("flowchart maker is a separate read-only Codex session capped at five secon
   assert.match(source, /Optimize for rapid truthful updates/);
   assert.match(source, /Include every reported_subagents entry as a separate subagent node/);
   assert.match(source, /do not invent names/);
-  assert.match(source, /Megaplan creation, approval gate, the parallel subagent advisor, and the parallel flowchart maker/);
+  assert.match(source, /Megaplan creation, approval gate, the parallel subagent advisor, the parallel flowchart maker, and the final quality check/);
   assert.match(source, /required_system_nodes/);
+  assert.match(source, /"Quality check"/);
+  assert.match(source, /quality_check/);
   assert.match(source, /ensureSystemProcessNodes/);
   assert.match(source, /latest_workspace_activity/);
   assert.match(source, /rapid truthful flowchart creation/);
@@ -356,6 +365,8 @@ test("flowchart maker is a separate read-only Codex session capped at five secon
   assert.match(flowchartSource, /type: "subagent_advisor"/);
   assert.match(flowchartSource, /label: "Subagent advisor"/);
   assert.match(flowchartSource, /type: "flowchart_maker"/);
+  assert.match(flowchartSource, /type: "quality_check"/);
+  assert.match(flowchartSource, /label: "Quality check"/);
   assert.match(flowchartSource, /Separate short-lived Codex process turns live implementation summaries into this graph/);
   assert.match(flowchartSource, /!summary\.nodes\.some\(\(node\) => node\.kind === "subagent"\)/);
   assert.match(flowchartSource, /parallel Codex flowchart/);
@@ -401,6 +412,36 @@ test("subagent advisor is a separate read-only Codex process capped at five seco
   assert.match(localCodexSource, /generator: "parallel_codex_subagent_advisor"/);
   assert.match(localCodexSource, /Codex subagent advisor timed out after 5 seconds/);
   assert.match(localCodexSource, /The implementation lead remains the source of truth and chooses the actual subagent count and names/);
+});
+
+test("final quality check is a separate Codex gate after validation and preview", () => {
+  const source = fs.readFileSync(path.join(process.cwd(), "codex-phone-supervisor", "backend", "src", "codex-session-local.ts"), "utf8");
+  const flowchartSource = fs.readFileSync(path.join(process.cwd(), "codex-phone-supervisor", "backend", "src", "flowchart.ts"), "utf8");
+  const typesSource = fs.readFileSync(path.join(process.cwd(), "codex-phone-supervisor", "backend", "src", "types.ts"), "utf8");
+  assert.match(source, /QUALITY_CHECK_TIMEOUT_MS = 180_000/);
+  assert.match(source, /buildQualityCheckSchemaFile/);
+  assert.match(source, /buildQualityCheckPrompt/);
+  assert.match(source, /runFinalQualityCheck/);
+  assert.match(source, /local_codex_quality_check\.started/);
+  assert.match(source, /local_codex_quality_check\.passed/);
+  assert.match(source, /local_codex_quality_check\.failed/);
+  assert.match(source, /codexSharedArgs\(\)/);
+  assert.match(source, /codexImplementationAccessArgs\(\)/);
+  assert.match(source, /final coding-quality review, not a fast planning pass/);
+  assert.match(source, /against the approved Megaplan/);
+  assert.match(source, /Prefer Chrome\/browser automation when available/);
+  assert.match(source, /Playwright MCP or Playwright CLI/);
+  assert.match(source, /Computer Use/);
+  assert.match(source, /layout arrangement, overlap, clipping, responsiveness/);
+  assert.match(source, /task\.status = validation\.status === "passed" && report\.status === "completed" && qualityCheck\.status === "passed"/);
+  assert.match(source, /writeHeadDeveloperQualityCheck/);
+  assert.match(source, /QUALITY_CHECK\.md/);
+  assert.match(source, /QUALITY_CHECK\.json/);
+  assert.match(source, /quality_check: qualityCheck/);
+  assert.match(flowchartSource, /quality_check/);
+  assert.match(flowchartSource, /Final Codex quality checker/);
+  assert.match(typesSource, /LocalCodexQualityCheckResult/);
+  assert.match(typesSource, /codex_quality_check/);
 });
 
 test("continuous flowchart watcher writes live JSON while Codex is still running", () => {
@@ -458,6 +499,26 @@ if (finalPath.includes("subagent-advisor-live")) {
   });
   process.exit(0);
 }
+if (finalPath.includes("quality-check")) {
+  writeJson({
+    status: "passed",
+    summary: "Final quality check confirmed the page matches the Megaplan, validation evidence, and UI expectations.",
+    meets_megaplan: true,
+    meets_user_request: true,
+    functionality_checked: true,
+    validation_reviewed: true,
+    ui_review: {
+      status: "passed",
+      summary: "The simple page layout is readable and has no obvious visual blockers.",
+      tools_attempted: ["browser automation"]
+    },
+    tools_used: ["browser automation"],
+    checks: ["Megaplan alignment", "Validation evidence", "UI layout"],
+    findings: [],
+    recommended_fixes: []
+  });
+  process.exit(0);
+}
 setTimeout(() => {
   fs.writeFileSync(path.join(cwd, "index.html"), "<!doctype html><html><head><script src=\\"script.js\\"></script></head><body>Chai</body></html>");
   fs.writeFileSync(path.join(cwd, "script.js"), "console.log('chai');\\n");
@@ -512,6 +573,7 @@ setTimeout(() => {
     }
     const finalEvents = listOrchestratorEvents(started.task.task_id).map((event) => event.type);
     const command = listCommandEvents({ taskId: started.task.task_id })[0];
+    const qualityPath = ${JSON.stringify(path.join(projectDir, ".head-developer", "QUALITY_CHECK.json"))};
     console.log(JSON.stringify({
       midTaskStatus: midTask?.status ?? null,
       midFlowchartExists,
@@ -526,6 +588,10 @@ setTimeout(() => {
       midAdvisorExists,
       advisorStatus: midTask?.codex_subagent_advisor?.status ?? null,
       advisorSuggestions: midTask?.codex_subagent_advisor?.suggested_subagents?.map((item) => item.name) ?? [],
+      qualityStarted: finalEvents.includes("local_codex_quality_check.started"),
+      qualityPassed: finalEvents.includes("local_codex_quality_check.passed"),
+      qualityArtifactExists: fs.existsSync(qualityPath),
+      qualityStatus: task?.codex_quality_check?.status ?? null,
       finalStatus: task?.status ?? null,
       workerCount: listWorkers().length,
       command: command?.command ?? null,
@@ -548,6 +614,10 @@ setTimeout(() => {
     midAdvisorExists?: boolean;
     advisorStatus?: string | null;
     advisorSuggestions?: string[];
+    qualityStarted?: boolean;
+    qualityPassed?: boolean;
+    qualityArtifactExists?: boolean;
+    qualityStatus?: string | null;
     finalStatus?: string | null;
     workerCount?: number;
     command?: string | null;
@@ -566,6 +636,10 @@ setTimeout(() => {
   assert.equal(payload.midAdvisorExists, true);
   assert.equal(payload.advisorStatus, "use_subagents");
   assert.ok(payload.advisorSuggestions?.includes("Page Experience"));
+  assert.equal(payload.qualityStarted, true);
+  assert.equal(payload.qualityPassed, true);
+  assert.equal(payload.qualityArtifactExists, true);
+  assert.equal(payload.qualityStatus, "passed");
   assert.equal(payload.finalStatus, "completed");
   assert.equal(payload.workerCount, 0);
   assert.match(payload.command ?? "", /model_reasoning_effort="xhigh"/);
@@ -649,6 +723,22 @@ test("flowchart renders Codex-chosen logical subagents without external workers"
         { name: "Backend API", responsibility: "HTTP API.", status: "completed", changed_files: ["server.js"], validation: ["npm run typecheck"], summary: "API implemented." },
         { name: "Frontend UI", responsibility: "Browser UI.", status: "completed", changed_files: ["public/index.html", "public/app.js"], validation: ["npm run build"], summary: "UI implemented." }
       ],
+      codex_quality_check: {
+        status: "passed",
+        summary: "Final quality check confirmed the app matches the Megaplan and UI quality bar.",
+        meets_megaplan: true,
+        meets_user_request: true,
+        functionality_checked: true,
+        validation_reviewed: true,
+        ui_review: { status: "passed", summary: "Browser UI looked coherent.", tools_attempted: ["browser automation"] },
+        tools_used: ["browser automation"],
+        checks: ["Megaplan alignment", "UI layout"],
+        findings: [],
+        recommended_fixes: [],
+        updated_at: now,
+        source: "local_codex_quality_check",
+        error: null
+      },
       local_validation_result: {
         status: "passed",
         validated_at: now,
@@ -727,6 +817,7 @@ test("flowchart renders Codex-chosen logical subagents without external workers"
   assert.ok(payload.summaryTypes?.includes("flowchart_maker"));
   assert.ok(payload.summaryTypes?.includes("validation"));
   assert.ok(payload.summaryTypes?.includes("preview"));
+  assert.ok(payload.summaryTypes?.includes("quality_check"));
   assert.ok(payload.summaryTypes?.includes("final_summary"));
   assert.equal(payload.summaryTypes?.includes("files_changed"), false);
   assert.match(payload.summaryText ?? "", /Rules Agent/);
@@ -736,6 +827,7 @@ test("flowchart renders Codex-chosen logical subagents without external workers"
   assert.match(payload.summaryText ?? "", /Approval gate/);
   assert.match(payload.summaryText ?? "", /Subagent advisor/);
   assert.match(payload.summaryText ?? "", /Flowchart maker/);
+  assert.match(payload.summaryText ?? "", /Quality check/);
   assert.doesNotMatch(payload.summaryText ?? "", /shared\/game\.js|public\/index\.html|\/workspace|npm test|npm run/);
 });
 
