@@ -216,6 +216,10 @@ function isMajorForVoice(eventType: string) {
     "planner.codex_cli.started",
     "planner.codex_cli.completed",
     "planner.codex_cli.failed",
+    "subagent_advisor.codex_cli.started",
+    "subagent_advisor.codex_cli.completed",
+    "subagent_advisor.codex_cli.failed",
+    "subagent_advisor.codex_cli.timed_out",
     "megaplan.created",
     "worker.started",
     "worker.stale",
@@ -266,6 +270,13 @@ function progressTextForEvent(event: OrchestratorEvent, session: SessionState, c
     return duration ? `Codex planning finished in ${duration}.` : "Codex planning finished.";
   }
   if (event.type === "planner.codex_cli.failed") return `Codex planning failed: ${truncate(event.message, voice ? 120 : 220)}`;
+  if (event.type === "subagent_advisor.codex_cli.started") return voice ? "Codex is checking whether internal subagents are useful." : "Codex is running a short read-only subagent advisor check before the approval gate.";
+  if (event.type === "subagent_advisor.codex_cli.completed") {
+    const duration = formatDuration(data.duration_ms);
+    return duration ? `Subagent advisor finished in ${duration}.` : "Subagent advisor finished.";
+  }
+  if (event.type === "subagent_advisor.codex_cli.failed") return `Subagent advisor failed; using conservative planner context: ${truncate(event.message, voice ? 120 : 220)}`;
+  if (event.type === "subagent_advisor.codex_cli.timed_out") return "Subagent advisor hit the 5 second cap; Codex will continue with the conservative planner context and still ask before implementation.";
   if (event.type === "github.repo.ready") return "GitHub repo is ready and attached as the project origin.";
   if (event.type === "github.repo.failed") return `GitHub repo creation failed: ${truncate(event.message, voice ? 120 : 220)}`;
   if (event.type === "megaplan.created") return "Megaplan is ready for approval.";

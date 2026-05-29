@@ -103,6 +103,23 @@ function technicalRequirementLines(decision: PlannerDecision | null, session: Se
   return lines.join("\n");
 }
 
+function subagentCheckInLines(decision: PlannerDecision | null) {
+  const advice = decision?.subagent_advice;
+  if (!advice) {
+    return [
+      "- Codex will decide during implementation whether internal subagents are useful.",
+      "- If subagent use would materially change scope, cost, risk, or timing, Codex must stop and ask first.",
+    ].join("\n");
+  }
+  return [
+    `- Advisor recommendation: ${advice.recommended ? "use internal Codex subagents when useful" : "single-lane Codex run is acceptable"}.`,
+    `- Reason: ${advice.reason}`,
+    `- User check-in: ${advice.user_check_in}`,
+    advice.suggested_responsibilities.length ? `- Likely responsibility areas: ${advice.suggested_responsibilities.join(", ")}` : "",
+    `- Advisor source: ${advice.source}`,
+  ].filter(Boolean).join("\n");
+}
+
 export function buildMegaplanMarkdown(input: {
   session: SessionState;
   project: ProjectRecord;
@@ -153,7 +170,13 @@ export function buildMegaplanMarkdown(input: {
       "- One local Codex CLI session owns the repo.",
       "- Codex decides how many internal subagents are useful.",
       "- Subagents are logical Codex responsibilities, not Docker, VM, GKE, or cloud workers.",
+      "- The user can revise subagent use before approval; approval permits Codex to choose the actual internal count and names.",
+      "- If Codex later determines a materially different subagent strategy is needed, it must stop and ask before changing scope, cost, risk, or timeline.",
       "- The browser flowchart shows the Codex session and the subagents Codex reports.",
+      "",
+      "## Subagent Check-In",
+      "",
+      subagentCheckInLines(decision),
       "",
       "## Continuous Improvement Loop",
       "",

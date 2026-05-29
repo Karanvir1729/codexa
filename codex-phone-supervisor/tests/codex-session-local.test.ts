@@ -73,6 +73,7 @@ test("codex_session_local prompt names Codex as the direct CLI orchestrator", ()
       hasDirectCli: /talking to you directly through this CLI-backed session/.test(prompt),
       includesBrowserTranscript: /Browser conversation with Codex before this implementation run/.test(prompt) && /Approve the Megaplan/.test(prompt),
       letsCodexChoose: /You choose how many logical subagents/.test(prompt),
+      hasSubagentApprovalBoundary: /subagent strategy would materially change scope/.test(prompt) && /status needs_approval/.test(prompt),
       allowsPlugins: /tools, skills, plugins, and MCP servers available in this same local account/.test(prompt),
       hasFullAccess: /You have full local CLI access/.test(prompt),
       hasImprovementLoop: /Continuous improvement is part of your role/.test(prompt) && /\\.head-developer\\/IMPROVEMENTS\\.md/.test(prompt),
@@ -89,6 +90,7 @@ test("codex_session_local prompt names Codex as the direct CLI orchestrator", ()
   assert.equal(payload.hasDirectCli, true);
   assert.equal(payload.includesBrowserTranscript, true);
   assert.equal(payload.letsCodexChoose, true);
+  assert.equal(payload.hasSubagentApprovalBoundary, true);
   assert.equal(payload.allowsPlugins, true);
   assert.equal(payload.hasFullAccess, true);
   assert.equal(payload.hasImprovementLoop, true);
@@ -276,6 +278,32 @@ test("flowchart maker is a separate read-only Codex session capped at five secon
   assert.match(flowchartSource, /parallel Codex flowchart/);
   assert.doesNotMatch(flowchartSource, /label: "Files Changed"/);
   assert.doesNotMatch(flowchartSource, /changed_files\.length\} files/);
+});
+
+test("subagent advisor is a separate read-only Codex process capped at five seconds", () => {
+  const source = fs.readFileSync(path.join(process.cwd(), "codex-phone-supervisor", "backend", "src", "subagent-advisor.ts"), "utf8");
+  const supervisorSource = fs.readFileSync(path.join(process.cwd(), "codex-phone-supervisor", "backend", "src", "supervisor-tools.ts"), "utf8");
+  const megaplanSource = fs.readFileSync(path.join(process.cwd(), "codex-phone-supervisor", "backend", "src", "megaplan.ts"), "utf8");
+  const localCodexSource = fs.readFileSync(path.join(process.cwd(), "codex-phone-supervisor", "backend", "src", "codex-session-local.ts"), "utf8");
+  assert.match(source, /SUBAGENT_ADVISOR_TIMEOUT_MS = 5_000/);
+  assert.match(source, /short-lived parallel Codex subagent advisor/);
+  assert.match(source, /spawnSync\(config\.codexCommand/);
+  assert.match(source, /"--output-schema"/);
+  assert.match(source, /"-s"[\s\S]*"read-only"/);
+  assert.match(source, /timeout: SUBAGENT_ADVISOR_TIMEOUT_MS/);
+  assert.match(source, /subagent_advisor\.codex_cli\.started/);
+  assert.match(source, /subagent_advisor\.codex_cli\.completed/);
+  assert.match(source, /subagent_advisor\.codex_cli\.failed/);
+  assert.match(source, /plannerContextSubagentAdvice/);
+  assert.doesNotMatch(source, /heuristic_fallback/);
+  assert.match(supervisorSource, /withSubagentAdvice/);
+  assert.match(supervisorSource, /Subagent check-in:/);
+  assert.match(supervisorSource, /Useful responsibility areas:/);
+  assert.match(megaplanSource, /## Subagent Check-In/);
+  assert.match(megaplanSource, /User check-in:/);
+  assert.match(localCodexSource, /pre-implementation subagent check-in/);
+  assert.match(localCodexSource, /actual count and names/);
+  assert.match(localCodexSource, /status needs_approval/);
 });
 
 test("continuous flowchart watcher writes live JSON while Codex is still running", () => {
@@ -789,6 +817,9 @@ test("full-stack Wordle conversation proposes direct local Codex orchestration b
   assert.match(payload.proposed ?? "", /talk directly to Codex/i);
   assert.match(payload.proposed ?? "", /local Codex CLI orchestrator session/);
   assert.match(payload.proposed ?? "", /Codex will choose how many logical internal subagents/);
+  assert.match(payload.proposed ?? "", /Subagent check-in:/);
+  assert.match(payload.proposed ?? "", /Codex may choose the internal subagent count and names/i);
+  assert.match(payload.proposed ?? "", /Useful responsibility areas:/);
   assert.match(payload.proposed ?? "", /Megaplan skill created MEGAPLAN\.md/);
   assert.equal(payload.pendingKind, "approve_megaplan");
   assert.equal(payload.pendingWorkerMode, "codex_session_local");
@@ -798,6 +829,9 @@ test("full-stack Wordle conversation proposes direct local Codex orchestration b
   assert.match(payload.megaplanText ?? "", /Repository/);
   assert.match(payload.megaplanText ?? "", /Technical Requirements/);
   assert.match(payload.megaplanText ?? "", /Codex Orchestration/);
+  assert.match(payload.megaplanText ?? "", /Subagent Check-In/);
+  assert.match(payload.megaplanText ?? "", /Advisor recommendation: use internal Codex subagents/i);
+  assert.match(payload.megaplanText ?? "", /User check-in:/);
   assert.match(payload.megaplanText ?? "", /Continuous Improvement Loop/);
   assert.match(payload.megaplanText ?? "", /IMPROVEMENTS\.md/);
   assert.match(payload.megaplanText ?? "", /must record deferred ideas/);

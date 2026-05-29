@@ -23,6 +23,7 @@ import type {
   ApprovedPlanRecord,
   Channel,
   CommandRiskLevel,
+  CodexSubagentAdvice,
   DesignDecisionRecord,
   PlannerDecision,
   PlannerDecisionType,
@@ -177,6 +178,20 @@ function parseTaskSplit(value: unknown): PlannerTaskSplitItem[] {
     .filter((item) => item.title && item.goal);
 }
 
+function parseSubagentAdvice(value: unknown): CodexSubagentAdvice | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  return {
+    recommended: Boolean(raw.recommended),
+    confidence: boundedNumber(raw.confidence, 0.5, 0, 1),
+    reason: text(raw.reason, "Codex will decide whether internal subagents are useful."),
+    user_check_in: text(raw.user_check_in, "Approval means Codex may choose internal subagents when useful; tell me before approval if you want a single-lane run."),
+    suggested_responsibilities: textArray(raw.suggested_responsibilities),
+    source: raw.source === "codex_cli" ? "codex_cli" : "planner_context",
+    error: text(raw.error) || null,
+  };
+}
+
 function extractJsonObject(value: string) {
   const trimmed = value.trim();
   const start = trimmed.indexOf("{");
@@ -245,6 +260,7 @@ export function parsePlannerDecision(value: unknown): PlannerDecision {
     risk_level: riskLevel,
     next_action: nextAction,
     execution_allowed: Boolean(raw.execution_allowed),
+    subagent_advice: parseSubagentAdvice(raw.subagent_advice),
   };
 }
 
@@ -1290,6 +1306,7 @@ export class AgenticPlanningController {
       worker_mode: decision.recommended_worker_mode,
       approval_reason: decision.approval_reason,
       risk_level: decision.risk_level,
+      subagent_advice: decision.subagent_advice ?? null,
     });
   }
 

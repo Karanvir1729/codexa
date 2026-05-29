@@ -846,6 +846,16 @@ export interface PlannerTaskSplitItem {
   validation: string[];
 }
 
+export interface CodexSubagentAdvice {
+  recommended: boolean;
+  confidence: number;
+  reason: string;
+  user_check_in: string;
+  suggested_responsibilities: string[];
+  source: "codex_cli" | "planner_context";
+  error?: string | null;
+}
+
 export interface PlannerDecision {
   planning_decision_id?: string;
   decision_type: PlannerDecisionType;
@@ -864,6 +874,7 @@ export interface PlannerDecision {
   risk_level: CommandRiskLevel;
   next_action: PlannerNextAction;
   execution_allowed: boolean;
+  subagent_advice?: CodexSubagentAdvice | null;
 }
 
 export interface ApprovedPlanRecord {
@@ -877,6 +888,7 @@ export interface ApprovedPlanRecord {
   worker_mode: WorkerType;
   approval_reason: string;
   risk_level: CommandRiskLevel;
+  subagent_advice?: CodexSubagentAdvice | null;
 }
 
 export interface DesignDecisionRecord {

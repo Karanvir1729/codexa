@@ -305,12 +305,19 @@ export function buildLocalCodexImplementationPrompt(input: {
     : input.plannerDecision?.proposed_task_split.length
       ? input.plannerDecision.proposed_task_split.map((item) => `${item.title}: ${item.goal}`).join("\n")
       : "Decide the useful internal responsibilities yourself from the request.";
+  const subagentAdvice = input.approvedPlan?.subagent_advice ?? input.plannerDecision?.subagent_advice ?? null;
 
   return [
     "You are Codex, the local orchestrator and implementation lead. The user is talking to you directly through this CLI-backed session.",
     "Use internal Codex subagents when useful.",
     "Execution model: one local Codex CLI orchestrator session owns this repo.",
     "You choose how many logical subagents to use and what to name them. Consider frontend, backend, shared logic, tests, docs, and integration responsibilities only when they fit the task.",
+    subagentAdvice?.recommended === false
+      ? "The pre-implementation subagent check-in does not recommend internal subagents. Keep this run single-lane unless you need to stop and ask before changing that."
+      : subagentAdvice?.recommended === true
+        ? "The pre-implementation subagent check-in says internal subagents are useful. You still choose the actual count and names during this CLI run."
+        : "If internal subagents become useful, choose them yourself and report their names and responsibilities.",
+    "If your subagent strategy would materially change scope, cost, risk, or timeline from the approved Megaplan, stop and return status needs_approval instead of silently expanding.",
     "Subagents are logical responsibility lanes inside this one CLI run; do not launch separate OS processes, disconnected workspaces, or tool sessions to simulate them.",
     "All work must happen in this single repo. Do not create disconnected workspaces, per-worker worktrees, external workers, Docker workers, GKE jobs, VM workers, or cloud control-plane resources.",
     "Do not use Firestore, GKE, GCP VM workers, Kubernetes Jobs, Cloud Run orchestration, Secret Manager Codex auth, GCS Codex bundles, worker callbacks, or distributed task state for this implementation path.",
@@ -335,6 +342,7 @@ export function buildLocalCodexImplementationPrompt(input: {
     input.conversationTranscript ? `Browser conversation with Codex before this implementation run:\n${input.conversationTranscript}` : "",
     input.requirementSummary ? `Requirement summary: ${input.requirementSummary}` : "",
     `User request: ${input.userGoal}`,
+    subagentAdvice ? `Subagent check-in approved before implementation: ${subagentAdvice.user_check_in}\nLikely responsibility areas: ${subagentAdvice.suggested_responsibilities.join(", ") || "none"}` : "",
     proposedResponsibilities ? `Suggested responsibility areas from planning. You may change the number of internal subagents:\n${proposedResponsibilities}` : "",
     "",
     "Required final response: return only JSON matching the provided schema.",

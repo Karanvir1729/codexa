@@ -154,6 +154,20 @@ test("progress broadcaster records Codex intake, planning, and Megaplan updates"
     appendOrchestratorEvent({
       scope: "planning",
       scope_id: "planning_progress",
+      type: "subagent_advisor.codex_cli.started",
+      message: "Started short-lived parallel Codex subagent advisor.",
+      data: { session_id: session.session_id }
+    });
+    appendOrchestratorEvent({
+      scope: "planning",
+      scope_id: "planning_progress",
+      type: "subagent_advisor.codex_cli.completed",
+      message: "Subagent advisor recommended internal Codex subagents.",
+      data: { session_id: session.session_id, duration_ms: 432 }
+    });
+    appendOrchestratorEvent({
+      scope: "planning",
+      scope_id: "planning_progress",
       type: "megaplan.created",
       message: "Megaplan skill created .head-developer/MEGAPLAN.md and is waiting for approval.",
       data: { session_id: session.session_id, duration_ms: 9 }
@@ -173,9 +187,13 @@ test("progress broadcaster records Codex intake, planning, and Megaplan updates"
   const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}") as { messages: string[]; sourceTypes: string[] };
   assert.ok(payload.sourceTypes.includes("project_intake.codex_started"));
   assert.ok(payload.sourceTypes.includes("planner.codex_cli.started"));
+  assert.ok(payload.sourceTypes.includes("subagent_advisor.codex_cli.started"));
+  assert.ok(payload.sourceTypes.includes("subagent_advisor.codex_cli.completed"));
   assert.ok(payload.sourceTypes.includes("megaplan.created"));
   assert.ok(payload.messages.some((message) => /new repo|repo correction|normal follow-up/i.test(message)));
   assert.ok(payload.messages.some((message) => /technical requirements|Megaplan inputs/i.test(message)));
+  assert.ok(payload.messages.some((message) => /subagent advisor check/i.test(message)));
+  assert.ok(payload.messages.some((message) => /Subagent advisor finished/i.test(message)));
   assert.ok(payload.messages.some((message) => /1\.2s/i.test(message)));
   assert.ok(payload.messages.some((message) => /Megaplan is ready/i.test(message)));
 });

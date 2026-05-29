@@ -50,6 +50,7 @@ import { agenticPlanningController, parsePlannerDecision } from "./agentic-plann
 import { answerPreviewQuestion, isPreviewQuestion, isPreviewRequest, previewChatResponse, startPreviewForSession } from "./preview.js";
 import { writeMegaplan, type MegaplanRecord } from "./megaplan.js";
 import { mirrorBrowserConversationTurn } from "./codex-conversation-mirror.js";
+import { withSubagentAdvice } from "./subagent-advisor.js";
 import type { Channel, PendingAction, PlannerDecision, SessionState, SupervisorEvent, SupervisorModelProvider, WorkerType } from "./types.js";
 
 export function list_projects() {
@@ -380,6 +381,14 @@ function localCodexApprovalMessage(decision: PlannerDecision, megaplan?: Megapla
   const approvalReason = /multi-worker|workers launch|launch workers/i.test(decision.approval_reason)
     ? "Because this is complex work, I need your approval before I start the single local Codex CLI orchestrator session."
     : decision.approval_reason;
+  const subagentAdvice = decision.subagent_advice
+    ? [
+      `Subagent check-in: ${decision.subagent_advice.user_check_in}`,
+      decision.subagent_advice.suggested_responsibilities.length
+        ? `Useful responsibility areas: ${decision.subagent_advice.suggested_responsibilities.join(", ")}.`
+        : "",
+    ].filter(Boolean).join(" ")
+    : "";
   return [
     decision.requirements_summary ? `Before I start, here is what I understand: ${decision.requirements_summary}` : "Before I start, I want to confirm the plan.",
     design ? `Technical direction: ${design}` : "",
@@ -392,6 +401,7 @@ function localCodexApprovalMessage(decision: PlannerDecision, megaplan?: Megapla
         : null),
     megaplan ? `The Megaplan skill created MEGAPLAN.md for ${megaplan.repo.name} on branch ${megaplan.repo.branch ?? "unknown"}.` : "",
     "Codex will choose how many logical internal subagents to create and will report the actual subagent breakdown after implementation.",
+    subagentAdvice,
     split.length ? `Proposed responsibility areas: ${split.join(" ")}` : "",
     approvalReason || "Because this is complex work, I need your approval before I start the local Codex orchestrator session.",
     "Reply `approve` to start, or tell me what to change.",
@@ -406,8 +416,18 @@ function queueLocalMegaplanApproval(input: {
   selectedExistingProject?: boolean;
 }) {
   const latest = getSession(input.session.session_id) ?? input.session;
+  const advisedDecision = withSubagentAdvice({
+    session: latest,
+    project: input.project,
+    userGoal: input.userGoal,
+    decision: {
+      ...input.decision,
+      recommended_worker_mode: LOCAL_CODEX_BACKEND,
+      recommended_worker_count: 1,
+    },
+  });
   const decision: PlannerDecision = {
-    ...input.decision,
+    ...advisedDecision,
     recommended_worker_mode: LOCAL_CODEX_BACKEND,
     recommended_worker_count: 1,
     requires_user_approval: true,
@@ -1982,6 +2002,7 @@ function pendingRevisionPrompt(pending: PendingAction, decision: PlannerDecision
     decision?.requirements_summary ? `Current requirement summary: ${decision.requirements_summary}` : "",
     decision?.proposed_design ? `Current proposed design: ${decision.proposed_design}` : "",
     decision?.proposed_task_split.length ? `Current task split: ${decision.proposed_task_split.map((item) => `${item.title}: ${item.goal}`).join(" | ")}` : "",
+    decision?.subagent_advice ? `Current subagent check-in: ${decision.subagent_advice.user_check_in}` : "",
     `New user message: ${cleaned}`,
   ].filter(Boolean).join("\n");
 }
@@ -1995,6 +2016,14 @@ function pendingRevisionResponse(decision: PlannerDecision) {
   const design = decision.recommended_worker_mode === LOCAL_CODEX_BACKEND && /\b(worker|workers|task graph|output-contract|output contract|worktree|GKE|GCP VM|Docker)\b/i.test(decision.proposed_design)
     ? "One local Codex CLI session owns the repo, with Codex choosing any logical internal subagents it needs."
     : decision.proposed_design;
+  const subagentAdvice = decision.subagent_advice
+    ? [
+      `Subagent check-in: ${decision.subagent_advice.user_check_in}`,
+      decision.subagent_advice.suggested_responsibilities.length
+        ? `Useful responsibility areas: ${decision.subagent_advice.suggested_responsibilities.join(", ")}.`
+        : "",
+    ].filter(Boolean).join(" ")
+    : "";
   return [
     "I updated the pending plan before approval.",
     decision.user_visible_response && !/\b(starting|started|launching|launched)\b/i.test(decision.user_visible_response)
@@ -2005,6 +2034,7 @@ function pendingRevisionResponse(decision: PlannerDecision) {
     decision.recommended_worker_mode === LOCAL_CODEX_BACKEND
       ? "Execution plan: one local Codex CLI orchestrator session. Codex will choose the actual logical subagent count."
       : `Worker plan: ${decision.recommended_worker_count} ${workerModeLabel(decision.recommended_worker_mode)} worker${decision.recommended_worker_count === 1 ? "" : "s"}.`,
+    subagentAdvice,
     split.length ? `Task plan: ${split.join(" ")}` : "",
     "Reply `approve` to start this revised plan, or tell me what else to change.",
   ].filter(Boolean).join(" ");
@@ -2258,7 +2288,7 @@ async function handlePendingConversationAction(session: SessionState, cleaned: s
       const latestPending = latest.pending_action ?? pending;
       const plannedDecision = planning.decision;
       const revisedWorkerCount = workerMode === LOCAL_CODEX_BACKEND ? 1 : workerCount ?? plannedDecision.recommended_worker_count;
-      const revised: PlannerDecision = {
+      const revisedBase: PlannerDecision = {
         ...plannedDecision,
         decision_type: "revise_plan",
         recommended_worker_count: revisedWorkerCount,
@@ -2268,18 +2298,21 @@ async function handlePendingConversationAction(session: SessionState, cleaned: s
         next_action: "none",
         reason: plannedDecision.reason || "The user revised or clarified the pending plan before approval.",
         approval_reason: plannedDecision.approval_reason || "The revised execution plan still needs approval before workers launch.",
-        user_visible_response: pendingRevisionResponse({
-          ...plannedDecision,
-          decision_type: "revise_plan",
-          recommended_worker_count: revisedWorkerCount,
-          recommended_worker_mode: workerMode,
-          requires_user_approval: true,
-          execution_allowed: false,
-          next_action: "none",
-        }),
+      };
+      const revisedProject = latestPending.target_project_id ? getProject(latestPending.target_project_id) : project;
+      const revisedWithAdvice = workerMode === LOCAL_CODEX_BACKEND && revisedProject
+        ? withSubagentAdvice({
+          session: latest,
+          project: revisedProject,
+          userGoal: updatedGoal,
+          decision: revisedBase,
+        })
+        : revisedBase;
+      const revised: PlannerDecision = {
+        ...revisedWithAdvice,
+        user_visible_response: pendingRevisionResponse(revisedWithAdvice),
       };
       updatePendingPlannerDecision(latest, latestPending, revised, updatedGoal);
-      const revisedProject = latestPending.target_project_id ? getProject(latestPending.target_project_id) : project;
       const revisedMegaplan = revisedProject && (workerMode === LOCAL_CODEX_BACKEND || revised.recommended_worker_mode === LOCAL_CODEX_BACKEND)
         ? writeMegaplan({ session: latest, project: revisedProject, userGoal: updatedGoal, decision: revised })
         : null;
