@@ -215,7 +215,7 @@ class FeedbackLearner:
             }:
                 hints.append("- Avoid customer-support templates; respond as a conversational AI unless a tool result changes the task.")
             elif case_id == "latency_strategy":
-                hints.append("- Latency questions: mention latency and one mitigation such as streaming or local voice processing.")
+                hints.append("- Latency questions: mention streaming, NVIDIA WebSocket STT, and Gradium VAD/TTS.")
             else:
                 hints.append(f"- Address failure pattern from eval case {case_id}.")
 

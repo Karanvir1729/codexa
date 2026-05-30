@@ -144,6 +144,10 @@ type BotOutputData = {
   text?: string;
 };
 
+type PipecatParticipantLike = {
+  local?: boolean;
+};
+
 type FlowVoiceTurn = {
   id: string;
   role: "user" | "assistant";
@@ -172,6 +176,14 @@ function pipecatErrorText(message: RTVIMessage) {
   if (!data || typeof data !== "object" || !("message" in data)) return null;
   const errorMessage = (data as PipecatErrorMessage["data"])?.message;
   return typeof errorMessage === "string" ? errorMessage : null;
+}
+
+function isLocalPipecatParticipant(participant: unknown) {
+  return Boolean(
+    participant &&
+      typeof participant === "object" &&
+      (participant as PipecatParticipantLike).local === true
+  );
 }
 
 type PaletteItem = {
@@ -523,7 +535,7 @@ function FlowStudioInner({
           },
           onTrackStarted: (track: MediaStreamTrack, participant?: unknown) => {
             if (track.kind !== "audio") return;
-            if (participant) {
+            if (isLocalPipecatParticipant(participant)) {
               setFlowVoiceMicEnabled(true);
               setFlowVoiceNotice(null);
             } else {
@@ -532,8 +544,9 @@ function FlowStudioInner({
           },
           onTrackStopped: (track: MediaStreamTrack, participant?: unknown) => {
             if (track.kind !== "audio") return;
-            if (participant) {
+            if (isLocalPipecatParticipant(participant)) {
               setFlowVoiceMicEnabled(false);
+              setFlowVoiceUserSpeaking(false);
             } else {
               setFlowBotAudioTrack(null);
             }
@@ -931,6 +944,9 @@ function FlowStudioInner({
       setRun(attachedRun);
       setSelectedNodeId(attachedRun.active_node_id);
       setFlowRunnerConversationId(null);
+      if (flowVoiceInputMode === "vad" && !flowVoiceClient.isMicEnabled) {
+        flowVoiceClient.enableMic(true);
+      }
       setFlowVoiceMicEnabled(flowVoiceClient.isMicEnabled);
     } catch (error) {
       await flowVoiceClient.disconnect().catch(() => undefined);
@@ -957,7 +973,12 @@ function FlowStudioInner({
         flowVoiceMediaManagerRef.current?.setPendingMicStream(stream);
       }
       flowVoiceClient.enableMic(next);
-      if (!next) setFlowVoiceMicEnabled(false);
+      if (!next) {
+        setFlowVoiceMicEnabled(false);
+        setFlowVoiceUserSpeaking(false);
+      } else {
+        setFlowVoiceMicEnabled(true);
+      }
     } catch (error) {
       setFlowVoiceNotice(error instanceof Error ? error.message : "Microphone toggle failed.");
     }
@@ -1062,12 +1083,12 @@ function FlowStudioInner({
   useEffect(() => {
     if (flowVoiceInputMode !== "push_to_talk" || !flowVoiceConnected) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.code !== "Space" || event.repeat || isTypingTarget(event.target)) return;
+      if (event.code !== "KeyP" || event.repeat || isTypingTarget(event.target)) return;
       event.preventDefault();
       startFlowPushToTalk();
     };
     const onKeyUp = (event: KeyboardEvent) => {
-      if (event.code !== "Space") return;
+      if (event.code !== "KeyP") return;
       if (!flowPushToTalkPressedRef.current && isTypingTarget(event.target)) return;
       event.preventDefault();
       stopFlowPushToTalk();
@@ -1267,13 +1288,13 @@ function FlowStudioInner({
           </div>
           <div className="flowVoiceControls">
             <button onClick={toggleFlowVoiceConnection} disabled={!flowVoiceClient || busy}>
-              {flowVoiceConnected ? "Disconnect" : "Connect Flow"}
+              {flowVoiceConnected ? "Stop" : "Start"}
             </button>
             <button
               onClick={toggleFlowVoiceMic}
               disabled={!flowVoiceConnected || flowVoiceInputMode === "push_to_talk"}
             >
-              {flowVoiceInputMode === "push_to_talk" ? "Hold Space" : flowVoiceMicEnabled ? "Mute" : "Unmute"}
+              {flowVoiceInputMode === "push_to_talk" ? "Push to talk" : flowVoiceMicEnabled ? "Mute" : "Unmute"}
             </button>
           </div>
           <div className="flowSpeechPathSwitch" aria-label="Voice input mode">
@@ -1295,10 +1316,10 @@ function FlowStudioInner({
           <div className="flowSpeechPathSwitch" aria-label="Speech provider path">
             <button
               className="active"
-              onClick={() => onSpeechPathChange?.("supertone_parakeet")}
+              onClick={() => onSpeechPathChange?.("nvidia_gradium")}
               disabled={flowVoiceConnected || flowVoiceBusy || busy}
             >
-              <Cpu size={15} /> Supertonic
+              <Cpu size={15} /> NVIDIA + Gradium
             </button>
           </div>
           <div

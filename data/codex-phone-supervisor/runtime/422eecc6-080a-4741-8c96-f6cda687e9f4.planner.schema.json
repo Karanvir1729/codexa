@@ -1,0 +1,154 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "decision_type",
+    "confidence",
+    "reason",
+    "user_visible_response",
+    "requirements_summary",
+    "open_questions",
+    "assumptions",
+    "proposed_design",
+    "proposed_task_split",
+    "recommended_worker_count",
+    "recommended_worker_mode",
+    "requires_user_approval",
+    "approval_reason",
+    "risk_level",
+    "next_action",
+    "execution_allowed"
+  ],
+  "properties": {
+    "decision_type": {
+      "type": "string",
+      "enum": [
+        "answer_status_question",
+        "ask_clarification",
+        "summarize_requirements",
+        "propose_design",
+        "propose_task_split",
+        "request_user_approval",
+        "start_simple_task",
+        "start_multi_worker_task",
+        "revise_plan",
+        "wait_for_user",
+        "continue_execution",
+        "request_risky_action_approval",
+        "explain_blocker"
+      ]
+    },
+    "confidence": {
+      "type": "number"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "user_visible_response": {
+      "type": "string"
+    },
+    "requirements_summary": {
+      "type": "string"
+    },
+    "open_questions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "proposed_design": {
+      "type": "string"
+    },
+    "proposed_task_split": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "title",
+          "goal",
+          "can_run_parallel",
+          "depends_on",
+          "expected_files",
+          "validation"
+        ],
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "goal": {
+            "type": "string"
+          },
+          "can_run_parallel": {
+            "type": "boolean"
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "expected_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "validation": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "recommended_worker_count": {
+      "type": "number"
+    },
+    "recommended_worker_mode": {
+      "type": "string",
+      "enum": [
+        "codex_session_local",
+        "local",
+        "docker_local",
+        "gcp_vm",
+        "gke_job"
+      ]
+    },
+    "requires_user_approval": {
+      "type": "boolean"
+    },
+    "approval_reason": {
+      "type": "string"
+    },
+    "risk_level": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "blocked"
+      ]
+    },
+    "next_action": {
+      "type": "string",
+      "enum": [
+        "none",
+        "create_project",
+        "create_task_graph",
+        "launch_workers",
+        "answer_only"
+      ]
+    },
+    "execution_allowed": {
+      "type": "boolean"
+    }
+  }
+}

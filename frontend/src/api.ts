@@ -37,19 +37,6 @@ export type Health = {
   prompt_version: number;
   reasoning_mode: string;
   cost_guard: CostGuard;
-  cloud_vllm?: CloudVLLMState;
-};
-
-export type CloudVLLMState = {
-  enabled: boolean;
-  stop_on_idle_enabled: boolean;
-  idle_shutdown_seconds: number;
-  active_sessions: number;
-  last_status: string | null;
-  instance_name: string;
-  zone: string;
-  project_id: string | null;
-  ip_mode: "configured" | "internal" | "external";
 };
 
 export type VoiceDependencyState = {
@@ -73,10 +60,9 @@ export type VoicePreflight = {
   voice_speech_path: VoiceSpeechPath;
   llm_provider: string;
   model: string;
-  cloud_vllm: CloudVLLMState;
 };
 
-export type VoiceSpeechPath = "supertone_parakeet";
+export type VoiceSpeechPath = "nvidia_gradium";
 export type VoiceInputMode = "vad" | "push_to_talk";
 export type VoiceRuntimeProfile = {
   profile_version: number;
@@ -560,7 +546,6 @@ export function prepareVoice(voiceSpeechPath?: VoiceSpeechPath) {
       codex?: VoiceDependencyState;
     };
     voice_speech_path: VoiceSpeechPath;
-    cloud_vllm: CloudVLLMState;
   }>("/api/voice/prepare", {
     method: "POST",
     body: JSON.stringify({ voice_speech_path: voiceSpeechPath })

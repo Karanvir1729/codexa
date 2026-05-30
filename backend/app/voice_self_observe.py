@@ -23,15 +23,8 @@ ExpressionMode = Literal["off", "subtle", "demo", "debug"]
 ResponseLength = Literal["short", "medium", "long"]
 
 RUNTIME_PROFILE_KEY = "agent_runtime_profile"
-SUPERTONIC_DISCOVERY_SOURCES = [
-    "/private/tmp/voice-agent-voice-venv/lib/python3.12/site-packages/supertonic-1.3.1.dist-info/METADATA:329",
-    "/Users/meharkhanna/.cache/supertonic3/README.md:86",
-]
-
-# Local discovery found examples for these tags. The installed package metadata
-# says 10 tags exist, but it does not list the other seven, so keep the
-# allowlist to locally evidenced tags only.
-DISCOVERED_SUPERTONIC_EXPRESSION_TAGS = ["breath", "laugh", "sigh"]
+GRADIUM_EXPRESSION_TAGS: list[str] = []
+GRADIUM_EXPRESSION_TAG_SOURCES: list[str] = []
 
 SIMPLE_GREETING_WORDS = {"hi", "hello", "hey", "okay", "ok", "thanks", "thank", "yo"}
 REASONING_HINTS = {
@@ -83,12 +76,6 @@ ALLOWED_RUNTIME_TOOLS = {
 ALLOWED_EXPRESSION_MODES = {"off", "subtle", "demo"}
 ALLOWED_RESPONSE_LENGTHS = {"short", "medium", "long"}
 ALLOWED_MODEL_PROFILES = {"fast", "balanced", "reasoning"}
-LEGACY_HEAVY_VOICE_MODELS = {
-    "mistralai/mistral-nemotron",
-    "mistralai/mistral-medium-3.5-128b",
-    "mistralai/mistral-small-4-119b-2603",
-    "mistralai/mistral-large-3-675b-instruct-2512",
-}
 SPOKEN_CONTROL_PREFIX_RE = re.compile(r"^\s*[NFCPSE]\|\s*")
 
 
@@ -129,18 +116,21 @@ def clamp_int(value: Any, default: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, value))
 
 
-def clamp_supertonic_params(params: Mapping[str, Any]) -> dict[str, Any]:
-    response_format = str(params.get("response_format") or "wav").strip().lower()
-    if response_format not in {"wav", "flac", "ogg"}:
-        response_format = "wav"
+def clamp_gradium_tts_params(params: Mapping[str, Any]) -> dict[str, Any]:
+    output_format = str(params.get("output_format") or "pcm_24000").strip().lower()
+    if output_format not in {"pcm_24000", "wav", "mp3"}:
+        output_format = "pcm_24000"
     return {
-        "voice": str(params.get("voice") or "M1"),
-        "lang": str(params.get("lang") or "en"),
-        "speed": round(clamp_number(params.get("speed"), 1.05, 0.7, 2.0), 2),
-        "steps": clamp_int(params.get("steps"), 8, 1, 100),
-        "max_chunk_length": clamp_int(params.get("max_chunk_length"), 300, 1, 10000),
-        "silence_duration": round(clamp_number(params.get("silence_duration"), 0.3, 0.0, 10.0), 2),
-        "response_format": response_format,
+        "provider": "gradium",
+        "model_name": str(params.get("model_name") or "default"),
+        "voice_id": str(params.get("voice_id") or params.get("voice") or "YTpq7expH9539ERJ"),
+        "output_format": output_format,
+        "speed": round(clamp_number(params.get("speed"), 1.0, 0.5, 2.0), 2),
+        "rewrite_rules": str(params.get("rewrite_rules") or "en"),
+        "expression_mode": "off",
+        "allowed_expression_tags": list(GRADIUM_EXPRESSION_TAGS),
+        "expression_tag_sources": list(GRADIUM_EXPRESSION_TAG_SOURCES),
+        "max_expression_tags_per_utterance": 0,
     }
 
 
@@ -152,7 +142,7 @@ def natural_tts_speed_bounds(settings: Settings) -> tuple[float, float]:
 
 
 def clamp_live_tts_speed(settings: Settings, speed: Any) -> float:
-    hard = clamp_number(speed, settings.supertonic_speed, 0.7, 2.0)
+    hard = clamp_number(speed, settings.gradium_tts_speed, 0.5, 2.0)
     if settings.voice_allow_hard_tts_speed_range:
         return round(hard, 2)
     natural_min, natural_max = natural_tts_speed_bounds(settings)
@@ -166,30 +156,26 @@ def default_runtime_profile(settings: Settings) -> dict[str, Any]:
         "active_model_profile": settings.voice_default_profile,
         "input_mode": "vad",
         "llm": {
-            "fast_model": settings.voice_fast_model,
-            "balanced_model": settings.voice_balanced_model or settings.active_model,
-            "reasoning_model": settings.voice_reasoning_model,
+            "fast_model": settings.active_model,
+            "balanced_model": settings.active_model,
+            "reasoning_model": settings.active_model,
             "current_model": None,
             "reasoning_budget": "low",
             "max_output_tokens": min(settings.max_completion_tokens, 128),
             "temperature": settings.llm_temperature,
         },
         "tts": {
-            "provider": "supertonic",
-            "base_url": settings.supertonic_base_url,
-            "endpoint": settings.supertonic_endpoint,
-            "model": settings.supertonic_model,
-            "voice": settings.supertonic_voice,
-            "lang": settings.supertonic_language,
-            "speed": settings.supertonic_speed,
-            "steps": settings.supertonic_steps,
-            "max_chunk_length": settings.supertonic_max_chunk_length,
-            "silence_duration": settings.supertonic_silence_duration,
-            "response_format": settings.supertonic_response_format,
-            "expression_mode": settings.supertonic_expression_mode,
-            "allowed_expression_tags": list(DISCOVERED_SUPERTONIC_EXPRESSION_TAGS),
-            "expression_tag_sources": list(SUPERTONIC_DISCOVERY_SOURCES),
-            "max_expression_tags_per_utterance": settings.supertonic_max_expression_tags_per_utterance,
+            "provider": "gradium",
+            "ws_url": settings.gradium_tts_ws_url,
+            "model_name": settings.gradium_tts_model,
+            "voice_id": settings.gradium_tts_voice_id,
+            "output_format": settings.gradium_tts_output_format,
+            "speed": settings.gradium_tts_speed,
+            "rewrite_rules": settings.gradium_tts_rewrite_rules,
+            "expression_mode": "off",
+            "allowed_expression_tags": list(GRADIUM_EXPRESSION_TAGS),
+            "expression_tag_sources": list(GRADIUM_EXPRESSION_TAG_SOURCES),
+            "max_expression_tags_per_utterance": 0,
         },
         "latency": {
             "target_first_audio_ms": settings.voice_target_first_audio_ms,
@@ -222,7 +208,7 @@ def default_runtime_profile(settings: Settings) -> dict[str, Any]:
             "last_llm_structured_output": None,
             "last_runtime_actions": [],
             "last_runtime_action_status": [],
-            "last_supertonic_payload": None,
+            "last_tts_payload": None,
             "last_tts_rendered_text": None,
             "structured_output_parse_errors": [],
             "last_runtime_status": None,
@@ -238,32 +224,27 @@ def merge_runtime_profile(settings: Settings, stored: Mapping[str, Any] | None) 
         _deep_update(profile, stored)
     llm = profile.setdefault("llm", {})
     if isinstance(llm, dict):
-        if settings.voice_fast_model:
-            llm["fast_model"] = settings.voice_fast_model
-        if settings.voice_balanced_model:
-            llm["balanced_model"] = settings.voice_balanced_model
-        if settings.voice_reasoning_model:
-            llm["reasoning_model"] = settings.voice_reasoning_model
-        if llm.get("fast_model") in LEGACY_HEAVY_VOICE_MODELS:
-            llm["fast_model"] = settings.voice_fast_model or settings.active_model
-        if llm.get("balanced_model") in LEGACY_HEAVY_VOICE_MODELS:
-            llm["balanced_model"] = settings.voice_balanced_model or settings.active_model
-        if llm.get("reasoning_model") in LEGACY_HEAVY_VOICE_MODELS:
-            llm["reasoning_model"] = settings.voice_reasoning_model or settings.active_model
+        llm["fast_model"] = settings.active_model
+        llm["balanced_model"] = settings.active_model
+        llm["reasoning_model"] = settings.active_model
         active_profile = str(profile.get("active_model_profile") or settings.voice_default_profile)
-        if active_profile == "fast":
-            llm["current_model"] = llm.get("fast_model") or settings.voice_fast_model or settings.active_model
-        elif active_profile == "reasoning":
-            llm["current_model"] = (
-                llm.get("reasoning_model") or settings.voice_reasoning_model or settings.active_model
-            )
-        else:
-            llm["current_model"] = (
-                llm.get("balanced_model") or settings.voice_balanced_model or settings.active_model
-            )
-    profile["tts"]["allowed_expression_tags"] = list(DISCOVERED_SUPERTONIC_EXPRESSION_TAGS)
-    profile["tts"]["expression_tag_sources"] = list(SUPERTONIC_DISCOVERY_SOURCES)
-    profile["tts"].update(clamp_supertonic_params(profile.get("tts", {})))
+        if active_profile not in {"fast", "balanced", "reasoning"}:
+            profile["active_model_profile"] = settings.voice_default_profile
+        llm["current_model"] = settings.active_model
+    profile["tts"].update(
+        {
+            "provider": "gradium",
+            "ws_url": settings.gradium_tts_ws_url,
+            "model_name": settings.gradium_tts_model,
+            "voice_id": settings.gradium_tts_voice_id,
+            "output_format": settings.gradium_tts_output_format,
+            "rewrite_rules": settings.gradium_tts_rewrite_rules,
+            "allowed_expression_tags": list(GRADIUM_EXPRESSION_TAGS),
+            "expression_tag_sources": list(GRADIUM_EXPRESSION_TAG_SOURCES),
+            "max_expression_tags_per_utterance": 0,
+        }
+    )
+    profile["tts"].update(clamp_gradium_tts_params(profile.get("tts", {})))
     profile["latency"]["target_first_audio_ms"] = settings.voice_target_first_audio_ms
     profile["latency"]["target_llm_ttfb_ms"] = settings.voice_max_llm_ttfb_ms
     return profile
@@ -273,10 +254,9 @@ def voice_runtime_status(profile: Mapping[str, Any]) -> dict[str, Any]:
     tts = profile.get("tts") if isinstance(profile.get("tts"), Mapping) else {}
     llm = profile.get("llm") if isinstance(profile.get("llm"), Mapping) else {}
     return {
-        "tts_provider": tts.get("provider", "supertonic"),
-        "tts_voice": tts.get("voice", "M1"),
-        "tts_speed": tts.get("speed", 1.05),
-        "tts_steps": tts.get("steps", 8),
+        "tts_provider": tts.get("provider", "gradium"),
+        "tts_voice": tts.get("voice_id", "YTpq7expH9539ERJ"),
+        "tts_speed": tts.get("speed", 1.0),
         "expression_mode": tts.get("expression_mode", "off"),
         "model_profile": profile.get("active_model_profile", "balanced"),
         "current_model": llm.get("current_model"),
@@ -298,7 +278,6 @@ def runtime_command_context(
     tts = profile.get("tts") if isinstance(profile.get("tts"), Mapping) else {}
     response = profile.get("response") if isinstance(profile.get("response"), Mapping) else {}
     natural_min, natural_max = natural_tts_speed_bounds(settings)
-    allowed_tags = ", ".join(f"<{tag}>" for tag in tts.get("allowed_expression_tags") or [])
     speed_intent = voice_speed_intent(user_text)
     codex_enabled = settings.codex_orchestrator_enabled
     if speed_intent in {"slower", "very_slow"}:
@@ -353,7 +332,7 @@ def runtime_command_context(
         allowed_tool_names.extend(sorted(CODEX_ORCHESTRATOR_RUNTIME_TOOLS))
     return f"""Voice runtime protocol for this turn. Return valid JSON only. Do not answer the user directly in this protocol; choose runtime tools.
 Current user request: {user_text[:500]!r}
-Runtime: provider={tts.get("provider", "supertonic")}, voice={tts.get("voice", "M1")}, speed={tts.get("speed", 1.05)} range=0.7-2.0 natural={natural_min}-{natural_max}, steps={tts.get("steps", 8)}, expression_mode={tts.get("expression_mode", "off")}, tags={allowed_tags or "none"}, response_length={response.get("length", "short")}, model_profile={profile.get("active_model_profile", "balanced")}.
+Runtime: provider={tts.get("provider", "gradium")}, voice_id={tts.get("voice_id", "YTpq7expH9539ERJ")}, speed={tts.get("speed", 1.0)} range=0.5-2.0 natural={natural_min}-{natural_max}, response_length={response.get("length", "short")}, model_profile={profile.get("active_model_profile", "balanced")}.
 Return object keys: speak, runtime_actions, reasoning_profile, debug.
 Allowed tool names: {", ".join(allowed_tool_names)}.
 Action object shape: {{"tool":"set_tts_speed","args":{{"speed":1.0,"reason":"brief_reason"}}}} or {{"tool":"increment_tts_speed","args":{{"delta":0.2,"reason":"brief_reason"}}}}.
@@ -361,7 +340,7 @@ Required args by tool: set_tts_speed needs speed:number and reason:string; incre
 {codex_tools}
 {speed_guidance}
 Canonical slower example: {{"speak":"Sure, I'll talk slower.","runtime_actions":[{{"tool":"increment_tts_speed","args":{{"delta":-0.2,"reason":"user_requested_slower_speech"}}}}],"reasoning_profile":"fast","debug":{{"intent":"runtime_control"}}}}.
-Canonical faster example: {{"speak":"Sure, I'll talk faster.","runtime_actions":[{{"tool":"increment_tts_speed","args":{{"delta":0.2,"reason":"user_requested_faster_speech"}}}}],"reasoning_profile":"fast","debug":{{"intent":"runtime_control"}}}}.
+Canonical faster example: {{"speak":"Sure, I'll apply the faster speed now.","runtime_actions":[{{"tool":"increment_tts_speed","args":{{"delta":0.2,"reason":"user_requested_faster_speech"}}}}],"reasoning_profile":"fast","debug":{{"intent":"runtime_control"}}}}.
 Canonical Codex example: {{"speak":"I'll route that to Codex planning.","runtime_actions":[{{"tool":"delegate_to_codex_orchestrator","args":{{"goal":"user_goal","mode":"plan_first","reason":"user_requested_codex_planning"}}}}],"reasoning_profile":"reasoning","debug":{{"intent":"codex_orchestrator_delegate"}}}}.
 Rules: The current user request is authoritative; do not copy runtime_actions from prior turns. voice/audio/talking speed changes use TTS speed tools, not model_profile. model_profile only changes LLM strength. Short follow-ups like faster/fastest/slower should follow recent context; if that context is speech speed, choose a numeric TTS speed or delta within range. `speed` is an absolute multiplier and must never be negative; use a negative `delta` for slower speech. Runtime-change requests must include an action. Never return a bare tool object; always return the full object with speak and runtime_actions. Never put <tags> in speak; expression tags are added later by the renderer. Keep speak short.
 Choose runtime_actions yourself from the current user request and runtime state. If the current request mentions Codex or asks for a coding/project task, include delegate_to_codex_orchestrator."""
@@ -435,17 +414,17 @@ def fallback_runtime_command_for_request(
             )
         return None
     tts = profile.get("tts") if isinstance(profile.get("tts"), Mapping) else {}
-    current = clamp_number(tts.get("speed"), settings.supertonic_speed, 0.7, 2.0)
+    current = clamp_number(tts.get("speed"), settings.gradium_tts_speed, 0.5, 2.0)
     natural_min, natural_max = natural_tts_speed_bounds(settings)
     if intent == "very_fast":
         speed = natural_max
         action = {"tool": "set_tts_speed", "args": {"speed": speed, "reason": "fallback_user_requested_very_fast_speech"}}
-        speak = f"Got it, I'll talk faster at {speed:.2g}x."
+        speak = f"Got it, I'll apply the faster speed at {speed:.2g}x."
     elif intent == "faster":
         delta = 0.2
         speed = clamp_live_tts_speed(settings, current + delta)
         action = {"tool": "increment_tts_speed", "args": {"delta": delta, "reason": "fallback_user_requested_faster_speech"}}
-        speak = f"Sure, I'll talk faster at {speed:.2g}x."
+        speak = f"Sure, I'll apply the faster speed at {speed:.2g}x."
     elif intent == "very_slow":
         speed = natural_min
         action = {"tool": "set_tts_speed", "args": {"speed": speed, "reason": "fallback_user_requested_very_slow_speech"}}
@@ -662,7 +641,7 @@ def execute_runtime_actions(
                 status.update({"status": "rejected", "error": "missing_speed"})
                 statuses.append(status)
                 continue
-            old = tts.get("speed", settings.supertonic_speed)
+            old = tts.get("speed", settings.gradium_tts_speed)
             new = clamp_live_tts_speed(settings, args.get("speed"))
             tts["speed"] = new
             status.update({"old_value": old, "new_value": new, "field": "tts.speed"})
@@ -671,7 +650,7 @@ def execute_runtime_actions(
                 status.update({"status": "rejected", "error": "missing_delta"})
                 statuses.append(status)
                 continue
-            old = clamp_number(tts.get("speed"), settings.supertonic_speed, 0.7, 2.0)
+            old = clamp_number(tts.get("speed"), settings.gradium_tts_speed, 0.5, 2.0)
             delta = clamp_number(args.get("delta"), 0.0, -1.0, 1.0)
             new = clamp_live_tts_speed(settings, old + delta)
             tts["speed"] = new
@@ -714,7 +693,7 @@ def execute_runtime_actions(
     debug["last_runtime_actions"] = [dict(action) for action in actions]
     debug["last_runtime_action_status"] = statuses
     debug["last_runtime_status"] = voice_runtime_status(updated)
-    updated["tts"].update(clamp_supertonic_params(updated.get("tts", {})))
+    updated["tts"].update(clamp_gradium_tts_params(updated.get("tts", {})))
     return updated, statuses
 
 
@@ -793,7 +772,7 @@ def is_runtime_control_request(text: str) -> bool:
         "laugh",
         "breath",
         "sigh",
-        "supertonic",
+        "gradium",
         "voice runtime",
         "runtime status",
         "model profile",
@@ -823,12 +802,7 @@ def choose_model_profile(text: str, profile: Mapping[str, Any]) -> VoiceModelPro
 
 
 def model_for_profile(settings: Settings, profile: Mapping[str, Any], model_profile: str) -> str:
-    llm = profile.get("llm") if isinstance(profile.get("llm"), Mapping) else {}
-    if model_profile == "fast":
-        return str(llm.get("fast_model") or settings.voice_fast_model or settings.active_model)
-    if model_profile == "reasoning":
-        return str(llm.get("reasoning_model") or settings.voice_reasoning_model or settings.active_model)
-    return str(llm.get("balanced_model") or settings.voice_balanced_model or settings.active_model)
+    return settings.active_model
 
 
 def max_tokens_for_profile(settings: Settings, model_profile: str, profile: Mapping[str, Any]) -> int:
@@ -849,8 +823,8 @@ def compact_runtime_context(profile: Mapping[str, Any]) -> str:
         "Runtime summary: "
         f"length={response_length}, model_profile={profile.get('active_model_profile', 'balanced')}, "
         f"reasoning={llm.get('reasoning_budget', 'low')}, input={profile.get('input_mode', 'vad')}, "
-        f"tts={tts.get('provider', 'supertonic')} voice={tts.get('voice', 'M1')} "
-        f"speed={tts.get('speed', 1.05)} steps={tts.get('steps', 8)}. "
+        f"tts={tts.get('provider', 'gradium')} voice_id={tts.get('voice_id', 'YTpq7expH9539ERJ')} "
+        f"speed={tts.get('speed', 1.0)}. "
         "Do not write expression tags."
     )
 
@@ -1044,10 +1018,8 @@ def apply_runtime_adaptation(
         reasons.append("bad transcript marked for clarification and memory exclusion")
 
     if "high_tts_ttfb" in failures or "tts_too_slow" in failures:
-        tts["steps"] = max(5, min(int(tts.get("steps") or 8), 8) - 1)
-        tts["max_chunk_length"] = min(int(tts.get("max_chunk_length") or 300), 220)
-        tts["silence_duration"] = min(float(tts.get("silence_duration") or 0.3), 0.2)
-        reasons.append("TTS latency reduced Supertonic steps/chunk/silence settings")
+        tts["last_latency_adaptation"] = now_iso()
+        reasons.append("TTS latency recorded for Gradium runtime monitoring")
 
     if "expression_overuse" in failures:
         tts["expression_mode"] = "subtle" if tts.get("expression_mode") == "demo" else "off"
@@ -1073,7 +1045,7 @@ def apply_runtime_adaptation(
     }
     if reasons:
         updated["last_profile_change"] = {"timestamp": now_iso(), "reasons": reasons}
-    updated["tts"].update(clamp_supertonic_params(updated.get("tts", {})))
+    updated["tts"].update(clamp_gradium_tts_params(updated.get("tts", {})))
     return updated
 
 

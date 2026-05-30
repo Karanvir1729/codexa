@@ -1,0 +1,11 @@
+{
+  "requested_count": 15,
+  "voice_base_url": "http://127.0.0.1:8000",
+  "codexa_base_url": "http://127.0.0.1:4317",
+  "approve": true,
+  "quality_checks": true,
+  "repo_checks": true,
+  "expected_github_visibility": "private",
+  "started_at_ms": 1780176750158,
+  "projects": []
+}

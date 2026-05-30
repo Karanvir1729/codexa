@@ -1,0 +1,26 @@
+{
+  "requested_count": 1,
+  "voice_base_url": "http://127.0.0.1:8000",
+  "codexa_base_url": "http://127.0.0.1:4317",
+  "approve": true,
+  "quality_checks": true,
+  "repo_checks": true,
+  "expected_github_visibility": "private",
+  "started_at_ms": 1780176994054,
+  "projects": [
+    {
+      "index": 1,
+      "spec_slug": "quote-board",
+      "status": "failed",
+      "failure": "<urlopen error [Errno 61] Connection refused>",
+      "started_ms": 1780177161420,
+      "finished_ms": 1780177161420,
+      "total_duration_s": 0
+    }
+  ],
+  "completed_count": 0,
+  "failed_count": 1,
+  "finished_count": 1,
+  "finished_at_ms": 1780177161436,
+  "total_elapsed_s": 167.382
+}

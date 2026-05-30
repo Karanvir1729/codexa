@@ -9,14 +9,22 @@ from pathlib import Path
 from urllib.parse import parse_qsl
 from typing import Any
 
-import httpx
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from .agent import AgentService
-from .cloud_vm import CloudVLLMError, CloudVLLMManager
+from .cekura import (
+    build_cekura_agent_message,
+    cekura_context_from_headers,
+    cekura_conversation_id,
+    cleanup_cekura_state,
+    parse_result_webhook_run_ids,
+    record_cekura_result,
+    seed_cekura_state,
+    assert_cekura_secret,
+)
 from .config import (
     Settings,
     get_settings,
@@ -122,6 +130,16 @@ class VoiceTextSuiteRequest(BaseModel):
     cases: list[VoiceTextSuiteCase] | None = None
 
 
+class CekuraHookRequest(BaseModel):
+    run_id: str | None = None
+    scenario_id: str | None = None
+    result_id: str | None = None
+    conversation_id: str | None = None
+    reset_runtime_profile: bool = True
+    all_cekura: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class FlowCreateRequest(BaseModel):
     name: str = Field(default="Untitled voice flow", min_length=1)
     description: str = ""
@@ -177,10 +195,15 @@ eval_scheduler = EvalScheduler(
     settings.eval_schedule_seconds,
     settings.eval_schedule_apply_feedback,
 )
-cloud_vllm_manager = CloudVLLMManager(settings)
 small_webrtc_handler = None
 browser_voice_tasks: set[asyncio.Task] = set()
 browser_voice_watchdogs: set[asyncio.Task] = set()
+active_browser_voice_sessions: set[str] = set()
+
+
+def is_small_webrtc_renegotiating(connection: object) -> bool:
+    return bool(getattr(connection, "_renegotiation_in_progress", False))
+
 
 app = FastAPI(title="Voice Agent Feedback Engine", version="0.1.0")
 app.add_middleware(
@@ -194,7 +217,6 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def start_background_services() -> None:
-    cloud_vllm_manager.touch()
     if settings.llm_warmup_enabled:
         async def warmup_model() -> None:
             try:
@@ -220,7 +242,6 @@ async def stop_background_services() -> None:
         await asyncio.gather(*browser_voice_tasks, return_exceptions=True)
     if browser_voice_watchdogs:
         await asyncio.gather(*browser_voice_watchdogs, return_exceptions=True)
-    await cloud_vllm_manager.stop_if_configured_for_shutdown()
 
 
 @app.exception_handler(CostLimitExceeded)
@@ -248,12 +269,6 @@ async def health() -> dict[str, Any]:
         "environment": settings.app_env,
         "llm_provider": settings.llm_provider,
         "model": settings.active_model,
-        "vertex_nim_region": settings.vertex_nim_region
-        if settings.llm_provider == "vertex_nim"
-        else None,
-        "vertex_nim_endpoint_id": settings.vertex_nim_endpoint_id
-        if settings.llm_provider == "vertex_nim"
-        else None,
         "voice_runtime": settings.voice_runtime,
         "voice_behavior_mode": settings.voice_behavior_mode,
         "voice_flow_id": settings.voice_flow_id,
@@ -261,11 +276,7 @@ async def health() -> dict[str, Any]:
         "voice_emotion_codes_enabled": voice_settings.voice_emotion_codes_enabled,
         "local_stt_provider": voice_settings.local_stt_provider,
         "local_stt_model": voice_settings.local_stt_model,
-        "local_stt_effective_model": (
-            voice_settings.openrouter_stt_model
-            if voice_settings.local_stt_provider == "openrouter"
-            else voice_settings.local_stt_model
-        ),
+        "local_stt_effective_model": voice_settings.local_stt_model,
         "local_tts_provider": voice_settings.local_tts_provider,
         "local_tts_voice": voice_settings.local_tts_voice,
         "local_tts_text_aggregation_mode": voice_settings.local_tts_text_aggregation_mode,
@@ -279,27 +290,16 @@ async def health() -> dict[str, Any]:
             "voice_speech_path": voice_settings.voice_speech_path,
             "voice_runtime": voice_settings.voice_runtime,
             "configured_stt_provider": voice_settings.local_stt_provider,
-            "configured_stt_model": (
-                voice_settings.openrouter_stt_model
-                if voice_settings.local_stt_provider == "openrouter"
-                else voice_settings.local_stt_model
-            ),
+            "configured_stt_model": voice_settings.local_stt_model,
             "configured_tts_provider": voice_settings.local_tts_provider,
-            "configured_tts_language": voice_settings.supertonic_language,
+            "configured_tts_language": voice_settings.gradium_vad_language,
             "codex_orchestrator_enabled": settings.codex_orchestrator_enabled,
         },
         "webrtc_ice_servers": len(voice_settings.small_webrtc_browser_ice_servers),
-        "voxtral_tts_model": voice_settings.voxtral_tts_model
-        if voice_settings.local_tts_provider == "voxtral"
-        else None,
-        "voxtral_tts_ref_audio_enabled": voice_settings.voxtral_tts_ref_audio_enabled
-        if voice_settings.local_tts_provider == "voxtral"
-        else None,
         "prompt_version": prompt.version,
         "reasoning_mode": settings.reasoning_mode,
         "max_completion_tokens": settings.max_completion_tokens,
         "cost_guard": cost_guard.snapshot().to_dict(),
-        "cloud_vllm": await cloud_vllm_manager.refreshed_snapshot(),
     }
 
 
@@ -310,12 +310,6 @@ async def config() -> dict[str, Any]:
         "llm_provider": settings.llm_provider,
         "model": settings.active_model,
         "base_url": settings.active_base_url,
-        "vertex_nim_region": settings.vertex_nim_region
-        if settings.llm_provider == "vertex_nim"
-        else None,
-        "vertex_nim_endpoint_id": settings.vertex_nim_endpoint_id
-        if settings.llm_provider == "vertex_nim"
-        else None,
         "voice_runtime": settings.voice_runtime,
         "voice_behavior_mode": settings.voice_behavior_mode,
         "voice_flow_id": settings.voice_flow_id,
@@ -323,22 +317,13 @@ async def config() -> dict[str, Any]:
         "voice_emotion_codes_enabled": voice_settings.voice_emotion_codes_enabled,
         "local_stt_provider": voice_settings.local_stt_provider,
         "local_stt_model": voice_settings.local_stt_model,
-        "local_stt_effective_model": (
-            voice_settings.openrouter_stt_model
-            if voice_settings.local_stt_provider == "openrouter"
-            else voice_settings.local_stt_model
-        ),
+        "local_stt_effective_model": voice_settings.local_stt_model,
         "local_tts_provider": voice_settings.local_tts_provider,
         "local_tts_text_aggregation_mode": voice_settings.local_tts_text_aggregation_mode,
         "webrtc_ice_servers": len(voice_settings.small_webrtc_browser_ice_servers),
-        "voxtral_tts_model": voice_settings.voxtral_tts_model
-        if voice_settings.local_tts_provider == "voxtral"
-        else None,
         "max_completion_tokens": settings.max_completion_tokens,
         "twilio_ready": bool(settings.twilio_account_sid and settings.twilio_auth_token),
-        "pipecat_cloud_ready": bool(settings.pipecat_cloud_ws_url and settings.pipecat_cloud_service_host),
         "cost_guard": cost_guard.snapshot().to_dict(),
-        "cloud_vllm": await cloud_vllm_manager.refreshed_snapshot(),
     }
 
 
@@ -360,22 +345,6 @@ async def webrtc_ice_config() -> dict[str, Any]:
     return {"iceServers": settings.small_webrtc_browser_ice_servers}
 
 
-async def check_supertonic_http(settings: Settings) -> tuple[bool, str]:
-    base = settings.supertonic_base_url.rstrip("/")
-    urls = [f"{base}/v1/health", f"{base}/v1/styles", f"{base}/docs"]
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=1.0)) as client:
-            last_status = 0
-            for url in urls:
-                response = await client.get(url)
-                last_status = response.status_code
-                if response.status_code == 200:
-                    return True, "Supertonic server is healthy."
-        return False, f"Supertonic health returned HTTP {last_status} at {urls[-1]}."
-    except Exception as exc:
-        return False, f"Supertonic is not reachable at {base}: {exc}"
-
-
 async def check_voice_dependencies(
     runtime_settings: Settings | None = None,
     *,
@@ -388,133 +357,40 @@ async def check_voice_dependencies(
     status: dict[str, Any] = {
         "stt": {
             "provider": active_settings.local_stt_provider,
-            "healthy": None,
+            "healthy": bool(active_settings.nvidia_asr_url),
+            "health_url": active_settings.nvidia_asr_url,
+            "model": active_settings.local_stt_model,
         },
         "tts": {
             "provider": active_settings.local_tts_provider,
-            "healthy": None,
+            "healthy": bool(active_settings.gradium_api_key),
+            "health_url": active_settings.gradium_tts_ws_url,
+            "model": active_settings.gradium_tts_model,
+            "voice_id": active_settings.gradium_tts_voice_id,
+        },
+        "vad": {
+            "provider": "gradium",
+            "healthy": bool(active_settings.gradium_api_key),
+            "health_url": active_settings.gradium_vad_ws_url,
+            "model": active_settings.gradium_vad_model,
         },
     }
 
-    if active_settings.local_stt_provider == "remote_whisper":
-        health_url = f"{active_settings.remote_whisper_base_url.rstrip('/')}/health"
-        status["stt"]["health_url"] = health_url
-        try:
-            async with httpx.AsyncClient(timeout=2) as client:
-                response = await client.get(health_url)
-            response.raise_for_status()
-            status["stt"]["healthy"] = True
-        except Exception as exc:
-            status["stt"]["healthy"] = False
-            if active_settings.cloud_vllm_autostart_enabled and allow_autostartable_down:
-                warnings.append("Remote Whisper is down now; it will be checked again after VM start.")
-            else:
-                ready = False
-                reasons.append(
-                    f"Remote Whisper STT is not reachable at {health_url}. "
-                    "Start the speech VM/service or choose a local STT provider before presenting."
-                )
-            status["stt"]["error"] = str(exc)
-
-    if active_settings.local_stt_provider == "openrouter":
-        models_url = f"{active_settings.openrouter_base_url.rstrip('/')}/models"
-        requested_model = active_settings.openrouter_stt_model or active_settings.local_stt_model
-        status["stt"]["health_url"] = models_url
-        status["stt"]["model"] = requested_model
-        if not active_settings.openrouter_api_key:
-            ready = False
-            status["stt"]["healthy"] = False
-            reasons.append("OpenRouter STT requires OPENROUTER_API_KEY.")
-        else:
-            try:
-                headers = {"Authorization": f"Bearer {active_settings.openrouter_api_key}"}
-                async with httpx.AsyncClient(timeout=5) as client:
-                    response = await client.get(
-                        models_url,
-                        params={"output_modalities": "transcription"},
-                        headers=headers,
-                    )
-                response.raise_for_status()
-                model_ids = {
-                    str(model.get("id"))
-                    for model in response.json().get("data", [])
-                    if isinstance(model, dict) and model.get("id")
-                }
-                status["stt"]["model_available"] = requested_model in model_ids
-                if requested_model not in model_ids:
-                    ready = False
-                    status["stt"]["healthy"] = False
-                    reasons.append(
-                        f"OpenRouter STT model {requested_model} is not listed as available "
-                        "for transcription."
-                    )
-                else:
-                    status["stt"]["healthy"] = True
-            except Exception as exc:
-                ready = False
-                status["stt"]["healthy"] = False
-                reasons.append(
-                    f"OpenRouter STT is not reachable at {models_url} or the key is invalid."
-                )
-                status["stt"]["error"] = str(exc)
-
-    if active_settings.local_stt_provider == "parakeet":
-        status["stt"]["health_url"] = active_settings.parakeet_server
-        if not (active_settings.parakeet_api_key or active_settings.nvidia_api_key):
-            ready = False
-            status["stt"]["healthy"] = False
-            reasons.append("Parakeet STT requires PARAKEET_API_KEY or NVIDIA_API_KEY.")
-        elif importlib.util.find_spec("riva") is None:
-            ready = False
-            status["stt"]["healthy"] = False
-            reasons.append(
-                "Parakeet STT requires NVIDIA Riva client dependencies. "
-                'Run: .venv/bin/python -m pip install "pipecat-ai[nvidia]".'
-            )
-        else:
-            status["stt"]["healthy"] = True
-
-    if active_settings.local_tts_provider == "voxtral":
-        health_url = f"{active_settings.voxtral_tts_base_url.rstrip('/')}/models"
-        status["tts"]["health_url"] = health_url
-        try:
-            async with httpx.AsyncClient(timeout=2) as client:
-                response = await client.get(health_url)
-            response.raise_for_status()
-            status["tts"]["healthy"] = True
-        except Exception as exc:
-            status["tts"]["healthy"] = False
-            if active_settings.cloud_vllm_autostart_enabled and allow_autostartable_down:
-                warnings.append("Voxtral TTS is down now; it will be checked again after VM start.")
-            else:
-                ready = False
-                reasons.append(
-                    f"Voxtral TTS is not reachable at {health_url}. "
-                    "Start the speech VM/service or choose another TTS provider before presenting."
-                )
-            status["tts"]["error"] = str(exc)
-
-    if active_settings.local_tts_provider == "supertonic":
-        health_url = f"{active_settings.supertonic_base_url.rstrip('/')}/v1/health"
-        status["tts"]["health_url"] = health_url
-        healthy, detail = await check_supertonic_http(active_settings)
-        status["tts"]["healthy"] = healthy
-        if not healthy:
-            ready = False
-            reasons.append(
-                f"{detail} Start it with: supertonic serve --host 127.0.0.1 --port 7788"
-            )
-            status["tts"]["error"] = detail
-
-    if active_settings.local_tts_provider in {"cartesia"} and not active_settings.cartesia_api_key:
+    if active_settings.local_stt_provider != "nvidia_ws":
         ready = False
-        reasons.append("LOCAL_TTS_PROVIDER=cartesia requires CARTESIA_API_KEY.")
-    if active_settings.local_tts_provider in {"deepgram"} and not active_settings.deepgram_api_key:
+        reasons.append("LOCAL_STT_PROVIDER must be nvidia_ws.")
+    if not active_settings.nvidia_asr_url:
         ready = False
-        reasons.append("LOCAL_TTS_PROVIDER=deepgram requires DEEPGRAM_API_KEY.")
-    if active_settings.local_tts_provider in {"nvidia"} and not active_settings.nvidia_api_key:
+        status["stt"]["healthy"] = False
+        reasons.append("NVIDIA_ASR_URL is required.")
+    if active_settings.local_tts_provider != "gradium":
         ready = False
-        reasons.append("LOCAL_TTS_PROVIDER=nvidia requires NVIDIA_API_KEY.")
+        reasons.append("LOCAL_TTS_PROVIDER must be gradium.")
+    if not active_settings.gradium_api_key:
+        ready = False
+        status["tts"]["healthy"] = False
+        status["vad"]["healthy"] = False
+        reasons.append("GRADIUM_API_KEY is required for Gradium VAD and TTS.")
 
     return ready, reasons, warnings, status
 
@@ -542,41 +418,28 @@ async def check_codexa_dependency(active_settings: Settings) -> tuple[bool, str 
 async def require_codexa_dependency(active_settings: Settings) -> dict[str, Any]:
     ready, reason, status = await check_codexa_dependency(active_settings)
     if not ready:
-        raise CloudVLLMError(reason or "Codexa orchestration is not ready.")
+        raise RuntimeError(reason or "Codexa orchestration is not ready.")
     return status
 
 
 async def wait_for_voice_dependencies(runtime_settings: Settings | None = None) -> dict[str, Any]:
     active_settings = runtime_settings or settings
-    deadline = asyncio.get_running_loop().time() + active_settings.cloud_vllm_start_timeout_seconds
-    should_wait_for_vm_services = (
-        active_settings.llm_provider == "local" and active_settings.cloud_vllm_autostart_enabled
+    ready, reasons, _warnings, status = await check_voice_dependencies(
+        active_settings,
+        allow_autostartable_down=False,
     )
-    while True:
-        ready, reasons, _warnings, status = await check_voice_dependencies(
-            active_settings,
-            allow_autostartable_down=False
-        )
-        if ready:
-            return status
-        if not should_wait_for_vm_services or asyncio.get_running_loop().time() >= deadline:
-            raise CloudVLLMError(" ".join(reasons))
-        await asyncio.sleep(active_settings.cloud_vllm_poll_seconds)
+    if not ready:
+        raise RuntimeError(" ".join(reasons))
+    return status
 
 
 async def prepare_llm_runtime(runtime_settings: Settings) -> None:
-    if runtime_settings.llm_provider != "local":
-        return
-    if runtime_settings.cloud_vllm_autostart_enabled:
-        await cloud_vllm_manager.ensure_instance_running()
-        await cloud_vllm_manager.ensure_ready()
-        cloud_vllm_manager.touch()
-        return
-    if not await cloud_vllm_manager.health_check():
-        raise CloudVLLMError(
-            "LOCAL_LLM_BASE_URL is not reachable. Start the local LLM endpoint or enable "
-            "CLOUD_VLLM_AUTOSTART_ENABLED=true."
-        )
+    if runtime_settings.llm_provider != "nemotron":
+        raise RuntimeError("LLM_PROVIDER must be nemotron.")
+    if not runtime_settings.nemotron_llm_url:
+        raise RuntimeError("NEMOTRON_LLM_URL is required.")
+    if not runtime_settings.nemotron_llm_model:
+        raise RuntimeError("NEMOTRON_LLM_MODEL is required.")
 
 
 @app.get("/api/voice/preflight")
@@ -611,22 +474,6 @@ async def voice_preflight(voice_speech_path: str | None = None) -> dict[str, Any
             'Run: .venv/bin/python -m pip install -e "backend[voice]".'
         )
 
-    if runtime_settings.llm_provider == "local" and runtime_settings.active_base_url:
-        llm_endpoint_healthy = await cloud_vllm_manager.health_check()
-        if not llm_endpoint_healthy:
-            if runtime_settings.cloud_vllm_autostart_enabled:
-                if not runtime_settings.gcp_project_id:
-                    ready = False
-                    reasons.append("Set GCP_PROJECT_ID before enabling cloud VM auto-start.")
-                else:
-                    warnings.append("The local LLM endpoint is down; the GCP vLLM VM will start on Connect.")
-            else:
-                ready = False
-                reasons.append(
-                    "LOCAL_LLM_BASE_URL is not reachable. Start the vLLM/Ollama endpoint or enable "
-                    "CLOUD_VLLM_AUTOSTART_ENABLED=true."
-                )
-
     dependencies_ready, dependency_reasons, dependency_warnings, dependency_status = (
         await check_voice_dependencies(runtime_settings)
     )
@@ -652,7 +499,6 @@ async def voice_preflight(voice_speech_path: str | None = None) -> dict[str, Any
         "voice_speech_path": runtime_settings.voice_speech_path,
         "llm_provider": runtime_settings.llm_provider,
         "model": runtime_settings.active_model,
-        "cloud_vllm": await cloud_vllm_manager.refreshed_snapshot(),
     }
 
 
@@ -670,17 +516,12 @@ async def voice_prepare(payload: VoicePrepareRequest | None = None) -> dict[str,
         dependency_status["codex"] = await require_codexa_dependency(runtime_settings)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except CloudVLLMError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     return {
         "ready": True,
-        "llm_endpoint_healthy": await cloud_vllm_manager.health_check()
-        if runtime_settings.llm_provider == "local"
-        else None,
+        "llm_endpoint_healthy": None,
         "dependencies": dependency_status,
         "voice_speech_path": runtime_settings.voice_speech_path,
-        "cloud_vllm": await cloud_vllm_manager.refreshed_snapshot(),
     }
 
 
@@ -744,35 +585,30 @@ async def voice_text_test_audio(payload: VoiceTextAudioRequest) -> Response:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    endpoint = runtime_settings.supertonic_endpoint
-    endpoint = endpoint if endpoint.startswith("/") else f"/{endpoint}"
-    url = f"{runtime_settings.supertonic_base_url.rstrip('/')}{endpoint}"
     try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(runtime_settings.supertonic_timeout_seconds, connect=5)
-        ) as client:
-            response = await client.post(url, json=tts_payload, headers={"content-type": "application/json"})
-    except httpx.HTTPError as exc:
+        from .gradium_voice import synthesize_gradium_tts
+
+        audio, tts_metadata = await synthesize_gradium_tts(
+            runtime_settings,
+            str(tts_payload["text"]),
+            output_format="wav",
+        )
+    except Exception as exc:
         raise HTTPException(
             status_code=503,
-            detail=f"Supertonic TTS is not reachable at {runtime_settings.supertonic_base_url}: {exc}",
+            detail=f"Gradium TTS failed: {exc}",
         ) from exc
 
-    if response.status_code >= 400:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Supertonic TTS failed (HTTP {response.status_code}): {response.text[:240]}",
-        )
-    if not response.content:
-        raise HTTPException(status_code=502, detail="Supertonic TTS returned an empty audio response.")
+    if not audio:
+        raise HTTPException(status_code=502, detail="Gradium TTS returned an empty audio response.")
 
     return Response(
-        content=response.content,
+        content=audio,
         media_type="audio/wav",
         headers={
             "X-TTS-Provider": runtime_settings.local_tts_provider,
-            "X-TTS-Voice": str(tts_payload.get("voice") or ""),
-            "X-TTS-Speed": str(tts_payload.get("speed") or ""),
+            "X-TTS-Voice": str(tts_metadata.get("voice_id") or ""),
+            "X-TTS-Speed": str(tts_metadata.get("speed") or ""),
             "X-TTS-Expression-Tags": ",".join(str(tag) for tag in rendered.get("expression_tags_used") or []),
         },
     )
@@ -819,6 +655,147 @@ async def voice_text_test_run(payload: VoiceTextSuiteRequest | None = None) -> d
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def _require_cekura_hook_secret(request: Request) -> None:
+    try:
+        assert_cekura_secret(request.headers, settings.cekura_webhook_secret)
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+@app.get("/api/cekura/status")
+async def cekura_status() -> dict[str, Any]:
+    voice_settings = settings_for_speech_path(settings, settings.voice_speech_path)
+    return {
+        "status": "ok",
+        "websocket_path": "/api/cekura/ws",
+        "seed_hook_path": "/api/cekura/hooks/seed",
+        "reset_hook_path": "/api/cekura/hooks/reset",
+        "result_hook_path": "/api/cekura/hooks/result",
+        "websocket_secret_configured": bool(settings.cekura_websocket_secret),
+        "webhook_secret_configured": bool(settings.cekura_webhook_secret),
+        "voice_speech_path": voice_settings.voice_speech_path,
+        "voice_behavior_mode": voice_settings.voice_behavior_mode,
+        "llm_provider": voice_settings.llm_provider,
+        "model": voice_settings.active_model,
+    }
+
+
+@app.post("/api/cekura/hooks/seed")
+async def cekura_seed_hook(payload: CekuraHookRequest, request: Request) -> dict[str, Any]:
+    _require_cekura_hook_secret(request)
+    seeded = seed_cekura_state(
+        db,
+        run_id=payload.run_id,
+        scenario_id=payload.scenario_id,
+        result_id=payload.result_id,
+        metadata=payload.metadata,
+    )
+    return {"status": "seeded", **seeded}
+
+
+@app.post("/api/cekura/hooks/reset")
+async def cekura_reset_hook(payload: CekuraHookRequest, request: Request) -> dict[str, Any]:
+    _require_cekura_hook_secret(request)
+    cleanup = cleanup_cekura_state(
+        db,
+        conversation_id=payload.conversation_id,
+        run_id=payload.run_id,
+        result_id=payload.result_id,
+        all_cekura=payload.all_cekura,
+        reset_runtime_profile=payload.reset_runtime_profile,
+    )
+    return {"status": "reset", **cleanup}
+
+
+@app.post("/api/cekura/hooks/result")
+async def cekura_result_hook(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    _require_cekura_hook_secret(request)
+    recorded = record_cekura_result(db, payload)
+    cleaned: list[dict[str, Any]] = []
+    for run_id in parse_result_webhook_run_ids(payload):
+        cleaned.append(
+            cleanup_cekura_state(
+                db,
+                run_id=run_id,
+                reset_runtime_profile=False,
+            )
+        )
+    return {"status": "recorded", "recorded": recorded, "cleanup": cleaned}
+
+
+@app.websocket("/api/cekura/ws")
+async def cekura_websocket_chat(websocket: WebSocket) -> None:
+    try:
+        assert_cekura_secret(websocket.headers, settings.cekura_websocket_secret)
+    except PermissionError:
+        await websocket.close(code=1008, reason="Invalid Cekura websocket secret.")
+        return
+
+    await websocket.accept()
+    context = cekura_context_from_headers(websocket.headers)
+    conversation_id = cekura_conversation_id(context.get("run_id"))
+    runtime_settings = settings_for_speech_path(settings, websocket.query_params.get("voice_speech_path"))
+    voice_behavior_mode = websocket.query_params.get("voice_behavior_mode")
+    voice_flow_id = websocket.query_params.get("voice_flow_id")
+    input_mode = websocket.query_params.get("input_mode") or "push_to_talk"
+    try:
+        while True:
+            payload = await websocket.receive_json()
+            metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+            text = str(payload.get("content") or payload.get("text") or "").strip()
+            if payload.get("type") == "end_call":
+                await websocket.send_json(
+                    {
+                        "type": "end_call",
+                        "content": "Goodbye.",
+                        "metadata": {"source": "cekura", "conversation_id": conversation_id, **context},
+                    }
+                )
+                return
+            if not text:
+                await websocket.send_json(
+                    {
+                        "metadata": {
+                            "source": "cekura",
+                            "conversation_id": conversation_id,
+                            "ignored_empty_message": True,
+                            **context,
+                        }
+                    }
+                )
+                continue
+            turn = await run_voice_text_turn(
+                message=text,
+                conversation_id=conversation_id,
+                settings=runtime_settings,
+                db=db,
+                prompt_repo=prompt_repo,
+                agent=agent,
+                flow_runtime=flow_runtime,
+                voice_behavior_mode=metadata.get("voice_behavior_mode") or voice_behavior_mode,
+                voice_flow_id=metadata.get("voice_flow_id") or voice_flow_id,
+                input_mode=metadata.get("input_mode") or input_mode,
+                force_interrupt=bool(metadata.get("force_interrupt")),
+                flow_run_id=metadata.get("flow_run_id"),
+            )
+            await websocket.send_json(build_cekura_agent_message(turn, context))
+    except WebSocketDisconnect:
+        return
+    except Exception as exc:
+        logger.exception("Cekura websocket turn failed")
+        await websocket.send_json(
+            {
+                "content": "I'm having trouble running this test turn right now.",
+                "metadata": {
+                    "source": "cekura",
+                    "conversation_id": conversation_id,
+                    "error_type": type(exc).__name__,
+                    **context,
+                },
+            }
+        )
+
+
 def get_small_webrtc_handler():
     global small_webrtc_handler
     if small_webrtc_handler is None:
@@ -856,7 +833,7 @@ async def browser_webrtc_offer(
         await prepare_llm_runtime(runtime_settings)
         await wait_for_voice_dependencies(runtime_settings)
         await require_codexa_dependency(runtime_settings)
-    except CloudVLLMError as exc:
+    except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     try:
@@ -885,17 +862,19 @@ async def browser_webrtc_offer(
     if reconnecting_known_peer:
         logger.info("Reusing voice session for WebRTC reconnect: pc_id=%s", request.pc_id)
     else:
-        if not cloud_vllm_manager.try_session_started(max_sessions=1):
+        if active_browser_voice_sessions:
             raise HTTPException(
                 status_code=409,
                 detail="A voice session is already active. Disconnect it before starting another.",
             )
+        active_browser_voice_sessions.add(session_id)
     session_reserved = not reconnecting_known_peer
 
     async def webrtc_connection_callback(connection: SmallWebRTCConnection):
         nonlocal session_reserved
         connection_connected = asyncio.Event()
         watchdog: asyncio.Task | None = None
+        disconnect_grace_task: asyncio.Task | None = None
         task = asyncio.create_task(
             run_browser_pipecat_voice_agent(
                 connection,
@@ -911,15 +890,57 @@ async def browser_webrtc_offer(
         browser_voice_tasks.add(task)
 
         async def cancel_on_connection_end(_connection, *_args):
+            if is_small_webrtc_renegotiating(_connection):
+                logger.info("Ignoring transient WebRTC disconnect during renegotiation for %s", session_id)
+                return
             if not task.done():
                 logger.info("Browser WebRTC connection ended; cancelling voice task %s", session_id)
                 task.cancel()
 
+        async def cancel_on_unrecovered_disconnect(_connection, *_args):
+            nonlocal disconnect_grace_task
+            if disconnect_grace_task is not None and not disconnect_grace_task.done():
+                return
+
+            async def delayed_cancel() -> None:
+                nonlocal disconnect_grace_task
+                try:
+                    await asyncio.sleep(8)
+                    if task.done():
+                        return
+                    try:
+                        connected = bool(_connection.is_connected())
+                    except Exception:
+                        connected = False
+                    if connected:
+                        logger.info("Browser WebRTC disconnect recovered for %s", session_id)
+                        return
+                    logger.info(
+                        "Browser WebRTC disconnect did not recover; cancelling voice task %s",
+                        session_id,
+                    )
+                    task.cancel()
+                finally:
+                    current = asyncio.current_task()
+                    if current is not None:
+                        browser_voice_watchdogs.discard(current)
+                    if disconnect_grace_task is current:
+                        disconnect_grace_task = None
+
+            logger.info("Browser WebRTC disconnected; waiting for ICE/restart recovery for %s", session_id)
+            disconnect_grace_task = asyncio.create_task(delayed_cancel())
+            browser_voice_watchdogs.add(disconnect_grace_task)
+
         async def mark_connection_connected(_connection, *_args):
+            nonlocal disconnect_grace_task
+            if disconnect_grace_task is not None and not disconnect_grace_task.done():
+                disconnect_grace_task.cancel()
+                browser_voice_watchdogs.discard(disconnect_grace_task)
+                disconnect_grace_task = None
             connection_connected.set()
 
         connection.add_event_handler("connected", mark_connection_connected)
-        connection.add_event_handler("disconnected", cancel_on_connection_end)
+        connection.add_event_handler("disconnected", cancel_on_unrecovered_disconnect)
         connection.add_event_handler("closed", cancel_on_connection_end)
         connection.add_event_handler("failed", cancel_on_connection_end)
 
@@ -952,9 +973,12 @@ async def browser_webrtc_offer(
             if watchdog is not None:
                 watchdog.cancel()
                 browser_voice_watchdogs.discard(watchdog)
+            if disconnect_grace_task is not None:
+                disconnect_grace_task.cancel()
+                browser_voice_watchdogs.discard(disconnect_grace_task)
             if session_reserved:
                 session_reserved = False
-                cloud_vllm_manager.session_finished()
+                active_browser_voice_sessions.discard(session_id)
             for stale_watchdog in tuple(browser_voice_watchdogs):
                 if stale_watchdog.done():
                     browser_voice_watchdogs.discard(stale_watchdog)
@@ -971,7 +995,7 @@ async def browser_webrtc_offer(
     except Exception:
         if session_reserved:
             session_reserved = False
-            cloud_vllm_manager.session_finished()
+            active_browser_voice_sessions.discard(session_id)
         raise
 
 
@@ -1245,26 +1269,13 @@ def build_latency_summary(limit: int = 100, conversation_id: str | None = None) 
             "tts_provider": settings.local_tts_provider,
             "tts_voice": settings.local_tts_voice,
             "tts_text_aggregation_mode": settings.local_tts_text_aggregation_mode,
-            "voxtral_tts_model": settings.voxtral_tts_model
-            if settings.local_tts_provider == "voxtral"
-            else None,
-            "voxtral_tts_response_format": settings.voxtral_tts_response_format
-            if settings.local_tts_provider == "voxtral"
-            else None,
-            "voxtral_tts_stream": settings.voxtral_tts_stream
-            if settings.local_tts_provider == "voxtral"
-            else None,
-            "voxtral_tts_ref_audio_enabled": settings.voxtral_tts_ref_audio_enabled
-            if settings.local_tts_provider == "voxtral"
-            else None,
+            "gradium_tts_model": settings.gradium_tts_model,
+            "gradium_tts_output_format": settings.gradium_tts_output_format,
+            "gradium_tts_voice_id": settings.gradium_tts_voice_id,
+            "nvidia_asr_url": settings.nvidia_asr_url,
             "llm_provider": settings.llm_provider,
             "llm_model": settings.active_model,
-            "vertex_nim_region": settings.vertex_nim_region
-            if settings.llm_provider == "vertex_nim"
-            else None,
-            "vertex_nim_endpoint_id": settings.vertex_nim_endpoint_id
-            if settings.llm_provider == "vertex_nim"
-            else None,
+            "nemotron_llm_url": settings.nemotron_llm_url,
         },
         "providers_latest": provider_rows[0] if provider_rows else {},
         "bottleneck_counts": bottleneck_counts,
@@ -1695,12 +1706,21 @@ async def twilio_media_stream(websocket: WebSocket) -> None:
         return
 
     await websocket.accept()
-    conversation_id = agent.ensure_conversation(None, "twilio", metadata={"mode": "text-fallback"})
+    conversation_id: str | None = None
+    stream_sid: str | None = None
     try:
         while True:
             message = await websocket.receive_json()
             event = message.get("event")
             if event == "start":
+                start = message.get("start") if isinstance(message.get("start"), dict) else {}
+                stream_sid = str(start.get("streamSid") or message.get("streamSid") or "") or None
+                call_sid = str(start.get("callSid") or "") or None
+                conversation_id = agent.ensure_conversation(
+                    f"twilio-{call_sid or stream_sid}" if call_sid or stream_sid else None,
+                    "twilio",
+                    metadata={"mode": "text-fallback", "stream_sid": stream_sid, "call_sid": call_sid},
+                )
                 db.execute(
                     """
                     INSERT INTO turns(id, conversation_id, role, content, metrics_json)
@@ -1709,13 +1729,68 @@ async def twilio_media_stream(websocket: WebSocket) -> None:
                     (
                         str(uuid.uuid4()),
                         conversation_id,
-                        "Twilio media stream started. Set VOICE_RUNTIME=pipecat for live STT/LLM/TTS.",
-                        dumps(message.get("start", {})),
+                        "Twilio media stream started. Text bridge is routed through the voice turn runner.",
+                        dumps(start),
                     ),
                 )
-                await websocket.send_json({"event": "mark", "streamSid": message["start"]["streamSid"], "mark": {"name": "ready"}})
+                await websocket.send_json(
+                    {"event": "mark", "streamSid": stream_sid, "mark": {"name": "ready"}}
+                )
             elif event == "media":
                 continue
+            elif event in {"text", "user_text"} or message.get("text") or message.get("content"):
+                text = str(message.get("text") or message.get("content") or "").strip()
+                if not text:
+                    await websocket.send_json(
+                        {
+                            "event": "agent_text",
+                            "streamSid": stream_sid,
+                            "metadata": {"source": "twilio", "ignored_empty_message": True},
+                        }
+                    )
+                    continue
+                if conversation_id is None:
+                    conversation_id = agent.ensure_conversation(
+                        None,
+                        "twilio",
+                        metadata={"mode": "text-fallback", "stream_sid": stream_sid},
+                    )
+                metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+                runtime_settings = settings_for_speech_path(
+                    settings,
+                    str(metadata.get("voice_speech_path") or "") or websocket.query_params.get("voice_speech_path"),
+                )
+                turn = await run_voice_text_turn(
+                    message=text,
+                    conversation_id=conversation_id,
+                    settings=runtime_settings,
+                    db=db,
+                    prompt_repo=prompt_repo,
+                    agent=agent,
+                    flow_runtime=flow_runtime,
+                    voice_behavior_mode=metadata.get("voice_behavior_mode")
+                    or websocket.query_params.get("voice_behavior_mode"),
+                    voice_flow_id=metadata.get("voice_flow_id") or websocket.query_params.get("voice_flow_id"),
+                    input_mode=metadata.get("input_mode")
+                    or websocket.query_params.get("input_mode")
+                    or "push_to_talk",
+                    force_interrupt=bool(metadata.get("force_interrupt")),
+                    flow_run_id=metadata.get("flow_run_id"),
+                )
+                await websocket.send_json(
+                    {
+                        "event": "agent_text",
+                        "streamSid": stream_sid,
+                        "text": turn["message"],
+                        "conversation_id": turn["conversation_id"],
+                        "metadata": {
+                            "source": "twilio",
+                            "voice_turn_source": "voice_text_turn",
+                            "latency_trace_id": turn.get("latency_trace_id"),
+                            "providers": turn.get("providers", {}),
+                        },
+                    }
+                )
             elif event == "stop":
                 break
     except WebSocketDisconnect:

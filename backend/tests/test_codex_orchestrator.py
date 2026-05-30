@@ -27,8 +27,8 @@ def _settings(tmp_path: Path) -> Settings:
         database_path=str(tmp_path / "agent.sqlite3"),
         llm_provider="mock",
         codex_orchestrator_enabled=True,
-        local_tts_provider="supertonic",
-        voice_speech_path="supertone_parakeet",
+        local_tts_provider="gradium",
+        voice_speech_path="nvidia_gradium",
     )
 
 

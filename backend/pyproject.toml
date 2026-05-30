@@ -9,6 +9,7 @@ dependencies = [
   "pydantic>=2.8.0",
   "pydantic-settings>=2.4.0",
   "httpx>=0.27.0",
+  "websockets>=15.0.1",
   "python-dotenv>=1.0.1",
   "pyyaml>=6.0.2",
   "twilio>=9.3.0",
@@ -16,13 +17,12 @@ dependencies = [
 
 [project.optional-dependencies]
 voice-cloud = [
-  "pipecat-ai[websocket,webrtc,openai,nvidia,deepgram,cartesia,google,whisper,kokoro,piper]>=1.2.1",
+  "pipecat-ai[websocket,webrtc,openai]>=1.3.0",
   "ormsgpack>=1.7.0",
 ]
 voice = [
-  "pipecat-ai[websocket,webrtc,openai,nvidia,deepgram,cartesia,local,mlx-whisper,kokoro,piper,whisper]>=1.2.1",
+  "pipecat-ai[websocket,webrtc,openai]>=1.3.0",
   "ormsgpack>=1.7.0",
-  "whisperx>=3.8.5",
 ]
 dev = [
   "pytest>=8.3.0",

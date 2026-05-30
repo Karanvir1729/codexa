@@ -1,0 +1,48 @@
+name: Cekura Regression
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 16 * * *"
+
+jobs:
+  cekura:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Check Cekura configuration
+        id: config
+        env:
+          CEKURA_API_KEY: ${{ secrets.CEKURA_API_KEY }}
+          CEKURA_WEBSOCKET_URL: ${{ vars.CEKURA_WEBSOCKET_URL }}
+        run: |
+          if [ -n "$CEKURA_API_KEY" ] && [ -n "$CEKURA_WEBSOCKET_URL" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping Cekura: set CEKURA_API_KEY secret and CEKURA_WEBSOCKET_URL variable."
+          fi
+      - name: Sync Cekura evaluators
+        if: steps.config.outputs.enabled == 'true'
+        env:
+          CEKURA_API_KEY: ${{ secrets.CEKURA_API_KEY }}
+          CEKURA_PROJECT_ID: ${{ vars.CEKURA_PROJECT_ID || '5817' }}
+          CEKURA_WEBSOCKET_URL: ${{ vars.CEKURA_WEBSOCKET_URL }}
+          CEKURA_WEBSOCKET_SECRET: ${{ secrets.CEKURA_WEBSOCKET_SECRET }}
+        run: python3 scripts/cekura_testing.py sync
+      - name: Run Cekura suite
+        if: steps.config.outputs.enabled == 'true'
+        env:
+          CEKURA_API_KEY: ${{ secrets.CEKURA_API_KEY }}
+          CEKURA_PROJECT_ID: ${{ vars.CEKURA_PROJECT_ID || '5817' }}
+          CEKURA_WEBSOCKET_URL: ${{ vars.CEKURA_WEBSOCKET_URL }}
+        run: python3 scripts/cekura_testing.py run --wait --frequency 1 --concurrency-limit 3
+      - name: Triage latest result
+        if: always() && steps.config.outputs.enabled == 'true'
+        env:
+          CEKURA_API_KEY: ${{ secrets.CEKURA_API_KEY }}
+          CEKURA_PROJECT_ID: ${{ vars.CEKURA_PROJECT_ID || '5817' }}
+        run: python3 scripts/cekura_testing.py triage

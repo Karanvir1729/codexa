@@ -126,26 +126,18 @@ class CostGuard:
         )
 
     def estimate_llm_call(self, provider: str, raw: dict[str, Any]) -> float:
-        if provider == "mock":
-            return self.settings.cost_guard_mock_call_usd
-        if provider in {"local", "ollama"}:
-            return self.settings.cost_guard_local_call_usd
-        if provider in {"nvidia", "vertex_nim"}:
+        if provider == "nemotron":
             usage = loads(dumps(raw.get("usage", {})), {})
             input_tokens = float(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
             output_tokens = float(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
             token_cost = (
-                input_tokens * self.settings.cost_guard_nvidia_input_per_1m_tokens_usd
-                + output_tokens * self.settings.cost_guard_nvidia_output_per_1m_tokens_usd
+                input_tokens * self.settings.cost_guard_nemotron_input_per_1m_tokens_usd
+                + output_tokens * self.settings.cost_guard_nemotron_output_per_1m_tokens_usd
             ) / 1_000_000
-            return max(token_cost, self.settings.cost_guard_nvidia_call_usd)
+            return max(token_cost, self.settings.cost_guard_nemotron_call_usd)
         return self.settings.cost_guard_reserve_usd_per_call
 
     def reserve_amount_for_provider(self, provider: str) -> float:
-        if provider == "mock":
-            return self.settings.cost_guard_mock_call_usd
-        if provider in {"local", "ollama"}:
-            return self.settings.cost_guard_local_call_usd
-        if provider in {"nvidia", "vertex_nim"}:
-            return self.settings.cost_guard_nvidia_call_usd
+        if provider == "nemotron":
+            return self.settings.cost_guard_nemotron_call_usd
         return self.settings.cost_guard_reserve_usd_per_call

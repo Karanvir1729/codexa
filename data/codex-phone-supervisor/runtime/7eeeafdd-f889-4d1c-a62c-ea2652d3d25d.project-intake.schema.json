@@ -1,0 +1,84 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action",
+    "assistant_message",
+    "project_name",
+    "workspace_path",
+    "description",
+    "requested_kind",
+    "pending_action_type",
+    "confidence",
+    "reason"
+  ],
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": [
+        "ask_user",
+        "create_project",
+        "no_project_action"
+      ]
+    },
+    "assistant_message": {
+      "type": "string"
+    },
+    "project_name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "workspace_path": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "description": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "requested_kind": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "project",
+        "website",
+        "site",
+        "app",
+        "agent",
+        "tool",
+        "game",
+        null
+      ]
+    },
+    "pending_action_type": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "confirm_create_project",
+        "collect_project_name",
+        null
+      ]
+    },
+    "confidence": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "reason": {
+      "type": "string"
+    }
+  }
+}

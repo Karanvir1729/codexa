@@ -9,7 +9,7 @@ from .voice_runtime_controls import (
     voice_tone_intent,
     voice_tone_response,
 )
-from .codex_orchestrator import has_codex_orchestrator_session
+from .codex_orchestrator import has_codex_orchestrator_session, is_codex_orchestrator_request
 from .config import Settings
 from .cost_guard import CostGuard
 from .db import Database, dumps, loads
@@ -55,7 +55,7 @@ def build_runtime_system_prompt(system_prompt: str) -> str:
         "- If the user says OnePlus One, ask whether they mean the phone or the math problem.\n"
         "- If the user asks you to speak faster or slower, acknowledge the new speed briefly.\n"
         "- If the user asks you to change tone or speaking style, acknowledge that you can do it.\n"
-        "- If the user asks about network, speed, or latency, say: We reduce latency with streaming and local voice processing.\n"
+        "- If the user asks about network, speed, or latency, say: We reduce latency with streaming, NVIDIA WebSocket STT, and Gradium VAD/TTS.\n"
         "- If the user asks for a story, narration, explanation, or more detail, answer directly instead of asking how long it should be.\n"
         "- Otherwise, ask one concise clarifying question when required information is missing.\n"
         "Do not claim an external action is complete unless a tool result proves it."
@@ -184,8 +184,10 @@ def fast_policy_response(text: str) -> str | None:
         return voice_tone_response(tone_intent)
     if "your name" in normalized or "who are you" in normalized:
         return "I am an AI assistant."
+    if "human" in words and "agent" in words:
+        return "I am an AI assistant, and I can help you here."
     if _latency_intent(normalized, words):
-        return "We reduce latency with streaming and local voice processing."
+        return "We reduce latency with streaming, NVIDIA WebSocket STT, and Gradium VAD/TTS."
     return None
 
 
@@ -266,6 +268,48 @@ class AgentService:
                 prompt_version=prompt.version,
                 codex_session_active=codex_session_active,
             )
+        if not self.settings.codex_orchestrator_enabled and is_codex_orchestrator_request(text):
+            response_text = (
+                "Codexa orchestration is not enabled in this backend, so I cannot start that "
+                "planning flow from this session."
+            )
+            assistant_turn_id = str(uuid.uuid4())
+            self.db.execute(
+                """
+                INSERT INTO turns(
+                    id, conversation_id, role, content, latency_ms, model, prompt_version,
+                    metrics_json
+                )
+                VALUES (?, ?, 'assistant', ?, ?, ?, ?, ?)
+                """,
+                (
+                    assistant_turn_id,
+                    cid,
+                    response_text,
+                    0,
+                    "policy-rule",
+                    prompt.version,
+                    dumps(
+                        {
+                            "provider": "policy-rule",
+                            "reason": "codex_orchestrator_disabled",
+                            "latency_target_ms": self.settings.latency_target_ms,
+                            "estimated_cost_usd": 0,
+                        }
+                    ),
+                ),
+            )
+            return {
+                "conversation_id": cid,
+                "user_turn_id": user_turn_id,
+                "assistant_turn_id": assistant_turn_id,
+                "message": response_text,
+                "latency_ms": 0,
+                "model": "policy-rule",
+                "provider": "policy-rule",
+                "prompt_version": prompt.version,
+                "cost_guard": self.cost_guard.snapshot().to_dict(),
+            }
         if response_text := fast_policy_response(text):
             assistant_turn_id = str(uuid.uuid4())
             self.db.execute(

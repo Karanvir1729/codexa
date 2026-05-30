@@ -6,7 +6,7 @@ const certDir = new URL("../.certs/", import.meta.url);
 const certPath = new URL("dev-cert.pem", certDir);
 const keyPath = new URL("dev-key.pem", certDir);
 const https =
-  process.env.VITE_DEV_HTTPS !== "false" &&
+  process.env.VITE_DEV_HTTPS === "true" &&
   fs.existsSync(certPath) && fs.existsSync(keyPath)
     ? {
         cert: fs.readFileSync(certPath),
@@ -26,7 +26,12 @@ export default defineConfig({
     proxy: {
       "/api": "http://localhost:8000",
       "/health": "http://localhost:8000",
-      "/twilio": "http://localhost:8000"
+      "/twilio": "http://localhost:8000",
+      "/supervisor-api": {
+        target: "http://localhost:4317",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/supervisor-api/, "")
+      }
     }
   }
 });

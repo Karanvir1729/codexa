@@ -1,0 +1,31 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "recommended",
+    "confidence",
+    "reason",
+    "user_check_in",
+    "suggested_responsibilities"
+  ],
+  "properties": {
+    "recommended": {
+      "type": "boolean"
+    },
+    "confidence": {
+      "type": "number"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "user_check_in": {
+      "type": "string"
+    },
+    "suggested_responsibilities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

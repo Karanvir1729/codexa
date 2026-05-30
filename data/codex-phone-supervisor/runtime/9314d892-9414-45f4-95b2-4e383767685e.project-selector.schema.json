@@ -1,0 +1,47 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "assistant_message",
+    "selected_workspace_path",
+    "selected_project_name",
+    "confidence",
+    "reason"
+  ],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "needs_user",
+        "selected"
+      ]
+    },
+    "assistant_message": {
+      "type": "string"
+    },
+    "selected_workspace_path": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "selected_project_name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "confidence": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "reason": {
+      "type": "string"
+    }
+  }
+}

@@ -26,8 +26,8 @@ def voice_text_runtime(tmp_path: Path):
     settings = Settings(
         database_path=str(tmp_path / "agent.sqlite3"),
         llm_provider="mock",
-        local_tts_provider="supertonic",
-        voice_speech_path="supertone_parakeet",
+        local_tts_provider="gradium",
+        voice_speech_path="nvidia_gradium",
     )
     db = Database(settings.database_path)
     prompt_repo = PromptRepository(db)
@@ -38,22 +38,19 @@ def voice_text_runtime(tmp_path: Path):
     return settings, db, prompt_repo, agent, flow_runtime
 
 
-def test_voice_text_tts_payload_renders_supertonic_wav():
+def test_voice_text_tts_payload_renders_gradium_wav():
     settings = Settings(
-        local_tts_provider="supertonic",
-        supertonic_voice="M1",
-        supertonic_language="na",
-        supertonic_speed=1.05,
-        supertonic_steps=8,
-        supertonic_response_format="ogg",
+        local_tts_provider="gradium",
+        gradium_tts_voice_id="voice-test",
+        gradium_tts_speed=1.0,
+        gradium_tts_output_format="pcm_24000",
     )
     profile = {
         "tts": {
             "speed": 3,
-            "steps": 0,
-            "expression_mode": "subtle",
-            "allowed_expression_tags": ["breath"],
-            "max_expression_tags_per_utterance": 1,
+            "expression_mode": "off",
+            "allowed_expression_tags": [],
+            "max_expression_tags_per_utterance": 0,
         }
     }
 
@@ -64,13 +61,12 @@ def test_voice_text_tts_payload_renders_supertonic_wav():
         user_text="Please test TTS.",
     )
 
-    assert payload["response_format"] == "wav"
+    assert payload["provider"] == "gradium"
+    assert payload["output_format"] == "wav"
     assert payload["speed"] == 2.0
-    assert payload["steps"] == 1
-    assert payload["voice"] == "M1"
-    assert payload["lang"] == "na"
-    assert "<breath>" in payload["text"]
-    assert rendered["expression_tags_used"] == ["breath"]
+    assert payload["voice_id"] == "voice-test"
+    assert payload["model_name"] == "default"
+    assert rendered["expression_tags_used"] == []
 
 
 @pytest.mark.asyncio
@@ -129,8 +125,8 @@ async def test_voice_text_turn_runtime_speed_falls_back_on_llm_timeout(tmp_path:
     settings = Settings(
         database_path=str(tmp_path / "agent.sqlite3"),
         llm_provider="mock",
-        local_tts_provider="supertonic",
-        voice_speech_path="supertone_parakeet",
+        local_tts_provider="gradium",
+        voice_speech_path="nvidia_gradium",
     )
     db = Database(settings.database_path)
     prompt_repo = PromptRepository(db)
@@ -154,7 +150,7 @@ async def test_voice_text_turn_runtime_speed_falls_back_on_llm_timeout(tmp_path:
     assert result["provider"] == "runtime-fallback"
     assert "slow" in result["message"].casefold()
     assert result["runtime_action_status"][0]["status"] == "completed"
-    assert result["runtime_profile"]["tts_speed"] < settings.supertonic_speed
+    assert result["runtime_profile"]["tts_speed"] < settings.gradium_tts_speed
 
 
 @pytest.mark.asyncio

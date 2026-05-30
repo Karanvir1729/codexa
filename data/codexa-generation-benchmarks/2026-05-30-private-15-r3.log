@@ -1,0 +1,9 @@
+[1/15] quote-board
+Traceback (most recent call last):
+  File "/Users/meharkhanna/Documents/voice-agent-hackathon/scripts/codexa_generation_benchmark.py", line 597, in <module>
+    main()
+    ~~~~^^
+  File "/Users/meharkhanna/Documents/voice-agent-hackathon/scripts/codexa_generation_benchmark.py", line 572, in main
+    "project": result["project_name"],
+               ~~~~~~^^^^^^^^^^^^^^^^
+KeyError: 'project_name'

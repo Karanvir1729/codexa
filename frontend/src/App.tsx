@@ -3,6 +3,7 @@ import Activity from "lucide-react/dist/esm/icons/activity.js";
 import Brain from "lucide-react/dist/esm/icons/brain.js";
 import CheckCircle2 from "lucide-react/dist/esm/icons/check-circle-2.js";
 import Clock3 from "lucide-react/dist/esm/icons/clock-3.js";
+import Code2 from "lucide-react/dist/esm/icons/code-2.js";
 import Cpu from "lucide-react/dist/esm/icons/cpu.js";
 import Gauge from "lucide-react/dist/esm/icons/gauge.js";
 import Keyboard from "lucide-react/dist/esm/icons/keyboard.js";
@@ -69,6 +70,7 @@ import {
   type VoiceTextSuiteResponse,
   type VoiceTextTurnResponse
 } from "./api";
+import { AppBuilderPage } from "./AppBuilder";
 import { FlowStudio } from "./FlowStudio";
 import { SelfLearn } from "./SelfLearn";
 import { SmokeBackground } from "./SmokeBackground";
@@ -94,6 +96,10 @@ type BotOutputData = {
 };
 
 type VoicePhase = "Idle" | "Listening" | "Processing" | "Speaking";
+
+type PipecatParticipantLike = {
+  local?: boolean;
+};
 
 type Turn = {
   id: string;
@@ -138,12 +144,15 @@ const prompts = [
 const voiceIceServers: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
 const voiceConnectTimeoutMs = 60000;
 const voiceWarmupTimeoutMs = 15 * 60 * 1000;
+const localVoiceSpeechRmsThreshold = 0.018;
+const localVoiceSpeechStartFrames = 2;
+const localVoiceSpeechStopFrames = 10;
 const speechPathStorageKey = "voiceops-speech-path";
 const voiceInputModeStorageKey = "voiceops-input-mode";
 
 function initialSpeechPath(): VoiceSpeechPath {
-  if (typeof window === "undefined") return "supertone_parakeet";
-  return "supertone_parakeet";
+  if (typeof window === "undefined") return "nvidia_gradium";
+  return "nvidia_gradium";
 }
 
 function initialVoiceInputMode(): VoiceInputMode {
@@ -241,6 +250,14 @@ function pipecatErrorText(message: RTVIMessage) {
   return typeof errorMessage === "string" ? errorMessage : null;
 }
 
+function isLocalPipecatParticipant(participant: unknown) {
+  return Boolean(
+    participant &&
+      typeof participant === "object" &&
+      (participant as PipecatParticipantLike).local === true
+  );
+}
+
 async function requestMicrophoneStream() {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error("This browser does not expose microphone capture.");
@@ -262,15 +279,6 @@ async function requestMicrophoneStream() {
     }
     throw error;
   }
-}
-
-function needsCloudVoiceStart(preflight: VoicePreflight) {
-  return (
-    preflight.llm_provider === "local" &&
-    preflight.cloud_vllm.enabled &&
-    (preflight.llm_endpoint_healthy === false ||
-      preflight.cloud_vllm.last_status !== "RUNNING")
-  );
 }
 
 function isTypingTarget(target: EventTarget | null) {
@@ -299,7 +307,7 @@ function formatDebugValue(value: unknown) {
   return String(value);
 }
 
-type AppView = "voice" | "live" | "flow" | "selfLearn";
+type AppView = "voice" | "builder" | "live" | "flow" | "selfLearn";
 
 type VariableBadge = {
   id: string;
@@ -511,6 +519,7 @@ export function App() {
   const [voiceMode, setVoiceMode] = useState<"assistant" | "flow">("assistant");
   const [voiceInputMode, setVoiceInputMode] = useState<VoiceInputMode>(initialVoiceInputMode);
   const [voicePhase, setVoicePhase] = useState<VoicePhase>("Idle");
+  const [voiceConnectInFlight, setVoiceConnectInFlight] = useState(false);
   const [voiceRuntime, setVoiceRuntime] = useState<VoiceRuntimeProfileResponse | null>(null);
   const [voicePreflight, setVoicePreflight] = useState<VoicePreflight | null>(null);
   const [speechPath, setSpeechPath] = useState<VoiceSpeechPath>(initialSpeechPath);
@@ -520,6 +529,7 @@ export function App() {
   const [micEnabled, setMicEnabled] = useState(false);
   const [botSpeaking, setBotSpeaking] = useState(false);
   const [userSpeaking, setUserSpeaking] = useState(false);
+  const botSpeakingRef = useRef(false);
   const botAudioRef = useRef<HTMLAudioElement | null>(null);
   const voiceTextAudioRef = useRef<HTMLAudioElement | null>(null);
   const voiceTextAudioUrlRef = useRef<string | null>(null);
@@ -532,7 +542,12 @@ export function App() {
   const voiceConnectInFlightRef = useRef(false);
   const voiceRuntimeRefreshInFlightRef = useRef(false);
   const pushToTalkPressedRef = useRef(false);
+  const pushToTalkWasMicEnabledRef = useRef(false);
   const voiceProcessingStartedAtRef = useRef<number | null>(null);
+  const userSpeakingRef = useRef(false);
+  const voicePhaseRef = useRef<VoicePhase>("Idle");
+  const micEnabledRef = useRef(false);
+  const voiceInputModeRef = useRef<VoiceInputMode>(voiceInputMode);
   const previousVariableSnapshotRef = useRef<Record<string, string> | null>(null);
 
   function clearVoiceTextAudioUrl() {
@@ -614,17 +629,16 @@ export function App() {
     try {
       const preflight = await getVoicePreflight(speechPath);
       setVoicePreflight(preflight);
-      if (!preflight.ready || !needsCloudVoiceStart(preflight)) return;
-      setVoiceNotice("Starting the voice VM. Connect will be faster once it is ready.");
+      if (!preflight.ready) return;
       await withTimeout(
         prepareVoice(speechPath),
         voiceWarmupTimeoutMs,
-        "Voice VM warmup timed out. Click Connect to retry."
+        "Voice preparation timed out. Click Start to retry."
       );
-      setVoiceNotice("Voice VM is ready. Click Connect when you want to talk.");
+      setVoiceNotice("Voice services are ready. Click Start when you want to talk.");
       await refresh();
     } catch (error) {
-      setVoiceNotice(error instanceof Error ? error.message : "Voice VM warmup failed.");
+      setVoiceNotice(error instanceof Error ? error.message : "Voice preparation failed.");
     }
   }
 
@@ -639,6 +653,7 @@ export function App() {
 
   useEffect(() => {
     window.localStorage.setItem(voiceInputModeStorageKey, voiceInputMode);
+    voiceInputModeRef.current = voiceInputMode;
     if (voiceInputMode === "push_to_talk" && voiceClientRef.current?.isMicEnabled) {
       voiceClientRef.current.enableMic(false);
       setMicEnabled(false);
@@ -658,6 +673,8 @@ export function App() {
   }, [health?.voice_behavior_mode]);
 
   function resetVoiceUi() {
+    pushToTalkPressedRef.current = false;
+    voiceProcessingStartedAtRef.current = null;
     setMicEnabled(false);
     setBotSpeaking(false);
     setUserSpeaking(false);
@@ -693,7 +710,10 @@ export function App() {
       enableMic: false,
       enableCam: false,
       callbacks: {
-        onConnected: () => setVoiceNotice(null),
+        onConnected: () => {
+          setVoiceNotice(null);
+          setVoicePhase("Idle");
+        },
         onDisconnected: () => {
           resetVoiceUi();
           if (voiceClientRef.current === client) {
@@ -717,7 +737,7 @@ export function App() {
         },
         onTrackStarted: (track: MediaStreamTrack, participant?: unknown) => {
           if (track.kind !== "audio") return;
-          if (participant) {
+          if (isLocalPipecatParticipant(participant)) {
             setLocalAudioTrack(track);
             setMicEnabled(true);
             setVoiceNotice(null);
@@ -729,29 +749,41 @@ export function App() {
         },
         onTrackStopped: (track: MediaStreamTrack, participant?: unknown) => {
           if (track.kind !== "audio") return;
-          if (participant) {
+          if (isLocalPipecatParticipant(participant)) {
+            voiceProcessingStartedAtRef.current = null;
             setLocalAudioTrack(null);
             setMicEnabled(false);
+            setUserSpeaking(false);
+            if (!botSpeakingRef.current) setVoicePhase("Idle");
           } else {
             botAudioTrackRef.current = null;
             setBotAudioTrack(null);
           }
         },
         onUserStartedSpeaking: () => {
+          if (!voiceClientRef.current?.isMicEnabled) return;
           setUserSpeaking(true);
           setVoicePhase("Listening");
         },
         onUserStoppedSpeaking: () => {
           setUserSpeaking(false);
+          if (voiceInputModeRef.current === "vad" && !voiceClientRef.current?.isMicEnabled) {
+            voiceProcessingStartedAtRef.current = null;
+            setVoicePhase("Idle");
+            return;
+          }
           voiceProcessingStartedAtRef.current = Date.now();
           setVoicePhase("Processing");
         },
         onBotStartedSpeaking: () => {
+          voiceProcessingStartedAtRef.current = null;
+          setUserSpeaking(false);
           setBotSpeaking(true);
           setVoicePhase("Speaking");
           window.setTimeout(playBotAudio, 0);
         },
         onBotStoppedSpeaking: () => {
+          voiceProcessingStartedAtRef.current = null;
           setBotSpeaking(false);
           setVoicePhase("Idle");
         },
@@ -768,7 +800,7 @@ export function App() {
           const text = data.text?.trim();
           if (!text || !data.spoken) return;
           setAssistantEmotion(inferEmotion(text));
-          setVoicePhase("Speaking");
+          if (botSpeakingRef.current) setVoicePhase("Speaking");
           setTurns((current) =>
             appendTurn(current, { id: crypto.randomUUID(), role: "assistant", content: text })
           );
@@ -793,8 +825,24 @@ export function App() {
   const lastAssistant = useMemo(() => [...turns].reverse().find((turn) => turn.role === "assistant"), [turns]);
   const latency = lastAssistant?.latency_ms ?? 0;
   const voiceConnected = voiceState === "connected" || voiceState === "ready";
-  const voiceBusy = voiceState === "connecting" || voiceState === "initializing";
+  const voiceBusy = voiceConnectInFlight || voiceState === "connecting" || voiceState === "initializing";
   const voiceStatus = voiceConnected ? voicePhase.toLowerCase() : voiceState;
+
+  useEffect(() => {
+    botSpeakingRef.current = botSpeaking;
+  }, [botSpeaking]);
+
+  useEffect(() => {
+    micEnabledRef.current = micEnabled;
+  }, [micEnabled]);
+
+  useEffect(() => {
+    userSpeakingRef.current = userSpeaking;
+  }, [userSpeaking]);
+
+  useEffect(() => {
+    voicePhaseRef.current = voicePhase;
+  }, [voicePhase]);
 
   useEffect(() => {
     if (voicePhase !== "Processing") {
@@ -813,8 +861,91 @@ export function App() {
     return () => window.clearTimeout(timeout);
   }, [botSpeaking, userSpeaking, voiceConnected, voicePhase]);
 
+  useEffect(() => {
+    if (!voiceConnected || voiceInputMode !== "vad" || !micEnabled || !localAudioTrack) return;
+    if (localAudioTrack.readyState !== "live") return;
+    const activeLocalAudioTrack = localAudioTrack;
+
+    let cancelled = false;
+    let animationFrameId = 0;
+    let audioContext: AudioContext | null = null;
+    let source: MediaStreamAudioSourceNode | null = null;
+    let activeFrames = 0;
+    let silentFrames = 0;
+
+    async function startLocalSpeechMeter() {
+      audioContext = new AudioContext();
+      if (audioContext.state === "suspended") {
+        await audioContext.resume();
+      }
+      if (cancelled || !audioContext) return;
+
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 1024;
+      source = audioContext.createMediaStreamSource(new MediaStream([activeLocalAudioTrack]));
+      source.connect(analyser);
+      const samples = new Float32Array(analyser.fftSize);
+
+      const tick = () => {
+        if (cancelled) return;
+        if (activeLocalAudioTrack.readyState !== "live") {
+          if (userSpeakingRef.current) {
+            userSpeakingRef.current = false;
+            setUserSpeaking(false);
+          }
+          return;
+        }
+
+        analyser.getFloatTimeDomainData(samples);
+        let sum = 0;
+        for (const sample of samples) {
+          sum += sample * sample;
+        }
+        const rms = Math.sqrt(sum / samples.length);
+        const localSpeechActive = rms >= localVoiceSpeechRmsThreshold;
+
+        if (localSpeechActive) {
+          activeFrames += 1;
+          silentFrames = 0;
+          if (activeFrames >= localVoiceSpeechStartFrames && !userSpeakingRef.current) {
+            userSpeakingRef.current = true;
+            setUserSpeaking(true);
+            if (!botSpeakingRef.current) {
+              setVoiceNotice(null);
+              setVoicePhase("Listening");
+            }
+          }
+        } else {
+          silentFrames += 1;
+          activeFrames = 0;
+          if (silentFrames >= localVoiceSpeechStopFrames && userSpeakingRef.current) {
+            userSpeakingRef.current = false;
+            setUserSpeaking(false);
+            if (!botSpeakingRef.current && voicePhaseRef.current === "Listening") {
+              voiceProcessingStartedAtRef.current = Date.now();
+              setVoicePhase("Processing");
+            }
+          }
+        }
+
+        animationFrameId = window.requestAnimationFrame(tick);
+      };
+
+      animationFrameId = window.requestAnimationFrame(tick);
+    }
+
+    startLocalSpeechMeter().catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+      if (animationFrameId) window.cancelAnimationFrame(animationFrameId);
+      source?.disconnect();
+      audioContext?.close().catch(() => undefined);
+    };
+  }, [localAudioTrack, micEnabled, voiceConnected, voiceInputMode]);
+
   const sttBadge = voiceProviderLabel(health?.local_stt_provider, "STT");
-  const ttsBadge = "Supertonic TTS";
+  const ttsBadge = "Gradium TTS";
   const codexDependency = voicePreflight?.dependencies.codex;
   const codexDependencyLabel =
     codexDependency?.healthy === true
@@ -854,7 +985,7 @@ export function App() {
   const lastRuntimeActionStatus = formatDebugValue(runtimeDebug.last_runtime_action_status);
   const lastStructuredOutput = formatDebugValue(runtimeDebug.last_llm_structured_output);
   const parseErrors = formatDebugValue(runtimeDebug.structured_output_parse_errors);
-  const lastSupertonicPayload = formatDebugValue(runtimeDebug.last_supertonic_payload);
+  const lastTtsPayload = formatDebugValue(runtimeDebug.last_tts_payload);
   const lastRenderedDebugText = formatDebugValue(
     runtimeDebug.last_tts_rendered_text ?? lastLearningRecord.tts_rendered_text
   );
@@ -1098,7 +1229,7 @@ export function App() {
     const stream = await withTimeout(
       requestMicrophoneStream(),
       timeoutMs,
-      "Microphone permission timed out. Allow microphone access and try Connect again."
+      "Microphone permission timed out. Allow microphone access and try Start again."
     );
     voiceMediaManagerRef.current?.setPendingMicStream(stream);
     client.enableMic(true);
@@ -1109,6 +1240,7 @@ export function App() {
     if (voiceConnectInFlightRef.current) return;
     const currentClient = voiceClientRef.current;
     voiceConnectInFlightRef.current = true;
+    setVoiceConnectInFlight(true);
     setVoiceNotice(null);
     try {
       if (voiceConnected && currentClient) {
@@ -1124,19 +1256,12 @@ export function App() {
       if (!preflight.ready) {
         throw new Error(preflight.reasons.join(" "));
       }
-      const needsCloudStart = needsCloudVoiceStart(preflight);
-      if (needsCloudStart) {
-        setVoiceNotice("Starting the voice VM. First connect can take several minutes.");
-      }
-      const connectTimeoutMs =
-        needsCloudStart ? Math.max(voiceConnectTimeoutMs, voiceWarmupTimeoutMs) : voiceConnectTimeoutMs;
       await withTimeout(
         prepareVoice(speechPath),
-        connectTimeoutMs,
-        needsCloudStart
-          ? "Voice preparation timed out while starting the model VM."
-          : "Voice preparation timed out while checking speech services."
+        voiceConnectTimeoutMs,
+        "Voice preparation timed out while checking speech services."
       );
+      const connectTimeoutMs = voiceConnectTimeoutMs;
       const client = createVoiceClient();
       if (voiceInputMode === "vad") {
         await enableVoiceMicForVad(client, connectTimeoutMs);
@@ -1165,6 +1290,9 @@ export function App() {
         connectTimeoutMs,
         "Voice connection timed out. This network may be blocking WebRTC; switch networks or retry with TURN enabled."
       );
+      if (voiceInputMode === "vad" && !client.isMicEnabled) {
+        client.enableMic(true);
+      }
       setMicEnabled(client.isMicEnabled);
       setVoiceNotice(null);
     } catch (error) {
@@ -1176,12 +1304,12 @@ export function App() {
       setVoiceNotice(error instanceof Error ? error.message : "Pipecat connection failed.");
     } finally {
       voiceConnectInFlightRef.current = false;
+      setVoiceConnectInFlight(false);
     }
   }
 
   async function toggleVoiceMic() {
     if (!voiceClient || !voiceConnected) return;
-    if (voiceInputMode === "push_to_talk") return;
     try {
       const next = !micEnabled;
       if (next) {
@@ -1194,8 +1322,14 @@ export function App() {
       }
       voiceClient.enableMic(next);
       if (!next) {
+        voiceProcessingStartedAtRef.current = null;
         setMicEnabled(false);
+        setUserSpeaking(false);
+        if (!botSpeakingRef.current) setVoicePhase("Idle");
         setVoiceNotice(null);
+      } else {
+        setMicEnabled(true);
+        if (!botSpeakingRef.current) setVoicePhase("Idle");
       }
     } catch (error) {
       setVoiceNotice(error instanceof Error ? error.message : "Microphone toggle failed.");
@@ -1204,17 +1338,25 @@ export function App() {
 
   async function startPushToTalk() {
     const client = voiceClientRef.current;
-    if (!client || !voiceConnected || voiceInputMode !== "push_to_talk") return;
+    if (!client || !voiceConnected) return;
     if (pushToTalkPressedRef.current) return;
     pushToTalkPressedRef.current = true;
+    const wasMicEnabled = client.isMicEnabled || micEnabledRef.current;
+    pushToTalkWasMicEnabledRef.current = wasMicEnabled;
     try {
-      const stream = await withTimeout(
-        requestMicrophoneStream(),
-        voiceConnectTimeoutMs,
-        "Microphone permission timed out. Allow microphone access and try Push to Talk again."
-      );
-      voiceMediaManagerRef.current?.setPendingMicStream(stream);
-      client.enableMic(true);
+      if (!wasMicEnabled) {
+        const stream = await withTimeout(
+          requestMicrophoneStream(),
+          voiceConnectTimeoutMs,
+          "Microphone permission timed out. Allow microphone access and try Push to Talk again."
+        );
+        if (!pushToTalkPressedRef.current) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        voiceMediaManagerRef.current?.setPendingMicStream(stream);
+        client.enableMic(true);
+      }
       setMicEnabled(true);
       setUserSpeaking(true);
       setVoicePhase("Listening");
@@ -1232,24 +1374,33 @@ export function App() {
     const client = voiceClientRef.current;
     if (!pushToTalkPressedRef.current) return;
     pushToTalkPressedRef.current = false;
-    if (client && voiceConnected) {
+    const shouldKeepMicEnabled = pushToTalkWasMicEnabledRef.current;
+    pushToTalkWasMicEnabledRef.current = false;
+    if (client && voiceConnected && !shouldKeepMicEnabled) {
       client.enableMic(false);
     }
-    setMicEnabled(false);
+    setMicEnabled(shouldKeepMicEnabled);
     setUserSpeaking(false);
-    voiceProcessingStartedAtRef.current = Date.now();
-    setVoicePhase("Processing");
+    if (!botSpeakingRef.current) {
+      if (shouldKeepMicEnabled) {
+        voiceProcessingStartedAtRef.current = null;
+        setVoicePhase("Idle");
+      } else {
+        voiceProcessingStartedAtRef.current = Date.now();
+        setVoicePhase("Processing");
+      }
+    }
   }
 
   useEffect(() => {
-    if (voiceInputMode !== "push_to_talk" || !voiceConnected) return;
+    if (!voiceConnected) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.code !== "Space" || event.repeat || isTypingTarget(event.target)) return;
+      if (event.code !== "KeyP" || event.repeat || isTypingTarget(event.target)) return;
       event.preventDefault();
       startPushToTalk();
     };
     const onKeyUp = (event: KeyboardEvent) => {
-      if (event.code !== "Space") return;
+      if (event.code !== "KeyP") return;
       if (!pushToTalkPressedRef.current && isTypingTarget(event.target)) return;
       event.preventDefault();
       stopPushToTalk();
@@ -1261,7 +1412,7 @@ export function App() {
       window.removeEventListener("keyup", onKeyUp);
       stopPushToTalk();
     };
-  }, [voiceInputMode, voiceConnected]);
+  }, [voiceConnected]);
 
   async function submit(event?: FormEvent, override?: string) {
     event?.preventDefault();
@@ -1377,7 +1528,7 @@ export function App() {
       setVoiceTextResult(result);
       setVoiceTextSuite(null);
       applyVoiceTextResponse(result);
-      if (result.codex?.codex_session_id && speechPath === "supertone_parakeet") {
+      if (result.codex?.codex_session_id && speechPath === "nvidia_gradium") {
         await playVoiceTextTtsForResult(result, { autoplay: true });
       }
       await refresh();
@@ -1493,6 +1644,14 @@ export function App() {
             <Mic size={18} /> <span className="navLabel">Voice</span>
           </button>
           <button
+            className={activeView === "builder" ? "active" : ""}
+            onClick={() => setActiveView("builder")}
+            aria-label="Builder"
+            title="Builder"
+          >
+            <Code2 size={18} /> <span className="navLabel">Builder</span>
+          </button>
+          <button
             className={activeView === "flow" ? "active" : ""}
             onClick={() => setActiveView("flow")}
             aria-label="Flow"
@@ -1582,7 +1741,9 @@ export function App() {
             <div className="voiceConsoleLayout">
               <section className="voiceConsoleStage">
                 <div className="voiceConsoleCore">
-                  <div className={`voiceOrbShell ${voiceConnected ? "connected" : ""} ${botSpeaking ? "speaking" : ""}`}>
+                  <div
+                    className={`voiceOrbShell ${voiceConnected ? "connected" : ""} ${userSpeaking ? "listening" : ""} ${botSpeaking ? "speaking" : ""}`}
+                  >
                     <CircularWaveform
                       audioTrack={localAudioTrack}
                       backgroundColor={emotionBackground(assistantEmotion)}
@@ -1603,15 +1764,30 @@ export function App() {
 
                   <div className="voiceConsoleControls">
                     <button type="button" className="voicePrimaryButton" onClick={toggleVoiceConnection} disabled={voiceBusy}>
-                      {voiceConnected ? "Disconnect" : voiceBusy ? "Connecting" : "Connect"}
+                      {voiceConnected ? "Stop" : voiceBusy ? "Starting" : "Start"}
                     </button>
                     <button
                       type="button"
                       className="voiceSecondaryButton"
                       onClick={toggleVoiceMic}
-                      disabled={!voiceConnected || voiceInputMode === "push_to_talk"}
+                      disabled={!voiceConnected}
                     >
-                      {voiceInputMode === "push_to_talk" ? "Hold Space" : micEnabled ? "Mute" : "Unmute"}
+                      {micEnabled ? "Mute" : "Unmute"}
+                    </button>
+                    <button
+                      type="button"
+                      className="voiceSecondaryButton"
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        startPushToTalk();
+                      }}
+                      onPointerUp={stopPushToTalk}
+                      onPointerCancel={stopPushToTalk}
+                      onPointerLeave={stopPushToTalk}
+                      disabled={!voiceConnected}
+                      title="Hold P or press and hold"
+                    >
+                      Push to talk
                     </button>
                   </div>
 
@@ -1638,10 +1814,10 @@ export function App() {
                       <button
                         type="button"
                         className="active"
-                        onClick={() => setSpeechPath("supertone_parakeet")}
+                        onClick={() => setSpeechPath("nvidia_gradium")}
                         disabled={voiceConnected || voiceBusy}
                       >
-                        <Cpu size={14} /> Supertonic
+                        <Cpu size={14} /> NVIDIA + Gradium
                       </button>
                     </div>
                     <div className="voiceConsoleSegmented" aria-label="Input mode">
@@ -1858,6 +2034,8 @@ export function App() {
               </div>
             )}
           </section>
+        ) : activeView === "builder" ? (
+          <AppBuilderPage onNotice={setNotice} />
         ) : activeView === "flow" ? (
           <FlowStudio
             speechPath={speechPath}
@@ -1981,10 +2159,10 @@ export function App() {
               <div className="speechPathSwitch" aria-label="Speech provider path">
                 <button
                   className="active"
-                  onClick={() => setSpeechPath("supertone_parakeet")}
+                  onClick={() => setSpeechPath("nvidia_gradium")}
                   disabled={voiceConnected || voiceBusy}
                 >
-                  <Cpu size={15} /> Supertonic
+                  <Cpu size={15} /> NVIDIA + Gradium
                 </button>
               </div>
 
@@ -2037,13 +2215,26 @@ export function App() {
 
               <div className="kitControlBar">
                 <button onClick={toggleVoiceConnection} disabled={voiceBusy}>
-                  {voiceConnected ? "Disconnect" : voiceBusy ? "Connecting" : "Connect"}
+                  {voiceConnected ? "Stop" : voiceBusy ? "Starting" : "Start"}
                 </button>
                 <button
                   onClick={toggleVoiceMic}
-                  disabled={!voiceConnected || voiceInputMode === "push_to_talk"}
+                  disabled={!voiceConnected}
                 >
-                  {voiceInputMode === "push_to_talk" ? "Hold Space" : micEnabled ? "Mute" : "Unmute"}
+                  {micEnabled ? "Mute" : "Unmute"}
+                </button>
+                <button
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    startPushToTalk();
+                  }}
+                  onPointerUp={stopPushToTalk}
+                  onPointerCancel={stopPushToTalk}
+                  onPointerLeave={stopPushToTalk}
+                  disabled={!voiceConnected}
+                  title="Hold P or press and hold"
+                >
+                  Push to talk
                 </button>
               </div>
               {voiceNotice && <p className="errorText">{voiceNotice}</p>}
@@ -2067,9 +2258,9 @@ export function App() {
                   <small>Rolling first audio</small>
                   <span>{formatMaybeMs(runtimeLatency.rolling_avg_first_audio_ms)}</span>
                   <small>TTS provider</small>
-                  <span>{String(runtimeTts.provider ?? "supertonic")}</span>
+                  <span>{String(runtimeTts.provider ?? "gradium")}</span>
                   <small>Active provider</small>
-                  <span>{String(runtimeTts.provider ?? "supertonic")}</span>
+                  <span>{String(runtimeTts.provider ?? "gradium")}</span>
                   <small>Voice</small>
                   <span>{String(runtimeTts.voice ?? "-")}</span>
                   <small>Current speed</small>
@@ -2096,8 +2287,8 @@ export function App() {
                   <span>{lastRuntimeActionStatus}</span>
                   <small>Parse errors</small>
                   <span>{parseErrors}</span>
-                  <small>Supertonic payload</small>
-                  <span>{lastSupertonicPayload}</span>
+                  <small>TTS payload</small>
+                  <span>{lastTtsPayload}</span>
                 </div>
                 <div className="debugTextPair">
                   <div>
@@ -2246,20 +2437,8 @@ function Metric({ icon, label, value, detail }: { icon: JSX.Element; label: stri
 function voiceProviderLabel(provider: string | undefined, kind: "STT" | "TTS") {
   if (!provider) return kind;
   const labels: Record<string, string> = {
-    google: `Google ${kind}`,
-    nvidia: `NVIDIA ${kind}`,
-    parakeet: "Parakeet STT",
-    openrouter: "OpenRouter STT",
-    deepgram: `Deepgram ${kind}`,
-    cartesia: "Cartesia TTS",
-    whisper: "Whisper STT",
-    remote_whisper: "Remote Whisper STT",
-    whisperx: "WhisperX STT",
-    mlx_whisper: "MLX Whisper STT",
-    kokoro: "Kokoro TTS",
-    fish_speech: "Fish Speech TTS",
-    supertonic: "Supertonic TTS",
-    auto: `Auto ${kind}`
+    nvidia_ws: "NVIDIA STT",
+    gradium: kind === "TTS" ? "Gradium TTS" : "Gradium VAD"
   };
   return labels[provider] ?? `${provider} ${kind}`;
 }

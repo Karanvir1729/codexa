@@ -8,6 +8,7 @@ from typing import Any, Mapping
 from .agent import (
     AgentService,
     build_runtime_system_prompt,
+    fast_policy_response,
     repair_long_form_response,
 )
 from .codex_orchestrator import has_codex_orchestrator_session
@@ -29,7 +30,6 @@ from .voice_self_observe import (
     build_learning_record,
     choose_model_profile,
     classify_voice_turn,
-    clamp_supertonic_params,
     fallback_runtime_command_for_request,
     is_voice_tool_request,
     load_runtime_profile,
@@ -99,40 +99,20 @@ def _resolve_flow_id(flow_runtime: FlowRuntime, requested: str | None) -> str:
 
 def _tts_params(settings: Settings, profile: Mapping[str, Any], rendered: Mapping[str, Any]) -> dict[str, Any]:
     tts_profile = profile.get("tts") if isinstance(profile.get("tts"), Mapping) else {}
-    if settings.local_tts_provider == "supertonic":
-        params = clamp_supertonic_params(
-            {
-                **dict(tts_profile),
-                "voice": settings.supertonic_voice,
-                "lang": settings.supertonic_language,
-                "speed": tts_profile.get("speed", settings.supertonic_speed),
-                "steps": tts_profile.get("steps", settings.supertonic_steps),
-                "max_chunk_length": tts_profile.get(
-                    "max_chunk_length",
-                    settings.supertonic_max_chunk_length,
-                ),
-                "silence_duration": tts_profile.get(
-                    "silence_duration",
-                    settings.supertonic_silence_duration,
-                ),
-                "response_format": settings.supertonic_response_format,
-            }
-        )
-    else:
-        params = {
-            "voice": settings.local_tts_voice,
-            "speed": tts_profile.get("speed", settings.supertonic_speed),
-            "provider": settings.local_tts_provider,
-        }
-    params.update(
-        {
-            "provider": settings.local_tts_provider,
-            "simulated": True,
-            "expression_tags_used": list(rendered.get("expression_tags_used") or []),
-            "unsupported_expression_tags": list(rendered.get("unsupported_expression_tags") or []),
-        }
-    )
-    return params
+    speed = tts_profile.get("speed", settings.gradium_tts_speed)
+    if not isinstance(speed, (int, float)) or isinstance(speed, bool):
+        speed = settings.gradium_tts_speed
+    return {
+        "provider": settings.local_tts_provider,
+        "simulated": True,
+        "model_name": settings.gradium_tts_model,
+        "voice_id": settings.gradium_tts_voice_id,
+        "output_format": settings.gradium_tts_output_format,
+        "speed": max(0.5, min(2.0, float(speed))),
+        "rewrite_rules": settings.gradium_tts_rewrite_rules,
+        "expression_tags_used": list(rendered.get("expression_tags_used") or []),
+        "unsupported_expression_tags": list(rendered.get("unsupported_expression_tags") or []),
+    }
 
 
 def build_voice_text_tts_payload(
@@ -142,8 +122,8 @@ def build_voice_text_tts_payload(
     *,
     user_text: str = "",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    if settings.local_tts_provider != "supertonic":
-        raise ValueError("Audible text voice tests require Supertonic TTS.")
+    if settings.local_tts_provider != "gradium":
+        raise ValueError("Audible text voice tests require Gradium TTS.")
 
     rendered = render_expression_tags(text, profile, user_text=user_text)
     clean_text = str(rendered.get("clean_text") or text).strip()
@@ -151,25 +131,8 @@ def build_voice_text_tts_payload(
     if not rendered_text:
         raise ValueError("TTS text is required.")
 
-    tts_profile = profile.get("tts") if isinstance(profile.get("tts"), Mapping) else {}
-    params = clamp_supertonic_params(
-        {
-            **dict(tts_profile),
-            "voice": settings.supertonic_voice,
-            "lang": settings.supertonic_language,
-            "speed": tts_profile.get("speed", settings.supertonic_speed),
-            "steps": tts_profile.get("steps", settings.supertonic_steps),
-            "max_chunk_length": tts_profile.get(
-                "max_chunk_length",
-                settings.supertonic_max_chunk_length,
-            ),
-            "silence_duration": tts_profile.get(
-                "silence_duration",
-                settings.supertonic_silence_duration,
-            ),
-            "response_format": "wav",
-        }
-    )
+    params = _tts_params(settings, profile, rendered)
+    params["output_format"] = "wav"
     return {"text": rendered_text, **params}, rendered
 
 
@@ -420,7 +383,23 @@ async def run_voice_text_turn(
                 role="system",
                 payload={"event": "voice_runtime_action_completed", **status},
             )
-        return execution.response_text or speak or "I updated the voice runtime."
+        spoken = execution.response_text or speak or "I updated the voice runtime."
+        if any(
+            status.get("status") == "completed"
+            and status.get("tool") in {"increment_tts_speed", "set_tts_speed"}
+            and (
+                (isinstance(status.get("new_value"), (int, float)) and isinstance(status.get("old_value"), (int, float)) and status["new_value"] > status["old_value"])
+                or (
+                    isinstance((status.get("args") or {}).get("delta") if isinstance(status.get("args"), dict) else None, (int, float))
+                    and (status.get("args") or {}).get("delta") > 0
+                )
+            )
+            for status in runtime_action_status
+        ):
+            normalized_spoken = spoken.casefold()
+            if "apply" not in normalized_spoken and "applied" not in normalized_spoken:
+                spoken = "Sure, I'll apply the faster speed now."
+        return spoken
 
     codex_session_active = has_codex_orchestrator_session(db, cid)
     if is_voice_tool_request(text, settings) or codex_session_active:
@@ -557,6 +536,13 @@ async def run_voice_text_turn(
                 }
             )
         llm_completed_at = time.perf_counter()
+    elif policy_response := fast_policy_response(text):
+        response_text = policy_response
+        response_source = "policy-rule"
+        provider = "policy-rule"
+        model = settings.active_model
+        latency_ms = 0
+        llm_completed_at = time.perf_counter()
     else:
         reservation_id = agent.cost_guard.reserve(
             agent.cost_guard.reserve_amount_for_provider(settings.llm_provider),
@@ -641,14 +627,10 @@ async def run_voice_text_turn(
     tts_completed_at = tts_started_at
     tts_params = _tts_params(settings, runtime_profile, rendered)
     runtime_profile.setdefault("debug", {})["last_tts_rendered_text"] = rendered_text
-    runtime_profile.setdefault("debug", {})["last_supertonic_payload"] = (
-        {
-            "text": rendered_text,
-            **tts_params,
-        }
-        if settings.local_tts_provider == "supertonic"
-        else None
-    )
+    runtime_profile.setdefault("debug", {})["last_tts_payload"] = {
+        "text": rendered_text,
+        **tts_params,
+    }
     save_runtime_profile(db, runtime_profile)
     record_event(
         "tts_simulated",
