@@ -1,0 +1,20 @@
+services:
+  backend:
+    build:
+      context: ../..
+      dockerfile: infra/gcp/Dockerfile.backend-voice
+    network_mode: host
+    env_file:
+      - ../../.env
+    volumes:
+      - ../../data:/app/data
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ../..
+      dockerfile: infra/gcp/Dockerfile.frontend
+    network_mode: host
+    depends_on:
+      - backend
+    restart: unless-stopped
