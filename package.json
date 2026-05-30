@@ -3,10 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev:backend": "tsx codex-phone-supervisor/backend/src/index.ts",
     "dev:frontend": "vite --config codex-phone-supervisor/frontend/vite.config.ts",
     "build": "vite build --config codex-phone-supervisor/frontend/vite.config.ts",
+    "build:desktop:frontend": "VITE_SUPERVISOR_API_BASE=__CURRENT_ORIGIN__ VITE_SUPERVISOR_WORKSPACE_PATH=/Users/codexa/Codexa\\ Projects VITE_SUPERVISOR_USER_ID=desktop-user npm --prefix frontend run build",
+    "build:desktop:backend": "tsc -p codex-phone-supervisor/tsconfig.backend.json",
+    "build:desktop": "npm run build:desktop:frontend && npm run build:desktop:backend",
+    "electron:dev": "npm run build:desktop && electron .",
+    "dist:mac": "npm run build:desktop && electron-builder --mac dmg --arm64",
     "typecheck": "tsc -p codex-phone-supervisor/tsconfig.json --noEmit",
     "test": "tsx --test --test-concurrency=1 codex-phone-supervisor/tests/*.test.ts",
     "demo": "tsx codex-phone-supervisor/scripts/demo.ts",
@@ -27,6 +33,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@openai/codex": "^0.135.0",
     "express": "^5.2.1",
     "google-auth-library": "^10.6.2",
     "react": "^19.2.6",
@@ -42,8 +49,40 @@
     "@types/react-dom": "^19.2.3",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.0.2",
+    "electron": "^42.3.0",
+    "electron-builder": "^26.8.1",
     "tsx": "^4.22.3",
     "typescript": "^6.0.3",
     "vite": "^8.0.14"
+  },
+  "build": {
+    "appId": "com.codexa.desktop",
+    "productName": "Codexa",
+    "directories": {
+      "output": "release/mac"
+    },
+    "files": [
+      "electron/**/*",
+      "dist/backend/**/*",
+      "frontend/dist/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/@openai/codex*/**"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "dmg": {
+      "artifactName": "Codexa-${version}-${arch}.${ext}"
+    }
   }
 }
