@@ -77,6 +77,7 @@ class Settings(BaseSettings):
     twilio_gather_timeout: int = Field(default=5, ge=1, le=30)
     twilio_gather_speech_timeout: str = "auto"
     twilio_gather_max_empty_turns: int = Field(default=2, ge=1, le=10)
+    twilio_voice_turn_timeout_seconds: float = Field(default=8, ge=0.1, le=14)
 
     pipecat_cloud_ws_url: str | None = None
     pipecat_cloud_service_host: str | None = None

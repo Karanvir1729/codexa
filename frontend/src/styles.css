@@ -3944,6 +3944,7 @@ input[type="checkbox"] {
 
 .voiceConsoleCore,
 .codexSyncPanel,
+.twilioCallLogPanel,
 .voiceConversationStrip,
 .voiceConsoleInspector,
 .voiceSettingsPanel {
@@ -4244,6 +4245,100 @@ input[type="checkbox"] {
   color: var(--text-main);
   font-size: 13px;
   line-height: 1.45;
+}
+
+.twilioCallList {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  max-height: 520px;
+  overflow: auto;
+  padding: 14px 16px 16px;
+}
+
+.twilioCallCard {
+  display: grid;
+  gap: 11px;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 13px;
+}
+
+.twilioCallCard.active {
+  border-color: rgba(94, 234, 212, 0.44);
+  background:
+    linear-gradient(180deg, rgba(94, 234, 212, 0.11), rgba(255, 255, 255, 0.035)),
+    rgba(255, 255, 255, 0.035);
+}
+
+.twilioCallCardTop,
+.twilioCallMeta,
+.twilioCallCard button {
+  display: flex;
+  align-items: center;
+}
+
+.twilioCallCardTop {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.twilioCallCardTop div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.twilioCallCardTop strong {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.twilioCallCardTop span,
+.twilioCallMeta,
+.twilioCallTurns p span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.twilioCallMeta {
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.twilioCallMeta span {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 4px 7px;
+}
+
+.twilioCallTurns {
+  display: grid;
+  gap: 6px;
+  min-height: 78px;
+}
+
+.twilioCallTurns p {
+  display: grid;
+  gap: 2px;
+  overflow: hidden;
+  color: var(--text-main);
+  font-size: 12px;
+  line-height: 1.38;
+}
+
+.twilioCallCard button {
+  justify-content: center;
+  min-height: 34px;
+  border: 1px solid rgba(216, 255, 95, 0.34);
+  border-radius: 8px;
+  background: rgba(216, 251, 111, 0.1);
+  color: var(--text-strong);
 }
 
 .voiceConversationStrip {

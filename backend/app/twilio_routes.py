@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from html import escape
 from urllib.parse import urlencode, urlparse
 
@@ -105,7 +106,25 @@ def gather_twiml(
 
 
 def voice_turn_twiml(settings: Settings, response_text: str, conversation_id: str | None = None) -> str:
-    return gather_twiml(settings, _trim_for_twilio_say(response_text), conversation_id)
+    return gather_twiml(settings, _twilio_spoken_summary(response_text), conversation_id)
+
+
+def pending_twiml(
+    settings: Settings,
+    conversation_id: str | None = None,
+    message: str = "Codex is still working on that. I will check again in a moment.",
+) -> str:
+    redirect_url = _to_http_url(
+        settings.twilio_effective_public_base_url,
+        "/twilio/voice-turn",
+        {**(_voice_turn_query(conversation_id) or {}), "pending": "1"},
+    )
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  {_say(message, settings)}
+  <Pause length="2" />
+  <Redirect method="POST">{escape(redirect_url)}</Redirect>
+</Response>"""
 
 
 def no_input_twiml(
@@ -143,6 +162,52 @@ def inbound_twiml(settings: Settings, call_sid: str | None = None) -> str:
         "You are connected to the voice coding agent. How can I help?",
         twilio_conversation_id(call_sid),
     )
+
+
+def _twilio_spoken_summary(text: str, limit: int = 700) -> str:
+    summary = _strip_file_paths_for_speech(text)
+    summary = _collapse_markdown_for_speech(summary)
+    if len(summary) <= limit:
+        return summary
+
+    sentences = re.split(r"(?<=[.!?])\s+", summary)
+    spoken: list[str] = []
+    for sentence in sentences:
+        candidate = " ".join([*spoken, sentence]).strip()
+        if len(candidate) > limit:
+            break
+        spoken.append(sentence)
+    if spoken:
+        return " ".join(spoken).strip()
+    return f"{summary[: limit - 1].rstrip()}."
+
+
+def _strip_file_paths_for_speech(text: str) -> str:
+    cleaned = text
+    path_replacement = "project files"
+    cleaned = re.sub(r"`(?:~|/|[A-Za-z]:\\)[^`]+`", path_replacement, cleaned)
+    cleaned = re.sub(r"(?<!\w)(?:~|/)(?:Users|home|tmp|var|private|opt|workspace|Volumes)/[^\s,;:)]+", path_replacement, cleaned)
+    cleaned = re.sub(r"(?<!\w)[A-Za-z]:\\[^\s,;:)]+", path_replacement, cleaned)
+    cleaned = re.sub(
+        r"`[^`]*(?:/|\\)[^`]*(?:\.[A-Za-z0-9]{1,10})?`",
+        path_replacement,
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?<![\w:/.-])(?:\.?[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,10}(?![\w/.-])",
+        path_replacement,
+        cleaned,
+    )
+    return cleaned
+
+
+def _collapse_markdown_for_speech(text: str) -> str:
+    normalized = re.sub(r"```.*?```", " code details ", text, flags=re.DOTALL)
+    normalized = re.sub(r"`([^`]+)`", r"\1", normalized)
+    normalized = re.sub(r"(?m)^\s*[-*]\s+", "", normalized)
+    normalized = re.sub(r"(?m)^\s*\d+[.)]\s+", "", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized
 
 
 def _trim_for_twilio_say(text: str, limit: int = 1200) -> str:

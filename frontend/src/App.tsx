@@ -49,6 +49,7 @@ import {
   getVoiceRuntimeProfile,
   getWebRTCIceConfig,
   getPrompt,
+  getTwilioCallLogs,
   Health,
   listEvalRuns,
   prepareVoice,
@@ -63,6 +64,7 @@ import {
   synthesizeVoiceTextAudio,
   type VoicePreflight,
   type VoiceCodexStatusResponse,
+  type TwilioCallLog,
   type VoiceRuntimeProfileResponse,
   type VoiceInputMode,
   type VoiceSpeechPath,
@@ -97,7 +99,7 @@ type VoicePhase = "Idle" | "Listening" | "Processing" | "Speaking";
 
 type Turn = {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: string;
   latency_ms?: number;
   prompt_version?: number;
@@ -338,6 +340,21 @@ function truncateValue(value: string, maxLength = 44) {
   return `${value.slice(0, side)}...${value.slice(-side)}`;
 }
 
+function formatCallDuration(value: string | number | null) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return "-";
+  const minutes = Math.floor(seconds / 60);
+  const remainder = Math.round(seconds % 60);
+  return minutes > 0 ? `${minutes}m ${remainder}s` : `${remainder}s`;
+}
+
+function formatCallTime(value: string) {
+  const normalized = value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
 function valueText(value: unknown) {
   if (value === null || value === undefined || value === "") return "-";
   if (typeof value === "boolean") return value ? "true" : "false";
@@ -499,6 +516,8 @@ export function App() {
   const [voiceTextAudioBusy, setVoiceTextAudioBusy] = useState(false);
   const [voiceTextResult, setVoiceTextResult] = useState<VoiceTextTurnResponse | null>(null);
   const [voiceTextSuite, setVoiceTextSuite] = useState<VoiceTextSuiteResponse | null>(null);
+  const [twilioCallLogs, setTwilioCallLogs] = useState<TwilioCallLog[]>([]);
+  const [twilioLogsBusy, setTwilioLogsBusy] = useState(false);
   const [evalBusy, setEvalBusy] = useState(false);
   const [evalRuns, setEvalRuns] = useState<EvalRun[]>([]);
   const [scheduler, setScheduler] = useState<EvalSchedulerState | null>(null);
@@ -553,8 +572,8 @@ export function App() {
     }
   }
 
-  async function refreshCodexStatus(options: { silent?: boolean } = {}) {
-    const cid = conversationId;
+  async function refreshCodexStatus(options: { silent?: boolean; conversationId?: string } = {}) {
+    const cid = options.conversationId ?? conversationId;
     if (!cid || codexStatusBusy) return null;
     setCodexStatusBusy(true);
     try {
@@ -571,6 +590,23 @@ export function App() {
     }
   }
 
+  async function refreshTwilioLogs(options: { silent?: boolean } = {}) {
+    if (twilioLogsBusy) return twilioCallLogs;
+    setTwilioLogsBusy(true);
+    try {
+      const result = await getTwilioCallLogs(8);
+      setTwilioCallLogs(result.calls);
+      return result.calls;
+    } catch (error) {
+      if (!options.silent) {
+        setNotice(error instanceof Error ? error.message : "Twilio call logs refresh failed");
+      }
+      return twilioCallLogs;
+    } finally {
+      setTwilioLogsBusy(false);
+    }
+  }
+
   async function refresh() {
     const [
       healthState,
@@ -580,7 +616,8 @@ export function App() {
       schedulerState,
       improvementState,
       runtimeState,
-      preflightState
+      preflightState,
+      twilioState
     ] = await Promise.all([
       getHealth(),
       getPrompt(),
@@ -589,7 +626,8 @@ export function App() {
       getEvalScheduler(),
       getAutoImprovement(),
       getVoiceRuntimeProfile().catch(() => null),
-      getVoicePreflight(speechPath).catch(() => null)
+      getVoicePreflight(speechPath).catch(() => null),
+      getTwilioCallLogs(8).catch(() => null)
     ]);
     setHealth(healthState);
     setPrompt(promptState);
@@ -599,6 +637,7 @@ export function App() {
     setAutoImprovement(improvementState);
     setVoiceRuntime(runtimeState);
     setVoicePreflight(preflightState);
+    if (twilioState) setTwilioCallLogs(twilioState.calls);
     return healthState;
   }
 
@@ -1081,6 +1120,25 @@ export function App() {
   }, [activeView, codexSessionId, conversationId]);
 
   useEffect(() => {
+    if (activeView !== "voice") return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const result = await getTwilioCallLogs(8);
+        if (!cancelled) setTwilioCallLogs(result.calls);
+      } catch {
+        // Manual refresh surfaces call-log fetch errors.
+      }
+    };
+    poll();
+    const interval = window.setInterval(poll, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [activeView]);
+
+  useEffect(() => {
     const audio = botAudioRef.current;
     botAudioTrackRef.current = botAudioTrack;
     if (!audio) return;
@@ -1317,6 +1375,19 @@ export function App() {
         prompt_version: response.prompt_version
       });
     });
+  }
+
+  function watchTwilioCall(call: TwilioCallLog) {
+    setConversationId(call.conversation_id);
+    setTurns(
+      call.turns.map((turn) => ({
+        id: turn.id,
+        role: turn.role,
+        content: turn.content,
+        latency_ms: turn.latency_ms ?? undefined
+      }))
+    );
+    void refreshCodexStatus({ silent: true, conversationId: call.conversation_id });
   }
 
   async function playVoiceTextTtsForResult(
@@ -1723,6 +1794,76 @@ export function App() {
                     </p>
                   </section>
                 )}
+
+                <section className="twilioCallLogPanel">
+                  <div className="voicePanelHeader">
+                    <div>
+                      <h2>Twilio Calls</h2>
+                      <p>
+                        {twilioCallLogs.length > 0
+                          ? `${twilioCallLogs.length} recent calls · live polling`
+                          : "Waiting for phone traffic"}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="voiceConsoleIconButton"
+                      onClick={() => refreshTwilioLogs()}
+                      disabled={twilioLogsBusy}
+                      aria-label="Refresh Twilio calls"
+                      title="Refresh Twilio calls"
+                    >
+                      <RefreshCcw size={16} />
+                    </button>
+                  </div>
+                  <div className="twilioCallList">
+                    {twilioCallLogs.length === 0 ? (
+                      <div className="emptyState compact">
+                        <PhoneCall size={20} />
+                        <p>Call the Twilio number to see live speech turns here.</p>
+                      </div>
+                    ) : (
+                      twilioCallLogs.map((call) => (
+                        <article
+                          className={`twilioCallCard ${conversationId === call.conversation_id ? "active" : ""}`}
+                          key={call.conversation_id}
+                        >
+                          <div className="twilioCallCardTop">
+                            <div>
+                              <strong>{call.caller ?? "Unknown caller"}</strong>
+                              <span>{formatCallTime(call.updated_at)}</span>
+                            </div>
+                            <Badge color={call.status === "completed" ? "secondary" : "active"}>
+                              {call.status}
+                            </Badge>
+                          </div>
+                          <div className="twilioCallMeta">
+                            <span>{truncateValue(call.call_sid ?? call.conversation_id, 30)}</span>
+                            <span>{formatCallDuration(call.duration_seconds)}</span>
+                            <span>{call.turns.length} events</span>
+                          </div>
+                          <div className="twilioCallTurns">
+                            {call.turns.filter((turn) => turn.role !== "system").slice(-4).map((turn) => (
+                              <p key={turn.id}>
+                                <span>{turn.role}</span>
+                                {turn.content}
+                              </p>
+                            ))}
+                            {!call.turns.some((turn) => turn.role !== "system") && (
+                              <p>
+                                <span>system</span>
+                                Call connected.
+                              </p>
+                            )}
+                          </div>
+                          <button type="button" onClick={() => watchTwilioCall(call)}>
+                            Watch in Codexa
+                          </button>
+                        </article>
+                      ))
+                    )}
+                  </div>
+                </section>
 
                 <section className="voiceConversationStrip">
                   <div className="voicePanelHeader">

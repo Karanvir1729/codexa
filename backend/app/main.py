@@ -35,7 +35,7 @@ from .llm import make_llm_client
 from .local_voice_runtime import require_openai_compatible_llm, run_browser_pipecat_voice_agent
 from .pipecat_runtime import run_pipecat_twilio_bot
 from .training_data import export_sft_jsonl
-from .twilio_routes import error_twiml, inbound_twiml, no_input_twiml, twilio_conversation_id, voice_turn_twiml
+from .twilio_routes import error_twiml, inbound_twiml, no_input_twiml, pending_twiml, twilio_conversation_id, voice_turn_twiml
 from .voice_self_observe import load_runtime_profile
 from .voice_text_test import build_voice_text_tts_payload, run_voice_text_suite, run_voice_text_turn
 from .webrtc_sessions import is_known_webrtc_peer
@@ -173,6 +173,7 @@ prompt_repo = PromptRepository(db)
 learner = FeedbackLearner(db, prompt_repo, settings.latency_target_ms)
 cost_guard = CostGuard(db, settings)
 agent = AgentService(db, settings, make_llm_client(settings), cost_guard)
+twilio_pending_turns: dict[str, asyncio.Task[dict[str, Any]]] = {}
 flow_repo = FlowRepository(db)
 flow_runtime = FlowRuntime(db, flow_repo, make_llm_client(settings), settings)
 eval_runner = EvalRunner(db, agent, learner)
@@ -1734,6 +1735,118 @@ def _safe_int(value: str | None, default: int = 0) -> int:
         return default
 
 
+def _log_twilio_pending_failure(task: asyncio.Task[dict[str, Any]]) -> None:
+    if task.cancelled():
+        return
+    try:
+        exc = task.exception()
+    except asyncio.CancelledError:
+        return
+    if exc is not None:
+        logger.error("Twilio background voice turn failed", exc_info=(type(exc), exc, exc.__traceback__))
+
+
+async def _wait_for_twilio_pending_turn(
+    conversation_id: str,
+    timeout_seconds: float,
+) -> dict[str, Any] | None:
+    task = twilio_pending_turns.get(conversation_id)
+    if task is None:
+        return None
+    if not task.done() and timeout_seconds > 0:
+        done, _pending = await asyncio.wait({task}, timeout=timeout_seconds)
+        if not done:
+            return None
+    if not task.done():
+        return None
+    twilio_pending_turns.pop(conversation_id, None)
+    return task.result()
+
+
+def _twilio_pending_response(conversation_id: str) -> Response:
+    return Response(content=pending_twiml(settings, conversation_id), media_type="application/xml")
+
+
+def _twilio_log_metrics(raw: dict[str, Any]) -> dict[str, Any]:
+    summary: dict[str, Any] = {}
+    for key in ("source", "provider", "call_sid", "call_status", "duration", "channel"):
+        if raw.get(key) is not None:
+            summary[key] = raw[key]
+    codex = raw.get("codex")
+    if isinstance(codex, dict):
+        summary["codex"] = {
+            key: codex.get(key)
+            for key in (
+                "status",
+                "codex_session_id",
+                "codex_project_id",
+                "codex_task_id",
+                "requires_approval",
+                "approval_id",
+                "codex_session_status",
+                "codex_current_status",
+            )
+            if codex.get(key) is not None
+        }
+    return summary
+
+
+def _twilio_call_log_record(row: Any) -> dict[str, Any]:
+    metadata = loads(row["metadata_json"], {})
+    call_sid = metadata.get("call_sid")
+    turns = [
+        {
+            "id": turn["id"],
+            "role": turn["role"],
+            "content": turn["content"],
+            "latency_ms": turn["latency_ms"],
+            "model": turn["model"],
+            "metrics": _twilio_log_metrics(loads(turn["metrics_json"], {})),
+            "created_at": turn["created_at"],
+        }
+        for turn in db.all(
+            """
+            SELECT id, role, content, latency_ms, model, metrics_json, created_at
+            FROM turns
+            WHERE conversation_id = ?
+            ORDER BY created_at ASC
+            LIMIT 80
+            """,
+            (row["id"],),
+        )
+    ]
+    status_turn = next(
+        (
+            turn
+            for turn in reversed(turns)
+            if turn["metrics"].get("source") == "twilio_status_callback"
+        ),
+        None,
+    )
+    last_speech_turn = next(
+        (
+            turn
+            for turn in reversed(turns)
+            if turn["role"] in {"user", "assistant"} and turn["content"].strip()
+        ),
+        None,
+    )
+    status_metrics = status_turn["metrics"] if status_turn else {}
+    return {
+        "conversation_id": row["id"],
+        "call_sid": call_sid,
+        "caller": row["caller"] or metadata.get("from"),
+        "to": metadata.get("to"),
+        "voice_mode": metadata.get("voice_mode"),
+        "status": status_metrics.get("call_status") or "active",
+        "duration_seconds": status_metrics.get("duration"),
+        "started_at": row["started_at"],
+        "updated_at": (turns[-1]["created_at"] if turns else row["started_at"]),
+        "last_message": last_speech_turn["content"] if last_speech_turn else "",
+        "turns": turns,
+    }
+
+
 @app.post("/api/twilio/voice")
 @app.post("/twilio/inbound")
 async def twilio_inbound(request: Request) -> Response:
@@ -1767,13 +1880,28 @@ async def twilio_voice_turn(request: Request) -> Response:
     )
     no_input_count = _safe_int(request.query_params.get("no_input_count"))
     user_text = (params.get("SpeechResult") or params.get("Digits") or "").strip()
+    if conversation_id in twilio_pending_turns:
+        try:
+            pending_result = await _wait_for_twilio_pending_turn(
+                conversation_id,
+                1.0 if request.query_params.get("pending") == "1" else 0.0,
+            )
+        except Exception:
+            logger.exception("Twilio pending voice turn failed")
+            return Response(content=error_twiml(settings), media_type="application/xml")
+        if pending_result is None:
+            return _twilio_pending_response(conversation_id)
+        return Response(
+            content=voice_turn_twiml(settings, pending_result["message"], conversation_id),
+            media_type="application/xml",
+        )
     if not user_text:
         return Response(
             content=no_input_twiml(settings, conversation_id, no_input_count),
             media_type="application/xml",
         )
     try:
-        result = await agent.respond(
+        task = asyncio.create_task(agent.respond(
             user_text,
             conversation_id=conversation_id,
             channel="twilio",
@@ -1784,10 +1912,18 @@ async def twilio_voice_turn(request: Request) -> Response:
                 "speech_confidence": params.get("Confidence"),
                 "voice_mode": "gather",
             },
+        ))
+        task.add_done_callback(_log_twilio_pending_failure)
+        twilio_pending_turns[conversation_id] = task
+        result = await _wait_for_twilio_pending_turn(
+            conversation_id,
+            settings.twilio_voice_turn_timeout_seconds,
         )
     except Exception:
         logger.exception("Twilio voice turn failed")
         return Response(content=error_twiml(settings), media_type="application/xml")
+    if result is None:
+        return _twilio_pending_response(conversation_id)
     return Response(
         content=voice_turn_twiml(settings, result["message"], conversation_id),
         media_type="application/xml",
@@ -1845,6 +1981,25 @@ async def twilio_config_status() -> dict[str, Any]:
         "voice_webhook_url": settings.twilio_effective_voice_webhook_url,
         "status_callback_url": settings.twilio_effective_status_callback_url,
         "signature_validation": settings.twilio_should_validate_signature,
+    }
+
+
+@app.get("/api/twilio/call-logs")
+async def twilio_call_logs(limit: int = 8) -> dict[str, Any]:
+    safe_limit = max(1, min(limit, 20))
+    rows = db.all(
+        """
+        SELECT id, channel, caller, started_at, metadata_json
+        FROM conversations
+        WHERE channel = 'twilio'
+        ORDER BY started_at DESC
+        LIMIT ?
+        """,
+        (safe_limit,),
+    )
+    return {
+        "calls": [_twilio_call_log_record(row) for row in rows],
+        "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
 

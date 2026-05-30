@@ -167,6 +167,35 @@ export type VoiceCodexStatusResponse = {
   };
 };
 
+export type TwilioCallLogTurn = {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  latency_ms: number | null;
+  model: string | null;
+  metrics: Record<string, unknown>;
+  created_at: string;
+};
+
+export type TwilioCallLog = {
+  conversation_id: string;
+  call_sid: string | null;
+  caller: string | null;
+  to: string | null;
+  voice_mode: string | null;
+  status: string;
+  duration_seconds: string | number | null;
+  started_at: string;
+  updated_at: string;
+  last_message: string;
+  turns: TwilioCallLogTurn[];
+};
+
+export type TwilioCallLogsResponse = {
+  calls: TwilioCallLog[];
+  generated_at: string;
+};
+
 export type VoiceTextSuiteCheck = {
   name: string;
   passed: boolean;
@@ -586,6 +615,10 @@ export function getVoiceCodexOrchestratorStatus(conversationId: string) {
   return request<VoiceCodexStatusResponse>(
     `/api/voice/codex-orchestrator/status?conversation_id=${encodeURIComponent(conversationId)}`
   );
+}
+
+export function getTwilioCallLogs(limit = 8) {
+  return request<TwilioCallLogsResponse>(`/api/twilio/call-logs?limit=${encodeURIComponent(String(limit))}`);
 }
 
 export async function synthesizeVoiceTextAudio(payload: {
