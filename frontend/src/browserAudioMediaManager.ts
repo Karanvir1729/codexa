@@ -56,7 +56,7 @@ export class BrowserAudioMediaManager {
   setClientOptions(options: PipecatClientOptions, override = false) {
     if (this.options.callbacks && !override) return;
     this.options = options;
-    this.micEnabled = options.enableMic ?? false;
+    this.micEnabled = this.micEnabled || (options.enableMic ?? false);
     this.camEnabled = options.enableCam ?? false;
   }
 

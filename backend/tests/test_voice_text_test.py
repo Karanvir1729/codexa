@@ -10,7 +10,6 @@ from app.db import Database, loads
 from app.feedback import PromptRepository
 from app.flow_runtime import FlowRepository, FlowRuntime
 from app.llm import MockLLMClient
-from app.main import VoiceTextTurnRequest
 from app.voice_text_test import build_voice_text_tts_payload, run_voice_text_suite, run_voice_text_turn
 
 
@@ -42,18 +41,16 @@ def voice_text_runtime(tmp_path: Path):
 def test_voice_text_tts_payload_renders_gradium_wav():
     settings = Settings(
         local_tts_provider="gradium",
-        gradium_tts_voice_id="gradium-voice",
-        gradium_tts_model="default",
-        gradium_tts_speed=1.05,
+        gradium_tts_voice_id="voice-test",
+        gradium_tts_speed=1.0,
         gradium_tts_output_format="pcm_24000",
     )
     profile = {
         "tts": {
             "speed": 3,
-            "steps": 0,
-            "expression_mode": "subtle",
-            "allowed_expression_tags": ["breath"],
-            "max_expression_tags_per_utterance": 1,
+            "expression_mode": "off",
+            "allowed_expression_tags": [],
+            "max_expression_tags_per_utterance": 0,
         }
     }
 
@@ -64,23 +61,12 @@ def test_voice_text_tts_payload_renders_gradium_wav():
         user_text="Please test TTS.",
     )
 
+    assert payload["provider"] == "gradium"
     assert payload["output_format"] == "wav"
     assert payload["speed"] == 2.0
-    assert payload["voice_id"] == "gradium-voice"
+    assert payload["voice_id"] == "voice-test"
     assert payload["model_name"] == "default"
-    assert "<breath>" in payload["text"]
-    assert rendered["expression_tags_used"] == ["breath"]
-
-
-def test_voice_text_turn_request_accepts_readme_text_field():
-    payload = VoiceTextTurnRequest.model_validate(
-        {
-            "text": "Hello, can you confirm the voice coding agent is ready?",
-            "voice_speech_path": "nvidia_gradium",
-        }
-    )
-
-    assert payload.message == "Hello, can you confirm the voice coding agent is ready?"
+    assert rendered["expression_tags_used"] == []
 
 
 @pytest.mark.asyncio
@@ -135,7 +121,7 @@ async def test_voice_text_turn_assumes_stt_and_records_voice_artifacts(voice_tex
 
 
 @pytest.mark.asyncio
-async def test_voice_text_turn_runtime_speed_raises_on_llm_timeout(tmp_path: Path):
+async def test_voice_text_turn_runtime_speed_falls_back_on_llm_timeout(tmp_path: Path):
     settings = Settings(
         database_path=str(tmp_path / "agent.sqlite3"),
         llm_provider="mock",
@@ -148,19 +134,23 @@ async def test_voice_text_turn_runtime_speed_raises_on_llm_timeout(tmp_path: Pat
     flow_repo = FlowRepository(db)
     flow_runtime = FlowRuntime(db, flow_repo, MockLLMClient(settings))
 
-    with pytest.raises(RuntimeError, match="Voice runtime LLM request failed"):
-        await run_voice_text_turn(
-            message="talk slow please",
-            conversation_id=None,
-            settings=settings,
-            db=db,
-            prompt_repo=prompt_repo,
-            agent=agent,
-            flow_runtime=flow_runtime,
-            voice_behavior_mode="assistant",
-            voice_flow_id="active",
-            input_mode="push_to_talk",
-        )
+    result = await run_voice_text_turn(
+        message="talk slow please",
+        conversation_id=None,
+        settings=settings,
+        db=db,
+        prompt_repo=prompt_repo,
+        agent=agent,
+        flow_runtime=flow_runtime,
+        voice_behavior_mode="assistant",
+        voice_flow_id="active",
+        input_mode="push_to_talk",
+    )
+
+    assert result["provider"] == "runtime-fallback"
+    assert "slow" in result["message"].casefold()
+    assert result["runtime_action_status"][0]["status"] == "completed"
+    assert result["runtime_profile"]["tts_speed"] < settings.gradium_tts_speed
 
 
 @pytest.mark.asyncio

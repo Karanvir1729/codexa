@@ -208,6 +208,11 @@ cloud_vllm_manager = CloudVLLMManager(settings)
 small_webrtc_handler = None
 browser_voice_tasks: set[asyncio.Task] = set()
 browser_voice_watchdogs: set[asyncio.Task] = set()
+active_browser_voice_sessions: set[str] = set()
+
+
+def is_small_webrtc_renegotiating(connection: object) -> bool:
+    return bool(getattr(connection, "_renegotiation_in_progress", False))
 
 app = FastAPI(title="Voice Agent Feedback Engine", version="0.1.0")
 app.add_middleware(
@@ -1128,17 +1133,19 @@ async def browser_webrtc_offer(
     if reconnecting_known_peer:
         logger.info("Reusing voice session for WebRTC reconnect: pc_id=%s", request.pc_id)
     else:
-        if not cloud_vllm_manager.try_session_started(max_sessions=1):
+        if active_browser_voice_sessions or not cloud_vllm_manager.try_session_started(max_sessions=1):
             raise HTTPException(
                 status_code=409,
                 detail="A voice session is already active. Disconnect it before starting another.",
             )
+        active_browser_voice_sessions.add(session_id)
     session_reserved = not reconnecting_known_peer
 
     async def webrtc_connection_callback(connection: SmallWebRTCConnection):
         nonlocal session_reserved
         connection_connected = asyncio.Event()
         watchdog: asyncio.Task | None = None
+        disconnect_grace_task: asyncio.Task | None = None
         task = asyncio.create_task(
             run_browser_pipecat_voice_agent(
                 connection,
@@ -1154,15 +1161,57 @@ async def browser_webrtc_offer(
         browser_voice_tasks.add(task)
 
         async def cancel_on_connection_end(_connection, *_args):
+            if is_small_webrtc_renegotiating(_connection):
+                logger.info("Ignoring transient WebRTC disconnect during renegotiation for %s", session_id)
+                return
             if not task.done():
                 logger.info("Browser WebRTC connection ended; cancelling voice task %s", session_id)
                 task.cancel()
 
+        async def cancel_on_unrecovered_disconnect(_connection, *_args):
+            nonlocal disconnect_grace_task
+            if disconnect_grace_task is not None and not disconnect_grace_task.done():
+                return
+
+            async def delayed_cancel() -> None:
+                nonlocal disconnect_grace_task
+                try:
+                    await asyncio.sleep(8)
+                    if task.done():
+                        return
+                    try:
+                        connected = bool(_connection.is_connected())
+                    except Exception:
+                        connected = False
+                    if connected:
+                        logger.info("Browser WebRTC disconnect recovered for %s", session_id)
+                        return
+                    logger.info(
+                        "Browser WebRTC disconnect did not recover; cancelling voice task %s",
+                        session_id,
+                    )
+                    task.cancel()
+                finally:
+                    current = asyncio.current_task()
+                    if current is not None:
+                        browser_voice_watchdogs.discard(current)
+                    if disconnect_grace_task is current:
+                        disconnect_grace_task = None
+
+            logger.info("Browser WebRTC disconnected; waiting for ICE/restart recovery for %s", session_id)
+            disconnect_grace_task = asyncio.create_task(delayed_cancel())
+            browser_voice_watchdogs.add(disconnect_grace_task)
+
         async def mark_connection_connected(_connection, *_args):
+            nonlocal disconnect_grace_task
+            if disconnect_grace_task is not None and not disconnect_grace_task.done():
+                disconnect_grace_task.cancel()
+                browser_voice_watchdogs.discard(disconnect_grace_task)
+                disconnect_grace_task = None
             connection_connected.set()
 
         connection.add_event_handler("connected", mark_connection_connected)
-        connection.add_event_handler("disconnected", cancel_on_connection_end)
+        connection.add_event_handler("disconnected", cancel_on_unrecovered_disconnect)
         connection.add_event_handler("closed", cancel_on_connection_end)
         connection.add_event_handler("failed", cancel_on_connection_end)
 
@@ -1195,8 +1244,12 @@ async def browser_webrtc_offer(
             if watchdog is not None:
                 watchdog.cancel()
                 browser_voice_watchdogs.discard(watchdog)
+            if disconnect_grace_task is not None:
+                disconnect_grace_task.cancel()
+                browser_voice_watchdogs.discard(disconnect_grace_task)
             if session_reserved:
                 session_reserved = False
+                active_browser_voice_sessions.discard(session_id)
                 cloud_vllm_manager.session_finished()
             for stale_watchdog in tuple(browser_voice_watchdogs):
                 if stale_watchdog.done():
@@ -1214,6 +1267,7 @@ async def browser_webrtc_offer(
     except Exception:
         if session_reserved:
             session_reserved = False
+            active_browser_voice_sessions.discard(session_id)
             cloud_vllm_manager.session_finished()
         raise
 

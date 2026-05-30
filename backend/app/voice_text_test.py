@@ -8,6 +8,8 @@ from typing import Any, Mapping
 from .agent import (
     AgentService,
     build_runtime_system_prompt,
+    fast_policy_response,
+    repair_long_form_response,
 )
 from .codex_orchestrator import has_codex_orchestrator_session
 from .config import Settings
@@ -28,7 +30,7 @@ from .voice_self_observe import (
     build_learning_record,
     choose_model_profile,
     classify_voice_turn,
-    clamp_supertonic_params,
+    fallback_runtime_command_for_request,
     is_voice_tool_request,
     load_runtime_profile,
     model_for_profile,
@@ -97,51 +99,20 @@ def _resolve_flow_id(flow_runtime: FlowRuntime, requested: str | None) -> str:
 
 def _tts_params(settings: Settings, profile: Mapping[str, Any], rendered: Mapping[str, Any]) -> dict[str, Any]:
     tts_profile = profile.get("tts") if isinstance(profile.get("tts"), Mapping) else {}
-    if settings.local_tts_provider == "gradium":
-        speed = tts_profile.get("speed", settings.gradium_tts_speed)
-        if not isinstance(speed, (int, float)) or isinstance(speed, bool):
-            speed = settings.gradium_tts_speed
-        params = {
-            "model_name": settings.gradium_tts_model,
-            "voice_id": settings.gradium_tts_voice_id,
-            "output_format": settings.gradium_tts_output_format,
-            "speed": max(0.5, min(2.0, float(speed))),
-            "rewrite_rules": settings.gradium_tts_rewrite_rules,
-        }
-    elif settings.local_tts_provider == "supertonic":
-        params = clamp_supertonic_params(
-            {
-                **dict(tts_profile),
-                "voice": settings.supertonic_voice,
-                "lang": settings.supertonic_language,
-                "speed": tts_profile.get("speed", settings.supertonic_speed),
-                "steps": tts_profile.get("steps", settings.supertonic_steps),
-                "max_chunk_length": tts_profile.get(
-                    "max_chunk_length",
-                    settings.supertonic_max_chunk_length,
-                ),
-                "silence_duration": tts_profile.get(
-                    "silence_duration",
-                    settings.supertonic_silence_duration,
-                ),
-                "response_format": settings.supertonic_response_format,
-            }
-        )
-    else:
-        params = {
-            "voice": settings.local_tts_voice,
-            "speed": tts_profile.get("speed", settings.supertonic_speed),
-            "provider": settings.local_tts_provider,
-        }
-    params.update(
-        {
-            "provider": settings.local_tts_provider,
-            "simulated": True,
-            "expression_tags_used": list(rendered.get("expression_tags_used") or []),
-            "unsupported_expression_tags": list(rendered.get("unsupported_expression_tags") or []),
-        }
-    )
-    return params
+    speed = tts_profile.get("speed", settings.gradium_tts_speed)
+    if not isinstance(speed, (int, float)) or isinstance(speed, bool):
+        speed = settings.gradium_tts_speed
+    return {
+        "provider": settings.local_tts_provider,
+        "simulated": True,
+        "model_name": settings.gradium_tts_model,
+        "voice_id": settings.gradium_tts_voice_id,
+        "output_format": settings.gradium_tts_output_format,
+        "speed": max(0.5, min(2.0, float(speed))),
+        "rewrite_rules": settings.gradium_tts_rewrite_rules,
+        "expression_tags_used": list(rendered.get("expression_tags_used") or []),
+        "unsupported_expression_tags": list(rendered.get("unsupported_expression_tags") or []),
+    }
 
 
 def build_voice_text_tts_payload(
@@ -151,7 +122,7 @@ def build_voice_text_tts_payload(
     *,
     user_text: str = "",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    if settings.local_tts_provider not in {"gradium", "supertonic"}:
+    if settings.local_tts_provider != "gradium":
         raise ValueError("Audible text voice tests require Gradium TTS.")
 
     rendered = render_expression_tags(text, profile, user_text=user_text)
@@ -161,10 +132,7 @@ def build_voice_text_tts_payload(
         raise ValueError("TTS text is required.")
 
     params = _tts_params(settings, profile, rendered)
-    if settings.local_tts_provider == "gradium":
-        params["output_format"] = "wav"
-    else:
-        params["response_format"] = "wav"
+    params["output_format"] = "wav"
     return {"text": rendered_text, **params}, rendered
 
 
@@ -363,6 +331,7 @@ async def run_voice_text_turn(
     raw_result: dict[str, Any] = {}
     structured_output: dict[str, Any] | None = None
     parse_errors: list[str] = []
+    fallback_reason: str | None = None
     codex_metadata: dict[str, Any] = {}
 
     async def apply_runtime_command(
@@ -414,7 +383,23 @@ async def run_voice_text_turn(
                 role="system",
                 payload={"event": "voice_runtime_action_completed", **status},
             )
-        return execution.response_text or speak or "I updated the voice runtime."
+        spoken = execution.response_text or speak or "I updated the voice runtime."
+        if any(
+            status.get("status") == "completed"
+            and status.get("tool") in {"increment_tts_speed", "set_tts_speed"}
+            and (
+                (isinstance(status.get("new_value"), (int, float)) and isinstance(status.get("old_value"), (int, float)) and status["new_value"] > status["old_value"])
+                or (
+                    isinstance((status.get("args") or {}).get("delta") if isinstance(status.get("args"), dict) else None, (int, float))
+                    and (status.get("args") or {}).get("delta") > 0
+                )
+            )
+            for status in runtime_action_status
+        ):
+            normalized_spoken = spoken.casefold()
+            if "apply" not in normalized_spoken and "applied" not in normalized_spoken:
+                spoken = "Sure, I'll apply the faster speed now."
+        return spoken
 
     codex_session_active = has_codex_orchestrator_session(db, cid)
     if is_voice_tool_request(text, settings) or codex_session_active:
@@ -440,9 +425,12 @@ async def run_voice_text_turn(
             )
         except Exception as exc:
             agent.cost_guard.release(reservation_id, {"error": type(exc).__name__})
-            raise RuntimeError(
-                f"Voice runtime LLM request failed: {type(exc).__name__}: {exc}"
-            ) from exc
+            response_source = "voice-runtime-error"
+            provider = "llm-error"
+            model = settings.active_model
+            raw_result = {"error_type": type(exc).__name__}
+            fallback_reason = type(exc).__name__
+            llm_completed_at = time.perf_counter()
         else:
             actual_cost = agent.cost_guard.estimate_llm_call(result.provider, result.raw)
             agent.cost_guard.finalize(
@@ -468,16 +456,35 @@ async def run_voice_text_turn(
                 if runtime_actions and not any(
                     status.get("status") == "completed" for status in runtime_action_status
                 ) and not codex_metadata:
-                    raise RuntimeError("Voice runtime action was rejected.")
+                    fallback_reason = "runtime_actions_rejected"
                 raw_result["structured_output"] = structured_output
             else:
                 parse_errors = parsed.errors or ["structured_output_parse_failed"]
                 runtime_profile.setdefault("debug", {})["structured_output_parse_errors"] = parse_errors
                 raw_result["structured_output_parse_errors"] = parse_errors
-                raise RuntimeError(
-                    "Voice runtime LLM returned invalid structured output: "
-                    + ", ".join(parse_errors)
+                fallback_reason = ",".join(parse_errors)
+        if fallback_reason:
+            fallback_command = fallback_runtime_command_for_request(
+                text,
+                runtime_profile,
+                settings,
+                reason=fallback_reason,
+                codex_session_active=codex_session_active,
+            )
+            if fallback_command:
+                response_text = await apply_runtime_command(
+                    fallback_command.speak,
+                    [dict(action) for action in fallback_command.runtime_actions],
+                    fallback_command.reasoning_profile,
+                    fallback_command.debug,
                 )
+                raw_result["fallback_structured_output"] = structured_output
+                response_source = "voice-runtime-tools"
+                if provider == "llm-error":
+                    provider = "runtime-fallback"
+                    model = "runtime-fallback"
+            else:
+                response_text = "I'm having trouble updating the voice runtime right now."
         save_runtime_profile(db, runtime_profile)
         llm_completed_at = time.perf_counter()
     elif mode == "flow":
@@ -529,6 +536,13 @@ async def run_voice_text_turn(
                 }
             )
         llm_completed_at = time.perf_counter()
+    elif policy_response := fast_policy_response(text):
+        response_text = policy_response
+        response_source = "policy-rule"
+        provider = "policy-rule"
+        model = settings.active_model
+        latency_ms = 0
+        llm_completed_at = time.perf_counter()
     else:
         reservation_id = agent.cost_guard.reserve(
             agent.cost_guard.reserve_amount_for_provider(settings.llm_provider),
@@ -544,7 +558,15 @@ async def run_voice_text_turn(
             )
         except Exception as exc:
             agent.cost_guard.release(reservation_id, {"error": type(exc).__name__})
-            raise RuntimeError(f"LLM provider request failed: {type(exc).__name__}: {exc}") from exc
+            response_text = (
+                "I'm having trouble reaching the language model right now. "
+                "Please try again in a moment."
+            )
+            response_source = "llm-error"
+            provider = "llm-error"
+            model = settings.active_model
+            raw_result = {"error_type": type(exc).__name__}
+            llm_completed_at = time.perf_counter()
         else:
             actual_cost = agent.cost_guard.estimate_llm_call(result.provider, result.raw)
             agent.cost_guard.finalize(
@@ -554,6 +576,7 @@ async def run_voice_text_turn(
                 metadata={"conversation_id": cid, "channel": "browser_voice_text", "assumed_stt": True},
             )
             response_text = result.text
+            response_text = repair_long_form_response(text, response_text) or response_text
             response_source = "llm"
             provider = result.provider
             model = result.model
@@ -608,11 +631,6 @@ async def run_voice_text_turn(
         "text": rendered_text,
         **tts_params,
     }
-    runtime_profile.setdefault("debug", {})["last_supertonic_payload"] = (
-        runtime_profile["debug"]["last_tts_payload"]
-        if settings.local_tts_provider == "supertonic"
-        else None
-    )
     save_runtime_profile(db, runtime_profile)
     record_event(
         "tts_simulated",

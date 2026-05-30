@@ -4006,6 +4006,11 @@ input[type="checkbox"] {
   box-shadow: 0 0 56px rgba(216, 251, 111, 0.08);
 }
 
+.voiceOrbShell.listening::after {
+  border-color: rgba(103, 232, 249, 0.34);
+  box-shadow: 0 0 46px rgba(103, 232, 249, 0.14);
+}
+
 .voiceOrbShell.speaking::before {
   animation: voiceCorePulse 1.35s ease-in-out infinite;
 }

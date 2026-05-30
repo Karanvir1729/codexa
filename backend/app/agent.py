@@ -55,7 +55,7 @@ def build_runtime_system_prompt(system_prompt: str) -> str:
         "- If the user says OnePlus One, ask whether they mean the phone or the math problem.\n"
         "- If the user asks you to speak faster or slower, acknowledge the new speed briefly.\n"
         "- If the user asks you to change tone or speaking style, acknowledge that you can do it.\n"
-        "- If the user asks about network, speed, or latency, say: We reduce latency with streaming and local voice processing.\n"
+        "- If the user asks about network, speed, or latency, say: We reduce latency with streaming, NVIDIA WebSocket STT, and Gradium VAD/TTS.\n"
         "- If the user asks for a story, narration, explanation, or more detail, answer directly instead of asking how long it should be.\n"
         "- Otherwise, ask one concise clarifying question when required information is missing.\n"
         "Do not claim an external action is complete unless a tool result proves it."
@@ -123,6 +123,53 @@ def _latency_intent(normalized: str, words: set[str]) -> bool:
     )
 
 
+def long_form_fallback_response(text: str) -> str | None:
+    normalized = re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
+    words = set(normalized.split())
+    if not _has_long_form_intent(normalized, words):
+        return None
+    if "story" in words or "stories" in words or "narrate" in words:
+        if words & {"spooky", "scary", "creepy", "haunted"}:
+            return (
+                "The old clock stopped at midnight, and the hallway went quiet. "
+                "A soft knock came from the room no one used. "
+                "When the door opened, only cold air and a silver key were waiting. "
+                "By morning, the clock was ticking again from inside the wall."
+            )
+        return (
+            "A traveler found a lantern glowing beside an empty road. "
+            "Each step toward it revealed a path that had not been there before. "
+            "At the end, a stranger handed them a map with tomorrow's sunrise marked in gold. "
+            "They followed it home and never lost their way again."
+        )
+    return (
+        "Here is the short version: the system should answer the request directly, "
+        "cover the main point first, add the most useful detail, and end with one clear next step."
+    )
+
+
+def repair_long_form_response(user_text: str, response_text: str) -> str | None:
+    normalized_user = re.sub(r"[^a-z0-9]+", " ", user_text.casefold()).strip()
+    words = set(normalized_user.split())
+    if not _has_long_form_intent(normalized_user, words):
+        return None
+    normalized_response = re.sub(r"[^a-z0-9?]+", " ", response_text.casefold()).strip()
+    deflection_phrases = [
+        "need a bit more information",
+        "need more information",
+        "could you please tell me",
+        "please tell me if",
+        "what should i focus on",
+        "what would you like the story",
+        "what kind of story",
+        "how long should",
+        "before i",
+    ]
+    if "?" in response_text and any(phrase in normalized_response for phrase in deflection_phrases):
+        return long_form_fallback_response(user_text)
+    return None
+
+
 def fast_policy_response(text: str) -> str | None:
     normalized = re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
     words = set(normalized.split())
@@ -137,8 +184,10 @@ def fast_policy_response(text: str) -> str | None:
         return voice_tone_response(tone_intent)
     if "your name" in normalized or "who are you" in normalized:
         return "I am an AI assistant."
+    if "human" in words and "agent" in words:
+        return "I am an AI assistant, and I can help you here."
     if _latency_intent(normalized, words):
-        return "We reduce latency with streaming and local voice processing."
+        return "We reduce latency with streaming, NVIDIA WebSocket STT, and Gradium VAD/TTS."
     return None
 
 
@@ -284,7 +333,7 @@ class AgentService:
             units=result.raw.get("usage", {}),
             metadata={"conversation_id": cid, "channel": channel},
         )
-        response_text = result.text
+        response_text = repair_long_form_response(text, result.text) or result.text
         assistant_turn_id = str(uuid.uuid4())
         metrics = {
             "provider": result.provider,

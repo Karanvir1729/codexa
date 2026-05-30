@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import time
 import uuid
+import sqlite3
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Mapping
 
 from .codex_orchestrator import has_codex_orchestrator_session
@@ -30,6 +30,8 @@ from .voice_self_observe import (
     choose_model_profile,
     classify_voice_turn,
     clean_angle_tags,
+    fallback_runtime_command_for_request,
+    fallback_voice_runtime_speak,
     is_voice_tool_request,
     likely_bad_transcript,
     load_runtime_profile,
@@ -47,6 +49,13 @@ _CODEX_PROJECT_SELECTION_PROMPTS = (
     "which project should i attach",
     "please name an existing project",
 )
+
+
+def rtvi_user_speaking_message(started: bool) -> dict[str, str]:
+    return {
+        "label": "rtvi-ai",
+        "type": "user-started-speaking" if started else "user-stopped-speaking",
+    }
 
 
 def _normalize_voice_phrase(text: str) -> str:
@@ -85,7 +94,7 @@ def _empty_live_voice_response(user_text: str) -> str:
         return "I'm here."
     if normalized:
         return "I heard you."
-    return "I understand."
+    return fallback_voice_runtime_speak("")
 
 
 @dataclass
@@ -114,16 +123,11 @@ class LocalVoiceConversationRecorder:
                         "stt_provider": self.settings.local_stt_provider,
                         "stt_model": self.settings.local_stt_model,
                         "stt_language": self.settings.local_stt_language,
-                        "whisperx_device": self.settings.local_whisperx_device,
-                        "whisperx_compute_type": self.settings.local_whisperx_compute_type,
                         "tts_provider": self.settings.local_tts_provider,
                         "tts_voice": self.settings.local_tts_voice,
                         "voice_speech_path": self.settings.voice_speech_path,
-                        "fish_speech_reference_id": self.settings.fish_speech_reference_id,
-                        "supertonic_model": self.settings.supertonic_model,
-                        "supertonic_voice": self.settings.supertonic_voice,
                         "nvidia_asr_url": self.settings.nvidia_asr_url,
-                        "gradium_vad_model": self.settings.gradium_vad_model,
+                        "nemotron_llm_url": self.settings.nemotron_llm_url,
                         "gradium_tts_model": self.settings.gradium_tts_model,
                         "gradium_tts_voice_id": self.settings.gradium_tts_voice_id,
                         "transport": self.transport_name,
@@ -166,6 +170,7 @@ class LocalVoiceConversationRecorder:
             return ""
         self._last_recorded_turn[role] = (normalized, now)
         turn_id = str(uuid.uuid4())
+        self.start()
         self.db.execute(
             """
             INSERT INTO turns(id, conversation_id, role, content, latency_ms, model, prompt_version, metrics_json)
@@ -211,26 +216,36 @@ class LocalVoiceConversationRecorder:
         timings: dict[str, Any],
     ) -> str:
         trace_id = str(uuid.uuid4())
-        self.db.execute(
-            """
-            INSERT INTO latency_traces(
-                id, conversation_id, interaction_id, channel, transport,
-                user_turn_id, assistant_turn_id, providers_json, timings_json
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                trace_id,
-                self.conversation_id,
-                interaction_id,
-                self.channel,
-                self.transport_name,
-                user_turn_id,
-                assistant_turn_id,
-                dumps(providers),
-                dumps(timings),
-            ),
+        self.start()
+        user_turn_id = user_turn_id if user_turn_id and self.db.one("SELECT 1 FROM turns WHERE id = ?", (user_turn_id,)) else None
+        assistant_turn_id = (
+            assistant_turn_id
+            if assistant_turn_id and self.db.one("SELECT 1 FROM turns WHERE id = ?", (assistant_turn_id,))
+            else None
         )
+        query = """
+        INSERT INTO latency_traces(
+            id, conversation_id, interaction_id, channel, transport,
+            user_turn_id, assistant_turn_id, providers_json, timings_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        params = (
+            trace_id,
+            self.conversation_id,
+            interaction_id,
+            self.channel,
+            self.transport_name,
+            user_turn_id,
+            assistant_turn_id,
+            dumps(providers),
+            dumps(timings),
+        )
+        try:
+            self.db.execute(query, params)
+        except sqlite3.IntegrityError:
+            self.start()
+            self.db.execute(query, (*params[:5], None, None, *params[7:]))
         return trace_id
 
     def record_interaction_event(
@@ -243,6 +258,7 @@ class LocalVoiceConversationRecorder:
         payload: dict[str, Any] | None = None,
     ) -> str:
         event_id = str(uuid.uuid4())
+        self.start()
         self.db.execute(
             """
             INSERT INTO interaction_events(
@@ -316,11 +332,6 @@ def build_system_instruction(settings: Settings, prompt_repo: PromptRepository) 
         instruction = (
             f"{instruction}\n\n"
             "Gradium TTS: return clean spoken text. Do not write SSML, emotion tags, or audio markup."
-        )
-    if settings.local_tts_provider == "supertonic":
-        instruction = (
-            f"{instruction}\n\n"
-            "Supertonic: the runtime adds bounded expression tags after parsing. Do not write tags yourself."
         )
     if settings.reasoning_mode == "off":
         return f"/no_think\n{instruction}"
@@ -441,317 +452,33 @@ def _live_voice_recent_user_request(messages: list[Any], latest_user_text: str, 
 
 
 async def create_local_tts_service(settings: Settings):
-    from loguru import logger
     from pipecat.services.tts_service import TextAggregationMode
 
-    provider = settings.local_tts_provider
     text_aggregation_mode = (
         TextAggregationMode.TOKEN
         if settings.local_tts_text_aggregation_mode == "token"
         else TextAggregationMode.SENTENCE
     )
-    if provider == "gradium":
-        from .gradium_voice import create_gradium_tts_service
+    from .gradium_voice import create_gradium_tts_service
 
-        return "gradium", create_gradium_tts_service(
-            settings,
-            text_aggregation_mode=text_aggregation_mode,
-        )
-
-    if provider == "nvidia":
-        from pipecat.services.nvidia.tts import NvidiaTTSService
-
-        language = resolve_tts_language(settings)
-        return "nvidia", NvidiaTTSService(
-            api_key=settings.nvidia_api_key,
-            server=settings.nvidia_tts_server,
-            use_ssl=settings.nvidia_tts_use_ssl,
-            settings=NvidiaTTSService.Settings(voice=settings.local_tts_voice, language=language),
-            sample_rate=settings.local_audio_output_sample_rate,
-            text_aggregation_mode=text_aggregation_mode,
-        )
-
-    if provider == "cartesia":
-        if not settings.cartesia_api_key:
-            raise RuntimeError("LOCAL_TTS_PROVIDER=cartesia requires CARTESIA_API_KEY.")
-        from pipecat.services.cartesia.tts import CartesiaTTSService
-
-        return "cartesia", CartesiaTTSService(
-            api_key=settings.cartesia_api_key,
-            settings=CartesiaTTSService.Settings(voice=settings.cartesia_voice_id),
-            sample_rate=settings.local_audio_output_sample_rate,
-            text_aggregation_mode=text_aggregation_mode,
-        )
-
-    if provider == "deepgram":
-        if not settings.deepgram_api_key:
-            raise RuntimeError("LOCAL_TTS_PROVIDER=deepgram requires DEEPGRAM_API_KEY.")
-        from pipecat.services.deepgram.tts import DeepgramTTSService
-
-        return "deepgram", DeepgramTTSService(
-            api_key=settings.deepgram_api_key,
-            settings=DeepgramTTSService.Settings(voice=settings.local_tts_voice),
-            sample_rate=settings.local_audio_output_sample_rate,
-            text_aggregation_mode=text_aggregation_mode,
-        )
-
-    if provider == "google":
-        from pipecat.services.google.tts import GoogleTTSService
-
-        language = resolve_tts_language(settings)
-        return "google", GoogleTTSService(
-            credentials=settings.local_google_credentials,
-            credentials_path=settings.local_google_credentials_path,
-            location=settings.local_google_tts_location or None,
-            settings=GoogleTTSService.Settings(voice=settings.local_tts_voice, language=language),
-            sample_rate=settings.local_audio_output_sample_rate,
-            text_aggregation_mode=text_aggregation_mode,
-        )
-
-    if provider == "piper":
-        from pipecat.services.piper.tts import PiperTTSService
-
-        download_dir = Path(settings.piper_download_dir)
-        download_dir.mkdir(parents=True, exist_ok=True)
-        return "piper", PiperTTSService(
-            settings=PiperTTSService.Settings(voice=settings.local_tts_voice),
-            download_dir=download_dir,
-            sample_rate=settings.local_audio_output_sample_rate,
-            text_aggregation_mode=text_aggregation_mode,
-        )
-
-    if provider == "voxtral":
-        from .voxtral_tts import create_voxtral_tts_service
-
-        return "voxtral", create_voxtral_tts_service(settings)
-
-    if provider == "supertonic":
-        from .supertonic_tts import create_supertonic_tts_service
-
-        service = create_supertonic_tts_service(
-            settings, text_aggregation_mode=text_aggregation_mode
-        )
-        await service.warmup()
-        return "supertonic", service
-
-    if provider in {"auto", "fish_speech"}:
-        from .fish_speech_tts import create_fish_speech_tts_service, fish_speech_healthcheck
-        from .voxtral_tts import create_voxtral_tts_service, voxtral_tts_healthcheck
-
-        if provider == "auto":
-            healthy, detail = await voxtral_tts_healthcheck(settings)
-            if healthy:
-                logger.info("Voxtral TTS server detected; using Voxtral TTS.")
-                return "voxtral", create_voxtral_tts_service(settings)
-            logger.info(detail)
-        if provider == "fish_speech":
-            return "fish_speech", create_fish_speech_tts_service(
-                settings, text_aggregation_mode=text_aggregation_mode
-            )
-
-        healthy, detail = await fish_speech_healthcheck(settings)
-        if healthy:
-            logger.info("Fish Speech server detected; using Fish Speech TTS.")
-            return "fish_speech", create_fish_speech_tts_service(
-                settings, text_aggregation_mode=text_aggregation_mode
-            )
-        logger.info(f"{detail} Falling back to Kokoro TTS.")
-
-    from pipecat.services.kokoro.tts import KokoroTTSService
-
-    language = resolve_tts_language(settings)
-    kokoro_dir = Path(settings.kokoro_download_dir)
-    kokoro_dir.mkdir(parents=True, exist_ok=True)
-    return "kokoro", KokoroTTSService(
-        settings=KokoroTTSService.Settings(voice=settings.local_tts_voice, language=language),
-        model_path=str(kokoro_dir / "kokoro-v1.0.onnx"),
-        voices_path=str(kokoro_dir / "voices-v1.0.bin"),
-        sample_rate=settings.local_audio_output_sample_rate,
+    return "gradium", create_gradium_tts_service(
+        settings,
         text_aggregation_mode=text_aggregation_mode,
     )
 
 
 def create_local_stt_service(settings: Settings):
-    if settings.local_stt_provider == "nvidia_ws":
-        from .nvidia_ws_stt import NvidiaWebSocketSTTService
+    from .nvidia_ws_stt import NvidiaWebSocketSTTService
 
-        return "nvidia_ws", NvidiaWebSocketSTTService(
-            url=settings.nvidia_asr_url,
-            sample_rate=settings.local_audio_input_sample_rate,
-            stt_ttfb_timeout=settings.local_stt_ttfb_timeout,
-            ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
-            strip_interim_prefix=settings.nvidia_asr_strip_interim_prefix,
-            preroll_seconds=settings.nvidia_asr_preroll_seconds,
-            ws_ping_interval=settings.nvidia_asr_ws_ping_interval,
-            ws_ping_timeout=settings.nvidia_asr_ws_ping_timeout,
-        )
-
-    if settings.local_stt_provider == "parakeet":
-        from pipecat.services.nvidia.stt import NvidiaSegmentedSTTService
-        from pipecat.transcriptions.language import Language
-
-        api_key = settings.parakeet_api_key or settings.nvidia_api_key
-        language = Language.EN_US
-        return "parakeet", NvidiaSegmentedSTTService(
-            api_key=api_key,
-            server=settings.parakeet_server,
-            use_ssl=settings.parakeet_use_ssl,
-            model_function_map={
-                "function_id": settings.parakeet_function_id,
-                "model_name": settings.parakeet_model,
-            },
-            sample_rate=settings.local_audio_input_sample_rate,
-            ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
-            settings=NvidiaSegmentedSTTService.Settings(
-                language=language,
-                automatic_punctuation=True,
-                verbatim_transcripts=False,
-                max_alternatives=1,
-                speaker_diarization=False,
-                diarization_max_speakers=0,
-            ),
-        )
-
-    if settings.local_stt_provider == "nvidia":
-        from pipecat.services.nvidia.stt import NvidiaSTTService
-        from pipecat.transcriptions.language import Language
-
-        language = resolve_stt_language(settings) or Language.EN_US
-        return "nvidia", NvidiaSTTService(
-            api_key=settings.nvidia_api_key,
-            server=settings.nvidia_stt_server,
-            use_ssl=settings.nvidia_stt_use_ssl,
-            sample_rate=settings.local_audio_input_sample_rate,
-            ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
-            settings=NvidiaSTTService.Settings(
-                language=language,
-                automatic_punctuation=True,
-                interim_results=True,
-            ),
-        )
-
-    if settings.local_stt_provider == "deepgram":
-        if not settings.deepgram_api_key:
-            raise RuntimeError("LOCAL_STT_PROVIDER=deepgram requires DEEPGRAM_API_KEY.")
-        from pipecat.services.deepgram.stt import DeepgramSTTService
-        from pipecat.transcriptions.language import Language
-
-        language = resolve_stt_language(settings) or Language.EN
-        return "deepgram", DeepgramSTTService(
-            api_key=settings.deepgram_api_key,
-            sample_rate=settings.local_audio_input_sample_rate,
-            settings=DeepgramSTTService.Settings(
-                model=settings.local_stt_model,
-                language=language,
-            ),
-            stt_ttfb_timeout=settings.local_stt_ttfb_timeout,
-            ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
-        )
-
-    if settings.local_stt_provider == "google":
-        from pipecat.services.google.stt import GoogleSTTService
-        from pipecat.transcriptions.language import Language
-
-        language = resolve_stt_language(settings) or Language.EN_US
-        return "google", GoogleSTTService(
-            credentials=settings.local_google_credentials,
-            credentials_path=settings.local_google_credentials_path,
-            location=settings.local_google_stt_location or "global",
-            sample_rate=settings.local_audio_input_sample_rate,
-            ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
-            settings=GoogleSTTService.Settings(
-                model=settings.local_stt_model,
-                languages=[language],
-                enable_automatic_punctuation=True,
-                enable_interim_results=True,
-            ),
-        )
-
-    if settings.local_stt_provider == "remote_whisper":
-        from .remote_whisper_stt import RemoteWhisperSTTService
-
-        return "remote_whisper", RemoteWhisperSTTService(
-            base_url=settings.remote_whisper_base_url,
-            model=settings.local_stt_model,
-            language=_language_or_auto(settings.local_stt_language or settings.local_voice_language),
-            no_speech_prob=settings.local_stt_no_speech_prob,
-            sample_rate=settings.local_audio_input_sample_rate,
-            timeout_seconds=settings.remote_whisper_timeout_seconds,
-            beam_size=settings.remote_whisper_beam_size,
-            best_of=settings.remote_whisper_best_of,
-            initial_prompt=settings.remote_whisper_initial_prompt,
-            hotwords=settings.remote_whisper_hotwords,
-            stt_ttfb_timeout=settings.local_stt_ttfb_timeout,
-            ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
-        )
-
-    if settings.local_stt_provider == "openrouter":
-        if not settings.openrouter_api_key:
-            raise RuntimeError("LOCAL_STT_PROVIDER=openrouter requires OPENROUTER_API_KEY.")
-        from .openrouter_stt import OpenRouterSTTService
-
-        return "openrouter", OpenRouterSTTService(
-            base_url=settings.openrouter_base_url,
-            api_key=settings.openrouter_api_key,
-            model=settings.openrouter_stt_model or settings.local_stt_model,
-            language=_language_or_auto(settings.local_stt_language or settings.local_voice_language),
-            temperature=settings.local_stt_temperature,
-            sample_rate=settings.local_audio_input_sample_rate,
-            timeout_seconds=settings.openrouter_stt_timeout_seconds,
-            site_url=settings.openrouter_site_url,
-            app_title=settings.openrouter_app_title,
-            stt_ttfb_timeout=settings.local_stt_ttfb_timeout,
-            ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
-        )
-
-    if settings.local_stt_provider == "whisperx":
-        from .whisperx_stt import WhisperXSTTService
-
-        return "whisperx", WhisperXSTTService(
-            model=settings.local_stt_model,
-            device=settings.local_whisperx_device,
-            compute_type=settings.local_whisperx_compute_type,
-            batch_size=settings.local_whisperx_batch_size,
-            language=_language_or_auto(settings.local_stt_language or settings.local_voice_language),
-            no_speech_prob=settings.local_stt_no_speech_prob,
-            sample_rate=settings.local_audio_input_sample_rate,
-            stt_ttfb_timeout=settings.local_stt_ttfb_timeout,
-            ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
-        )
-
-    if settings.local_stt_provider == "whisper":
-        from pipecat.services.whisper.stt import WhisperSTTService
-
-        stt_language = resolve_stt_language(settings)
-        compute_type = settings.local_whisper_compute_type
-        if compute_type == "auto":
-            compute_type = "default" if settings.local_whisper_device == "cuda" else "int8"
-        return "whisper", WhisperSTTService(
-            device=settings.local_whisper_device,
-            compute_type=compute_type,
-            settings=WhisperSTTService.Settings(
-                model=settings.local_stt_model,
-                language=stt_language,
-                no_speech_prob=settings.local_stt_no_speech_prob,
-            ),
-            sample_rate=settings.local_audio_input_sample_rate,
-            stt_ttfb_timeout=settings.local_stt_ttfb_timeout,
-            ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
-        )
-
-    from pipecat.services.whisper.stt import WhisperSTTServiceMLX
-
-    stt_language = resolve_stt_language(settings)
-    return "mlx_whisper", WhisperSTTServiceMLX(
-        settings=WhisperSTTServiceMLX.Settings(
-            model=settings.local_stt_model,
-            language=stt_language,
-            no_speech_prob=settings.local_stt_no_speech_prob,
-            temperature=settings.local_stt_temperature,
-        ),
+    return "nvidia_ws", NvidiaWebSocketSTTService(
+        url=settings.nvidia_asr_url,
         sample_rate=settings.local_audio_input_sample_rate,
         stt_ttfb_timeout=settings.local_stt_ttfb_timeout,
         ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
+        strip_interim_prefix=settings.nvidia_asr_strip_interim_prefix,
+        preroll_seconds=settings.nvidia_asr_preroll_seconds,
+        ws_ping_interval=settings.nvidia_asr_ws_ping_interval,
+        ws_ping_timeout=settings.nvidia_asr_ws_ping_timeout,
     )
 
 
@@ -770,8 +497,6 @@ async def _run_voice_pipeline(
 ) -> None:
     from loguru import logger
     from openai import NOT_GIVEN
-    from pipecat.audio.vad.silero import SileroVADAnalyzer
-    from pipecat.audio.vad.vad_analyzer import VADParams
     from pipecat.frames.frames import (
         ErrorFrame,
         Frame,
@@ -782,6 +507,7 @@ async def _run_voice_pipeline(
         TTSAudioRawFrame,
         TTSStoppedFrame,
         TranscriptionFrame,
+        OutputTransportMessageUrgentFrame,
         VADUserStartedSpeakingFrame,
         VADUserStoppedSpeakingFrame,
     )
@@ -793,7 +519,6 @@ async def _run_voice_pipeline(
         LLMContextAggregatorPair,
         LLMUserAggregatorParams,
     )
-    from pipecat.processors.audio.vad_processor import VADProcessor
     from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
     from pipecat.services.openai.llm import OpenAILLMService
     from pipecat.turns.user_start import TranscriptionUserTurnStartStrategy, VADUserTurnStartStrategy
@@ -835,7 +560,7 @@ async def _run_voice_pipeline(
         assistant_text: str = ""
         tts_rendered_text: str = ""
         tts_params: dict[str, Any] = field(default_factory=dict)
-        last_supertonic_payload: dict[str, Any] | None = None
+        last_tts_payload: dict[str, Any] | None = None
         expression_tags_used: list[str] = field(default_factory=list)
         unsupported_expression_tags: list[str] = field(default_factory=list)
         model_profile: str = "balanced"
@@ -956,9 +681,9 @@ async def _run_voice_pipeline(
                     rendered_parts.append(rendered)
                 tags.extend(str(tag) for tag in item.get("expression_tags_used") or [])
                 unsupported.extend(str(tag) for tag in item.get("unsupported_expression_tags") or [])
-                payload = item.get("supertonic_payload")
+                payload = item.get("tts_payload")
                 if isinstance(payload, dict):
-                    self.last_supertonic_payload = dict(payload)
+                    self.last_tts_payload = dict(payload)
             self.tts_rendered_text = " ".join(rendered_parts).strip()
             self.expression_tags_used = tags
             self.unsupported_expression_tags = unsupported
@@ -969,42 +694,20 @@ async def _run_voice_pipeline(
                 "configured_stt_provider": settings.local_stt_provider,
                 "stt_model": settings.local_stt_model,
                 "stt_language": settings.local_stt_language,
-                "remote_whisper_base_url": settings.remote_whisper_base_url
-                if settings.local_stt_provider == "remote_whisper"
-                else None,
-                "nvidia_asr_url": settings.nvidia_asr_url
-                if settings.local_stt_provider == "nvidia_ws"
-                else None,
-                "parakeet_function_id": settings.parakeet_function_id
-                if settings.local_stt_provider == "parakeet"
-                else None,
-                "gradium_vad_model": settings.gradium_vad_model
-                if settings.local_tts_provider == "gradium"
-                else None,
+                "nvidia_asr_url": settings.nvidia_asr_url,
+                "gradium_vad_model": settings.gradium_vad_model,
+                "gradium_vad_input_format": settings.gradium_vad_input_format,
                 "tts_provider": tts_provider,
                 "configured_tts_provider": settings.local_tts_provider,
-                "tts_voice": settings.local_tts_voice,
+                "tts_voice": settings.gradium_tts_voice_id,
                 "tts_text_aggregation_mode": settings.local_tts_text_aggregation_mode,
-                "voxtral_tts_model": settings.voxtral_tts_model
-                if tts_provider == "voxtral"
-                else None,
-                "voxtral_tts_base_url": settings.voxtral_tts_base_url
-                if tts_provider == "voxtral"
-                else None,
-                "supertonic_base_url": settings.supertonic_base_url
-                if tts_provider == "supertonic"
-                else None,
-                "gradium_tts_model": settings.gradium_tts_model
-                if tts_provider == "gradium"
-                else None,
-                "gradium_tts_output_format": settings.gradium_tts_output_format
-                if tts_provider == "gradium"
-                else None,
+                "gradium_tts_model": settings.gradium_tts_model,
+                "gradium_tts_output_format": settings.gradium_tts_output_format,
                 "llm_provider": settings.llm_provider,
                 "llm_model": self.model_used,
                 "llm_model_profile": self.model_profile,
                 "tts_params": self.tts_params,
-                "last_supertonic_payload": self.last_supertonic_payload,
+                "last_tts_payload": self.last_tts_payload,
                 "expression_tags_used": self.expression_tags_used,
                 "unsupported_expression_tags": self.unsupported_expression_tags,
                 "llm_structured_output": self.llm_structured_output,
@@ -1086,11 +789,7 @@ async def _run_voice_pipeline(
         speed: float = (
             settings.gradium_tts_speed
             if settings.local_tts_provider == "gradium"
-            else (
-                settings.supertonic_speed
-                if settings.local_tts_provider == "supertonic"
-                else settings.voxtral_tts_speed
-            )
+            else 1.0
         )
         emotion_code: str = "N"
         emotion: str = "neutral"
@@ -1433,7 +1132,7 @@ async def _run_voice_pipeline(
 
         base_url = (settings.active_base_url or "").rstrip("/")
         api_key = settings.active_api_key
-        if not base_url or not api_key:
+        if not base_url:
             return None
         payload = {
             "model": trace.model_used or settings.active_model,
@@ -1452,10 +1151,9 @@ async def _run_voice_pipeline(
             "temperature": 0,
             "max_tokens": 350,
         }
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         try:
             async with httpx.AsyncClient(
                 timeout=httpx.Timeout(min(settings.llm_timeout_seconds, 15), connect=5)
@@ -1501,6 +1199,39 @@ async def _run_voice_pipeline(
             runtime_control_request = (
                 is_voice_tool_request(latest_user_text, settings) or codex_session_active
             )
+            if runtime_control_request:
+                trace = latency_state.active_trace or VoiceLatencyTrace()
+                if latency_state.active_trace is None:
+                    latency_state.active_trace = trace
+                trace.user_text = latest_user_text
+                trace.model_profile = "reasoning" if settings.codex_orchestrator_enabled else "fast"
+                trace.model_used = "voice-runtime-direct"
+                now = time.perf_counter()
+                trace.llm_request_started_at = trace.llm_request_started_at or now
+                trace.llm_first_text_at = now
+                trace.llm_completed_at = now
+                latency_state.response_trace = trace
+                fallback_command = fallback_runtime_command_for_request(
+                    latest_user_text,
+                    runtime_profile,
+                    settings,
+                    reason="live_voice_direct_runtime_intent",
+                    codex_session_active=codex_session_active,
+                )
+                if fallback_command:
+                    text = await apply_voice_runtime_command(
+                        fallback_command,
+                        trace,
+                        event="runtime_control_direct_applied",
+                    )
+                    trace.structured_output_expected = False
+                    emotion_code = (
+                        response_emotion_code(latest_user_text, text)
+                        if settings.voice_emotion_codes_enabled
+                        else "N"
+                    )
+                    await self._push_llm_text(prefix_emotion_code(text, emotion_code))
+                    return
             if (
                 latest_user_text
                 and likely_bad_transcript(latest_user_text)
@@ -1821,12 +1552,21 @@ async def _run_voice_pipeline(
                             in {"delegate_to_codex_orchestrator", "get_codex_orchestrator_status"}
                             for status in trace.runtime_action_status
                         ):
-                            log_latency(
-                                "runtime_control_action_rejected",
-                                trace,
-                                runtime_action_status=trace.runtime_action_status,
+                            fallback_command = fallback_runtime_command_for_request(
+                                trace.user_text,
+                                runtime_profile,
+                                settings,
+                                reason="runtime_actions_rejected",
+                                codex_session_active=has_codex_orchestrator_session(
+                                    db, recorder.conversation_id
+                                ),
                             )
-                            text = "The requested runtime change was rejected by the configured action validator."
+                            if fallback_command:
+                                text = await apply_voice_runtime_command(
+                                    fallback_command,
+                                    trace,
+                                    event="runtime_control_fallback_applied",
+                                )
                     else:
                         errors = parsed.errors or ["structured_output_parse_failed"]
                         trace.structured_output_parse_errors = errors
@@ -1840,14 +1580,26 @@ async def _run_voice_pipeline(
                             save_runtime_profile(db, runtime_profile)
                         except Exception:
                             logger.debug("Failed to persist runtime voice profile", exc_info=True)
-                        log_latency(
-                            "runtime_control_structured_output_invalid",
-                            trace,
-                            text=text,
-                            errors=errors,
-                            repair_attempted=parsed.repair_attempted,
+                        fallback_command = fallback_runtime_command_for_request(
+                            trace.user_text,
+                            runtime_profile,
+                            settings,
+                            reason=",".join(errors),
+                            codex_session_active=has_codex_orchestrator_session(
+                                db, recorder.conversation_id
+                            ),
                         )
-                        text = "The configured model did not return a valid runtime command."
+                        if fallback_command:
+                            text = await apply_voice_runtime_command(
+                                fallback_command,
+                                trace,
+                                event="runtime_control_fallback_applied",
+                                parse_errors=errors,
+                                repair_attempted=parsed.repair_attempted,
+                            )
+                        else:
+                            text = fallback_voice_runtime_speak(text)
+                            log_latency("structured_output_parse_failed", trace, text=text, errors=errors)
                     if not text:
                         text = _empty_live_voice_response(trace.user_text)
                         trace.empty_llm_completions += 1
@@ -1910,6 +1662,21 @@ async def _run_voice_pipeline(
                     await pipeline_task.cancel(reason=f"pipeline error: {frame.error}")
             await self.push_frame(frame, direction)
 
+    class VoiceRTVISpeakingBridgeProcessor(FrameProcessor):
+        async def process_frame(self, frame: Frame, direction: FrameDirection):
+            await super().process_frame(frame, direction)
+            if isinstance(frame, VADUserStartedSpeakingFrame):
+                await self.push_frame(
+                    OutputTransportMessageUrgentFrame(message=rtvi_user_speaking_message(True)),
+                    direction,
+                )
+            elif isinstance(frame, VADUserStoppedSpeakingFrame):
+                await self.push_frame(
+                    OutputTransportMessageUrgentFrame(message=rtvi_user_speaking_message(False)),
+                    direction,
+                )
+            await self.push_frame(frame, direction)
+
     class OutputAudioProbeProcessor(FrameProcessor):
         async def process_frame(self, frame: Frame, direction: FrameDirection):
             nonlocal runtime_profile
@@ -1930,30 +1697,25 @@ async def _run_voice_pipeline(
                     if hasattr(tts, "current_params"):
                         trace.tts_params = tts.current_params()
                     if hasattr(tts, "last_payload"):
-                        last_tts_payload = tts.last_payload()
-                        if isinstance(last_tts_payload, dict):
-                            trace.tts_params["last_tts_payload"] = last_tts_payload
-                            runtime_profile.setdefault("debug", {})[
-                                "last_tts_payload"
-                            ] = last_tts_payload
-                    if trace.last_supertonic_payload:
-                        trace.tts_params["last_supertonic_payload"] = trace.last_supertonic_payload
+                        trace.last_tts_payload = tts.last_payload()
+                    if trace.last_tts_payload:
+                        trace.tts_params["last_tts_payload"] = trace.last_tts_payload
                         runtime_profile.setdefault("debug", {})[
-                            "last_supertonic_payload"
-                        ] = trace.last_supertonic_payload
+                            "last_tts_payload"
+                        ] = trace.last_tts_payload
                         try:
                             recorder.record_interaction_event(
                                 interaction_id=trace.interaction_id,
-                                event="supertonic_tts_request",
+                                event="tts_request",
                                 role="system",
                                 payload={
-                                    "event": "supertonic_tts_request",
-                                    "provider": "supertonic",
-                                    **trace.last_supertonic_payload,
+                                    "event": "tts_request",
+                                    "provider": tts_provider,
+                                    **trace.last_tts_payload,
                                 },
                             )
                         except Exception:
-                            logger.debug("Failed to persist Supertonic request event", exc_info=True)
+                            logger.debug("Failed to persist TTS request event", exc_info=True)
                     trace.tts_params.update(
                         {
                             "expression_tags_used": list(trace.expression_tags_used),
@@ -2103,24 +1865,9 @@ async def _run_voice_pipeline(
     tts_provider, tts = await create_local_tts_service(settings)
     logger.info(f"Created local TTS service: provider={tts_provider}")
     voice_controls.bind_tts(tts)
-    if settings.local_tts_provider == "gradium":
-        from .gradium_voice import create_gradium_vad_processor
+    from .gradium_voice import create_gradium_vad_processor
 
-        vad = create_gradium_vad_processor(settings)
-    else:
-        vad = VADProcessor(
-            vad_analyzer=SileroVADAnalyzer(
-                sample_rate=settings.local_audio_input_sample_rate,
-                params=VADParams(
-                    confidence=settings.local_vad_confidence,
-                    start_secs=settings.local_vad_start_secs,
-                    stop_secs=settings.local_vad_stop_secs,
-                    min_volume=settings.local_vad_min_volume,
-                ),
-            ),
-            speech_activity_period=settings.local_vad_speech_activity_period,
-            audio_idle_timeout=settings.local_vad_audio_idle_timeout,
-        )
+    vad = create_gradium_vad_processor(settings)
     context = LLMContext()
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
@@ -2141,6 +1888,7 @@ async def _run_voice_pipeline(
         [
             transport.input(),
             vad,
+            VoiceRTVISpeakingBridgeProcessor(),
             stt,
             TranscriptCaptureProcessor(capture_user=True),
             user_aggregator,
