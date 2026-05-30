@@ -22,6 +22,14 @@ from app.feedback import PromptRepository
 from app.voice_runtime_executor import execute_voice_runtime_actions
 
 
+class FailingLLM:
+    async def generate(self, messages, system_prompt):
+        raise AssertionError("Twilio Codex routing should not call the voice LLM")
+
+    async def warmup(self) -> None:
+        return None
+
+
 def _settings(tmp_path: Path) -> Settings:
     return Settings(
         database_path=str(tmp_path / "agent.sqlite3"),
@@ -442,6 +450,80 @@ async def test_runtime_executor_runs_codex_tool_once_and_uses_spoken_result(tmp_
     assert execution.response_text == "Codexa question for the user."
     assert execution.codex["codex_session_id"] == "codexa-1"
     assert execution.statuses[0]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_twilio_agent_turn_delegates_directly_to_codex_without_voice_llm(tmp_path: Path, monkeypatch):
+    settings = _settings(tmp_path)
+    db = Database(settings.database_path)
+    agent = AgentService(db, settings, FailingLLM())
+    requests: list[dict[str, Any]] = []
+
+    async def fake_request(self, method, path, *, json=None, params=None):
+        if path == "/agent/chat":
+            requests.append(dict(json or {}))
+            return {
+                "text": "Codexa will plan the app. Reply approve to start.",
+                "sessionId": "codexa-twilio",
+                "projectId": "project-twilio",
+                "requiresApproval": True,
+                "approvalId": "approve_megaplan",
+            }
+        if path == "/codex/status":
+            return {
+                "session": {
+                    "session_id": "codexa-twilio",
+                    "project_id": "project-twilio",
+                    "pending_action": {"type": "approve_megaplan"},
+                }
+            }
+        return {"ok": True}
+
+    monkeypatch.setattr(CodexOrchestratorBridge, "_request_json", fake_request)
+
+    response = await agent.respond(
+        "Build a full stack app for booking classes.",
+        conversation_id="twilio-call-CA123",
+        channel="twilio",
+        caller="+14246993915",
+    )
+
+    assert response["message"] == "Codexa will plan the app. Reply approve to start."
+    assert response["provider"] == "codex-orchestrator"
+    assert response["codex"]["codex_session_id"] == "codexa-twilio"
+    assert response["codex"]["codex_project_id"] == "project-twilio"
+    assert response["codex"]["requires_approval"] is True
+    assert response["runtime_action_status"][0]["status"] == "completed"
+    assert requests[0]["channel"] == "web_voice"
+    assert requests[0]["external_conversation_id"] == "twilio-call-CA123"
+    assert "Plan-first rule" in requests[0]["text"]
+
+    row = db.one(
+        """
+        SELECT codex_session_id, codex_project_id, requires_approval, approval_id
+        FROM codex_orchestrator_sessions
+        WHERE conversation_id = ?
+        """,
+        ("twilio-call-CA123",),
+    )
+    assert row is not None
+    assert row["codex_session_id"] == "codexa-twilio"
+    assert row["codex_project_id"] == "project-twilio"
+    assert row["requires_approval"] == 1
+    assert row["approval_id"] == "approve_megaplan"
+
+    turns = db.all(
+        "SELECT role, content, model, metrics_json FROM turns WHERE conversation_id = ? ORDER BY rowid",
+        ("twilio-call-CA123",),
+    )
+    assert [(turn["role"], turn["content"]) for turn in turns] == [
+        ("user", "Build a full stack app for booking classes."),
+        ("assistant", "Codexa will plan the app. Reply approve to start."),
+    ]
+    assistant_metrics = loads(turns[1]["metrics_json"], {})
+    assert turns[1]["model"] == "codexa-http"
+    assert assistant_metrics["source"] == "codex-orchestrator"
+    assert assistant_metrics["codex"]["codex_session_id"] == "codexa-twilio"
 
 
 @pytest.mark.asyncio

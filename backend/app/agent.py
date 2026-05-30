@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 import uuid
 from typing import Any
 
@@ -9,7 +10,7 @@ from .voice_runtime_controls import (
     voice_tone_intent,
     voice_tone_response,
 )
-from .codex_orchestrator import has_codex_orchestrator_session
+from .codex_orchestrator import CodexOrchestratorBridge, has_codex_orchestrator_session
 from .config import Settings
 from .cost_guard import CostGuard
 from .db import Database, dumps, loads
@@ -209,6 +210,13 @@ class AgentService:
         prompt = self.prompts.active()
         messages = self.history(cid)
         codex_session_active = has_codex_orchestrator_session(self.db, cid)
+        if channel == "twilio" and self.settings.codex_orchestrator_enabled:
+            return await self._respond_with_codex_orchestrator(
+                text=text,
+                conversation_id=cid,
+                user_turn_id=user_turn_id,
+                prompt_version=prompt.version,
+            )
         if is_voice_tool_request(text, self.settings) or codex_session_active:
             return await self._respond_with_runtime_tools(
                 text=text,
@@ -310,6 +318,101 @@ class AgentService:
             "model": result.model,
             "provider": result.provider,
             "prompt_version": prompt.version,
+            "cost_guard": self.cost_guard.snapshot().to_dict(),
+        }
+
+    async def _respond_with_codex_orchestrator(
+        self,
+        *,
+        text: str,
+        conversation_id: str,
+        user_turn_id: str,
+        prompt_version: int,
+    ) -> dict[str, Any]:
+        started_at = time.perf_counter()
+        bridge = CodexOrchestratorBridge(self.db, self.settings)
+        result = await bridge.delegate(
+            conversation_id=conversation_id,
+            user_text=text,
+            transcript=self.transcript(conversation_id),
+            mode="plan_first",
+        )
+        latency_ms = max(0, int((time.perf_counter() - started_at) * 1000))
+        metadata = result.metadata()
+        runtime_action_status = [
+            {
+                "tool": "delegate_to_codex_orchestrator",
+                "status": (
+                    "failed"
+                    if result.status in {"disabled", "timeout", "http_error", "unreachable"}
+                    else "completed"
+                ),
+                "reason": "twilio_voice_front_door",
+                "codex": metadata,
+                **(
+                    {"error": result.status}
+                    if result.status in {"disabled", "timeout", "http_error", "unreachable"}
+                    else {}
+                ),
+            }
+        ]
+        assistant_turn_id = str(uuid.uuid4())
+        self.db.execute(
+            """
+            INSERT INTO turns(
+                id, conversation_id, role, content, latency_ms, model, prompt_version,
+                metrics_json
+            )
+            VALUES (?, ?, 'assistant', ?, ?, ?, ?, ?)
+            """,
+            (
+                assistant_turn_id,
+                conversation_id,
+                result.text,
+                latency_ms,
+                "codexa-http",
+                prompt_version,
+                dumps(
+                    {
+                        "provider": "codex-orchestrator",
+                        "source": "codex-orchestrator",
+                        "raw": result.raw or {},
+                        "codex": metadata,
+                        "runtime_actions": [
+                            {
+                                "tool": "delegate_to_codex_orchestrator",
+                                "args": {
+                                    "goal": text,
+                                    "mode": "plan_first",
+                                    "reason": "twilio_voice_front_door",
+                                },
+                            }
+                        ],
+                        "runtime_action_status": runtime_action_status,
+                        "latency_target_ms": self.settings.latency_target_ms,
+                    }
+                ),
+            ),
+        )
+        return {
+            "conversation_id": conversation_id,
+            "user_turn_id": user_turn_id,
+            "assistant_turn_id": assistant_turn_id,
+            "message": result.text,
+            "latency_ms": latency_ms,
+            "model": "codexa-http",
+            "provider": "codex-orchestrator",
+            "prompt_version": prompt_version,
+            "codex": metadata,
+            "runtime_action_status": runtime_action_status,
+            "providers": {
+                "runtime_action_source": "codex-orchestrator",
+                "codex_session_id": metadata.get("codex_session_id"),
+                "codex_project_id": metadata.get("codex_project_id"),
+                "codex_task_id": metadata.get("codex_task_id"),
+                "requires_approval": metadata.get("requires_approval"),
+                "approval_id": metadata.get("approval_id"),
+            },
             "cost_guard": self.cost_guard.snapshot().to_dict(),
         }
 

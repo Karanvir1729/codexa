@@ -149,15 +149,18 @@ Visible surfaces:
   planning questions, approvals, and Codex execution traces.
 - The Codexa backend API is at `http://127.0.0.1:4317`; this repo talks to that
   API through `backend/app/codex_orchestrator.py`.
+- Twilio speech turns are also a Codexa front door. When
+  `CODEX_ORCHESTRATOR_ENABLED=true`, `/twilio/voice-turn` sends the transcript
+  directly to the Codexa bridge and records the returned session/project/task
+  metadata, so phone calls can drive the same end-to-end app-build workflow as
+  the text composer.
 
 How a voice task moves through Codexa:
 
 ```text
 User says "Build/fix/add/test..."
-  -> browser microphone
-  -> Pipecat SmallWebRTC
-  -> OpenRouter Parakeet transcript
-  -> local runtime classifies task/status/approval intent
+  -> browser microphone or Twilio speech gather
+  -> Pipecat SmallWebRTC/OpenRouter transcript, or Twilio SpeechResult
   -> CodexOrchestratorBridge
   -> POST http://127.0.0.1:4317/agent/chat
   -> Codexa asks clarifying questions or selects/creates a project

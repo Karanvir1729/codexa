@@ -25,7 +25,11 @@ Twilio inbound calls hit `/twilio/inbound` or the compatibility alias
 `/api/twilio/voice`. In default `TWILIO_VOICE_MODE=auto`, local/text runtime
 returns Twilio-native `<Gather input="speech">` TwiML, sends `SpeechResult`
 to `/twilio/voice-turn`, and routes the transcript through the same
-`AgentService.respond` path as the browser voice/text tests.
+Codexa bridge used by the browser voice/text tests. When
+`CODEX_ORCHESTRATOR_ENABLED=true`, Twilio task turns go directly to
+`CodexOrchestratorBridge` and then `POST /agent/chat`, so phone calls can drive
+the same project planning, approval, local Codex session, GitHub, validation,
+and flowchart workflow as the text agent.
 
 When streaming providers are configured, the same inbound route can still return
 `<Connect><Stream>` TwiML. The stream can go to either:
