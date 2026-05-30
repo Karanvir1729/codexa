@@ -41,6 +41,8 @@ Built locally:
   - scheduled eval start/stop controls.
   - prompt version visibility.
   - Pipecat Voice UI Kit device/mic panel with local media waveform and device selection.
+  - Codexa voice surface with live readiness badge, session sync state, workflow
+    flowchart, approval/status metadata, and a text-first task test composer.
 - AWS deployment assets:
   - CloudFormation stack for GPU vLLM host.
   - Terraform scaffold.
@@ -78,6 +80,9 @@ Verified locally:
 - Speech path is `supertone_parakeet`: OpenRouter-hosted NVIDIA Parakeet STT,
   NVIDIA/OpenAI-compatible LLM routing, Codexa planning/execution bridge, and
   Supertonic local TTS.
+- Codexa is the visible work layer: the voice agent creates/resumes a Codexa
+  session, sends planning/task messages to Codexa, surfaces Codexa approvals and
+  status back in speech, and mirrors Codexa workflow nodes in the browser UI.
 - `.env.demo.example` is the setup contract for the live demo; secrets stay blank
   in the repo and are filled only in ignored local env files.
 - `/api/voice/preflight` checks STT, TTS, Codexa, LLM/runtime readiness before
@@ -121,6 +126,80 @@ CODEX_ORCHESTRATOR_ENABLED=true
 
 Use `.env.demo.example` for the live setup. Secrets stay blank in Git and go
 only in ignored local env files such as `.env.local`.
+
+## Codexa Workflow
+
+Codexa is the center of the demo, not just a health check. This repo is the
+voice front door and Pipecat runtime; Codexa is the planning, project selection,
+approval, and Codex execution layer that the voice agent controls.
+
+Visible surfaces:
+
+- This repo's voice console: open `https://localhost:5173`, choose `Voice`, and
+  watch the `Codexa Voice` screen.
+- The voice console header shows `Codexa live`, `Codexa down`, or
+  `codexa synced` before and after Connect.
+- The waveform badge row also shows Codexa readiness next to OpenRouter STT,
+  Supertonic TTS, and SmallWebRTC.
+- After a task attaches to Codexa, the `Codexa Flow` panel appears under the
+  orb. It shows the synced Codexa workflow steps, current status, approval
+  state, and a refresh button.
+- The right-side variable drawer has a `Codexa` group with `base_url`,
+  `session_id`, `project_id`, `task_id`, `requires_approval`, `approval_id`,
+  `status`, `flowchart_nodes`, and `last_message`.
+- The text-first composer on the same Voice screen can send a deterministic
+  Codexa task without using the microphone. If Codexa returns a session, the
+  response chip shows the Codex session id and approval state.
+- The separate Codexa operator UI is at `http://127.0.0.1:4318`. Use that UI
+  to inspect the full Codexa project/session/task view, worker status, pending
+  planning questions, approvals, and Codex execution traces.
+- The Codexa backend API is at `http://127.0.0.1:4317`; this repo talks to that
+  API through `backend/app/codex_orchestrator.py`.
+
+How a voice task moves through Codexa:
+
+```text
+User says "Build/fix/add/test..."
+  -> browser microphone
+  -> Pipecat SmallWebRTC
+  -> OpenRouter Parakeet transcript
+  -> local runtime classifies task/status/approval intent
+  -> CodexOrchestratorBridge
+  -> POST http://127.0.0.1:4317/agent/chat
+  -> Codexa asks clarifying questions or selects/creates a project
+  -> Codexa queues/updates a Codex session
+  -> voice agent speaks Codexa's next question/status
+  -> UI stores and displays session/project/task/approval metadata
+  -> GET /api/voice/codex-orchestrator/status refreshes status and flowchart
+```
+
+The bridge keeps one Codexa session mapped to one voice conversation in the
+SQLite `codex_orchestrator_sessions` table. Follow-up voice turns reuse the
+same `codex_session_id` and `codex_project_id`, so answering Codexa's question
+or saying "approve" continues the existing workflow instead of starting over.
+
+Useful demo phrases:
+
+```text
+Build a small React todo app in a new project.
+Use the existing voice-agent-hackathon project and inspect the README.
+Approve it.
+What is Codexa doing?
+Show Codexa status.
+```
+
+Key implementation files:
+
+- `backend/app/codex_orchestrator.py`: intent helpers, session mapping,
+  `/agent/chat` delegation, `/codex/status` status fetch, flowchart filtering.
+- `backend/app/local_voice_runtime.py`: decides when voice runtime actions
+  should delegate to Codexa and records Codexa metadata with the turn.
+- `backend/app/main.py`: preflight, prepare, text-test, and
+  `/api/voice/codex-orchestrator/status` endpoints.
+- `frontend/src/App.tsx`: `Codexa Voice` screen, readiness badge, `Codexa Flow`
+  panel, raw Codexa variable group, and text-first task composer.
+- `frontend/src/FlowStudio.tsx`: flow nodes can represent `codex_task` steps
+  for agent workflows that intentionally hand work to Codexa.
 
 ## Demo Quick Start
 
