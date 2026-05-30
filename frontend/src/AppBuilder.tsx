@@ -729,8 +729,15 @@ export function AppBuilderPage({ onNotice }: { onNotice: (message: string) => vo
           <button className="voiceConsoleIconButton" type="button" onClick={() => void refreshBuilder()} aria-label="Refresh builder" title="Refresh">
             <RefreshCcw size={17} />
           </button>
-          <button className="voiceConsoleIconButton" type="button" onClick={() => void startNewSession()} disabled={busy} aria-label="Start new session" title="New session + delete project">
-            <Trash2 size={17} />
+          <button
+            className="builderNewAppButton"
+            type="button"
+            onClick={() => void startNewSession()}
+            disabled={busy}
+            aria-label="Start a new app and delete the current generated project"
+            title="New app + delete generated project"
+          >
+            <Trash2 size={16} /> New App
           </button>
         </div>
       </header>
@@ -766,6 +773,9 @@ export function AppBuilderPage({ onNotice }: { onNotice: (message: string) => vo
               <p>{session?.session_id ?? (sessionId || "No active session")} · {chatMessages.length} saved text/voice interactions</p>
             </div>
             <div className="builderPanelActions">
+              <button type="button" className="builderNewAppButton compact" onClick={() => void startNewSession()} disabled={busy}>
+                <Trash2 size={15} /> New App
+              </button>
               <button type="button" onClick={() => void loadLatestSession()} disabled={busy}>Latest</button>
               <button type="button" onClick={() => void refreshBuilder()} disabled={busy}>Refresh</button>
             </div>

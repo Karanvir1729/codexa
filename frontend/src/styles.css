@@ -4620,6 +4620,7 @@ input[type="checkbox"] {
 
 .builderPanelActions button,
 .builderPanelActions a,
+.builderNewAppButton,
 .builderComposer button {
   display: inline-flex;
   align-items: center;
@@ -4632,6 +4633,18 @@ input[type="checkbox"] {
   color: var(--text-strong);
   padding: 0 12px;
   text-decoration: none;
+}
+
+.builderNewAppButton {
+  min-width: 112px;
+  border-color: rgba(94, 234, 212, 0.42);
+  background:
+    linear-gradient(180deg, rgba(94, 234, 212, 0.16), rgba(216, 251, 111, 0.1)),
+    rgba(255, 255, 255, 0.055);
+}
+
+.builderNewAppButton.compact {
+  min-width: 104px;
 }
 
 .builderChatLog {
@@ -5748,6 +5761,7 @@ button {
 :root[data-theme="light"] .voiceConsoleSegmented,
 :root[data-theme="light"] .voiceInspectorHandle,
 :root[data-theme="light"] .settingsRows button,
+:root[data-theme="light"] .builderNewAppButton,
 :root[data-theme="light"] .builderPanelActions button,
 :root[data-theme="light"] .builderPanelActions a,
 :root[data-theme="light"] .builderComposer button {
