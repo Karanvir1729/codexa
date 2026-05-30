@@ -1,6 +1,6 @@
 # Voice Agent Feedback Engine
 
-End-to-end voice agent scaffold for a high-reasoning, low-latency telephony agent that uses NVIDIA open-weight models, GCP/AWS GPU compute, Pipecat/Twilio voice transport, and a first-party automated evaluation loop.
+End-to-end voice agent scaffold for a high-reasoning, low-latency telephony agent that uses NVIDIA/open-weight model routing, Pipecat/Twilio voice transport, Codexa planning, and a first-party automated evaluation loop.
 
 The goal is not just the best-sounding voice. The goal is a complete voice-agent system where calls, transcripts, feedback, evals, and prompt/model improvements form a continuous feedback loop.
 
@@ -50,11 +50,6 @@ Built locally:
   - credit-safe deployment profile using `g5.xlarge`.
   - optional short benchmark profile for larger 49B Nemotron runs gated behind an explicit opt-in.
   - provider readiness checker for AWS, NVIDIA NIM, Twilio, Pipecat, and local backend.
-- GCP deployment assets:
-  - Compute Engine GPU VM scripts for vLLM on NVIDIA L4/G2 instances.
-  - CPU app VM script for the FastAPI/Pipecat backend and React console.
-  - GCP-specific Docker compose files that install the Pipecat voice extras.
-  - status and destroy helpers that keep VM work easy to reverse.
 - Cost controls:
   - deploy script refuses GPU launch without budget guardrail or `BUDGET_EMAIL`.
   - deploy script checks AWS Cost Explorer month-to-date account spend before GPU launch.
@@ -200,6 +195,132 @@ Key implementation files:
   panel, raw Codexa variable group, and text-first task composer.
 - `frontend/src/FlowStudio.tsx`: flow nodes can represent `codex_task` steps
   for agent workflows that intentionally hand work to Codexa.
+
+## User Workflow
+
+The intended demo workflow is a browser-first voice coding agent. The user sees
+the voice app, speaks or types a task, watches Codexa attach to the task, and can
+inspect the same work in the Codexa operator UI.
+
+1. Start the backend, frontend, Codexa backend, Codexa UI, and Supertonic server.
+   The expected local surfaces are `https://localhost:5173` for this app,
+   `http://127.0.0.1:4318` for Codexa's operator UI, and
+   `http://127.0.0.1:4317` for the Codexa API.
+2. Open `https://localhost:5173` and choose `Voice` in the left rail. The page
+   title should be `Codexa Voice`.
+3. Confirm the header shows `voice standby` and either `Codexa live` or
+   `codexa synced`. If it shows `Codexa down`, fix Codexa before clicking
+   `Connect`; the preflight is designed to expose that failure early.
+4. Keep the speech provider on `Supertonic`. This is the only visible demo
+   speech path. It maps to `VOICE_SPEECH_PATH=supertone_parakeet`, OpenRouter
+   Parakeet STT, Supertonic TTS, SmallWebRTC, and Codexa orchestration.
+5. Choose `Agent` for the main demo. Use `Flow` only when you intentionally want
+   the voice session to drive a published Flow Studio graph.
+6. Choose `VAD` when the user should speak naturally and be detected by voice
+   activity. Choose `Push` when the user should hold the spacebar while talking.
+7. Click `Connect`. The UI runs `/api/voice/preflight`, prepares the voice path,
+   opens a Pipecat SmallWebRTC session, requests microphone permission, attaches
+   remote assistant audio, and changes the orb from `Ready` to connected states.
+8. Speak a coding task such as "Use the existing project and inspect the README."
+   The orb moves through `Listening`, `Processing`, and `Speaking`. The browser
+   transcript records the user turn and assistant response.
+9. When the task is a Codexa task, the backend creates or resumes a Codexa
+   session through `/agent/chat`. The `Codexa Flow` panel appears below the orb
+   with synced workflow nodes, current status, approval state, and the latest
+   Codexa message.
+10. Open `http://127.0.0.1:4318` beside the voice app to inspect the full Codexa
+    project, session, task, worker status, planning questions, approvals, and
+    Codex execution traces.
+11. Answer Codexa follow-up questions by voice or through the `Send a task or
+    reply` text box. Follow-up turns reuse the same Codexa session, so saying
+    "approve it" or "show status" continues the existing workflow.
+12. Use `Disconnect` at the end of the demo. It closes the WebRTC transport,
+    releases the microphone path, and returns the voice UI to standby.
+
+What the main `Codexa Voice` screen shows:
+
+| Area | What the user sees | What it means |
+| --- | --- | --- |
+| Header badges | `voice standby`, `voice connected`, `Codexa live`, `Codexa down`, or `codexa synced` | Local WebRTC state and Codexa dependency/session state. `codexa synced` means a voice turn is mapped to a Codexa session. |
+| Orb | Circular waveform with `Ready`, `Listening`, `Processing`, or `Speaking` | Live voice state. Before connection it also shows the active STT/TTS badges. |
+| Mode controls | `Agent`, `Flow`, `Supertonic`, `VAD`, `Push` | The selected voice behavior, speech provider path, and input mode. These lock while connected so the running WebRTC session stays consistent. |
+| Composer | `Send a task or reply`, `Send`, `Play`, and an audio player | Text-only task path for deterministic Codexa testing and Supertonic playback without microphone input. |
+| Codexa Flow | Synced node row, current status, approval state, and refresh button | Visible proof that the voice task reached Codexa and that the browser is following Codexa's workflow state. |
+| Variable drawer | `Voice`, `Codexa`, `Runtime`, and `TTS` variable groups | Raw state for demo debugging: session ids, project ids, task ids, approval ids, route, runtime actions, latency, provider config, and the last Supertonic payload. |
+
+## UI Button Reference
+
+Main navigation:
+
+| Button | Where | What happens after clicking |
+| --- | --- | --- |
+| `Voice` | Left rail | Opens the primary `Codexa Voice` console. This is the main hackathon demo surface. |
+| `Flow` | Left rail | Opens Flow Studio for graph-based agent workflows. Use this when the voice session should follow a published process graph. |
+| `Testing` | Left rail | Opens the Live Ops/testing surface with conversation simulation, Browser Voice, Text Voice Test, eval controls, and runtime debug panels. |
+| `Evals` | Left rail | Jumps to the Live Ops surface where regression runs and auto-eval state are visible. |
+| `Runtime` | Left rail | Jumps to the Live Ops runtime panels for provider, latency, prompt, and cost state. |
+
+`Codexa Voice` controls:
+
+| Button | What happens after clicking |
+| --- | --- |
+| `Refresh` icon | Reloads health, prompt, eval, runtime, and voice preflight state. Use it before demo start or after restarting Codexa/Supertonic. |
+| `Settings` icon | Toggles the compact runtime/settings panel for voice internals. |
+| `Hide variables` / `Show variables` icon | Opens or closes the right variable drawer. The Codexa group is the fastest way to confirm `codex_session_id`, `project_id`, `task_id`, `status`, and approval metadata. |
+| `Connect` | Runs voice preflight, verifies the `supertone_parakeet` contract, checks Codexa readiness, prepares speech services, creates the Pipecat client, requests mic access, sends the SmallWebRTC offer to `/api/offer`, attaches assistant audio, and changes the status to connected. If Codexa or speech dependencies are not ready, the UI shows the failure instead of silently connecting to the wrong path. |
+| `Connecting` | Temporary disabled state while preflight, prepare, mic permission, and WebRTC negotiation are in progress. |
+| `Disconnect` | Closes the Pipecat/WebRTC session, stops active mic routing, clears connected state, and returns the orb to standby. |
+| `Mute` | Disables the microphone while staying connected. The assistant audio path remains active. |
+| `Unmute` | Re-enables the microphone. If the browser needs permission, it prompts for microphone access. |
+| `Hold Space` | Appears when `Push` input is selected. The button itself is disabled because the actual control is the spacebar: press and hold space to send mic audio, release it to stop. |
+| `Agent` | Selects the free-form coding voice agent. Coding, status, and approval intents route through Codexa when `CODEX_ORCHESTRATOR_ENABLED=true`. Disabled while connected. |
+| `Flow` | Selects graph-driven voice mode. The voice turn is attached to a published flow run rather than the free-form agent loop. Disabled while connected. |
+| `Supertonic` | Selects the only demo speech provider path. It pins the UI to `supertone_parakeet`; there is no visible legacy or alternate cloud speech path in the app workflow. Disabled while connected. |
+| `VAD` | Selects voice activity detection. The mic stays available and Pipecat detects start/stop speech automatically. Disabled while connected. |
+| `Push` | Selects push-to-talk. The user holds the spacebar while speaking. Disabled while connected. |
+| `Send` in the `Send a task or reply` composer | Calls `/api/voice/text-test/turn` with the typed message and active speech path. It appends the user/assistant turns, records Codexa metadata, updates the Codexa Flow panel when a session exists, and autoplays the generated Supertonic response when available. |
+| `Play` in the composer | Replays the last text-test assistant response by calling `/api/voice/text-test/audio` and loading the returned audio into the browser player. |
+| `Refresh Codexa status` icon | Calls `/api/voice/codex-orchestrator/status` for the current conversation/session and refreshes workflow nodes, status, approval fields, and latest Codexa message. |
+
+Flow Studio controls:
+
+| Button | What happens after clicking |
+| --- | --- |
+| `Validate` | Checks the graph for structural problems and updates the validation panel. Use this before publishing or connecting voice to a graph. |
+| `Save` | Persists draft flow changes. It is disabled when there are no draft changes. |
+| `Publish` | Publishes the saved graph version so a live runner or voice session can execute it. |
+| `Start` | Starts a graph simulation run and highlights the active node as messages move through the graph. |
+| `Add Node` | Opens the node picker. Choosing a node adds it to the canvas. `codex_task` nodes intentionally hand work to Codexa. |
+| `Zoom out`, `Fit view`, `Zoom in` | Adjust the canvas viewport without changing graph behavior. |
+| Node card drag | Moves the selected node on the canvas. |
+| Inspector `Add` route | Adds an outgoing route from the selected node to another node with the chosen edge label. |
+| Route remove icon | Deletes the selected route from the graph. |
+| `Connect Flow` | Ensures the flow is published, prepares the voice path, creates a SmallWebRTC connection, starts or attaches a flow run, and links the highlighted graph node to live speech. |
+| Flow `Disconnect` | Closes the flow voice WebRTC session and detaches the live graph run from microphone input. |
+| Flow `Mute` / `Unmute` | Toggles microphone input for the active flow voice session. |
+| Flow `Voice Activity Detection` | Selects VAD input for the flow voice session before connecting. |
+| Flow `Push to Talk` | Selects spacebar push-to-talk for the flow voice session before connecting. |
+| Flow `Supertonic` | Keeps the flow voice session on the same `supertone_parakeet` demo path as the main Voice screen. |
+| `Interrupt current node` | Forces the next simulation message to interrupt the active behavior node, useful for testing barge-in and route behavior. |
+| Flow simulation `Send` | Sends the typed simulation utterance to the active flow run and advances the highlighted node if a route matches. |
+
+Live Ops and testing controls:
+
+| Button | What happens after clicking |
+| --- | --- |
+| `Refresh` icon | Reloads health, prompt, eval, scheduler, cost, and runtime state. |
+| `Good` | Marks the latest assistant turn as accurate feedback. This feeds the first-party improvement loop. |
+| `Fix` | Marks the latest assistant turn as incorrect feedback. Low-rated feedback can become prompt-improvement input. |
+| Sample prompt chips | Immediately submit a predefined test utterance into the text conversation loop. |
+| Conversation `Send` | Sends the typed utterance to the chat endpoint and records the turn in the same feedback/eval store. |
+| Browser Voice `Connect` / `Disconnect` | Runs the same browser SmallWebRTC path from the testing panel. It is useful for debugging while keeping runtime metrics visible. |
+| Browser Voice `Agent`, `Flow`, `Supertonic`, `Voice Activity Detection`, `Push to Talk`, `Mute`, `Unmute` | Same behavior as the main `Codexa Voice` controls, shown alongside runtime metrics. |
+| Text Voice Test `Turn` | Sends a final transcript directly through the voice text-test path, bypassing microphone/STT but still exercising the agent, Codexa bridge, TTS text rendering, and metadata recording. |
+| Text Voice Test `Suite` | Runs the built-in text voice suite and shows pass/fail checks for each case. |
+| Text Voice Test `Play TTS` | Synthesizes and plays the last text-test response through the configured TTS provider. |
+| Evaluation `Run` | Runs the YAML eval suite and records aggregate score, failures, and latency. |
+| Evaluation `Auto` | Starts scheduled evals. The button becomes `Stop` while the scheduler is running. |
+| Evaluation `Stop` | Stops scheduled evals and leaves manual `Run` available. |
 
 ## Demo Quick Start
 
@@ -435,19 +556,20 @@ NVIDIA_TTS_USE_SSL=false \
 ./scripts/run_local_voice.sh
 ```
 
-For a same-VPC GPU Whisper worker, `scripts/gcp_deploy_vllm.sh` provisions vLLM and
-`infra/gcp/remote_whisper_server.py` on the same CUDA VM. Point the app at the worker:
+For remote Whisper experiments, point the app at a separately managed HTTP
+worker:
 
 ```bash
 LOCAL_STT_PROVIDER=remote_whisper \
 LOCAL_STT_MODEL=large-v3-turbo \
-REMOTE_WHISPER_BASE_URL=http://10.162.0.2:7001 \
+REMOTE_WHISPER_BASE_URL=http://127.0.0.1:7001 \
 ./scripts/run_local_voice.sh
 ```
 
-The remote Whisper worker accepts raw 16 kHz int16 PCM, defaults to
-`large-v3-turbo`, and has an RMS silence gate so quiet WebRTC tails do not
-hallucinate filler text.
+The remote Whisper interface accepts raw 16 kHz int16 PCM, defaults to
+`large-v3-turbo`, and uses an RMS silence gate so quiet WebRTC tails do not
+hallucinate filler text. This is a provider experiment, not the mainstream
+browser demo path.
 
 For an Apple-Silicon MLX fallback, switch provider and model explicitly:
 
@@ -468,34 +590,20 @@ LOCAL_TTS_TEXT_AGGREGATION_MODE=sentence \
 
 Fish Speech S2 is a heavier TTS stack than Kokoro, so this repo integrates
 with the Fish Speech HTTP server instead of vendoring the model weights into
-the backend. On GCP, deploy it as a same-VPC worker:
+the backend.
+
+For Mistral Voxtral TTS, point the backend at an OpenAI-compatible vLLM-Omni
+worker that you manage separately:
 
 ```bash
-GCP_PROJECT_ID=project-9056e467-7522-4a54-a67 \
-GCP_ZONE=northamerica-northeast2-b \
-GCP_REGION=northamerica-northeast2 \
-GCP_APP_INTERNAL_CIDR=10.162.0.4/32 \
-GCP_BILLING_ACK=true \
-AUTO_STOP_HOURS=0 \
-./scripts/gcp_deploy_fish_tts.sh
+LOCAL_TTS_PROVIDER=voxtral \
+VOXTRAL_TTS_BASE_URL=http://127.0.0.1:8001/v1 \
+./scripts/run_local_voice.sh
 ```
 
-For Mistral Voxtral TTS, deploy the OpenAI-compatible vLLM-Omni worker:
-
-```bash
-GCP_PROJECT_ID=project-9056e467-7522-4a54-a67 \
-GCP_ZONE=northamerica-northeast2-b \
-GCP_REGION=northamerica-northeast2 \
-GCP_APP_INTERNAL_CIDR=10.162.0.4/32 \
-GCP_BILLING_ACK=true \
-AUTO_STOP_HOURS=0 \
-./scripts/gcp_deploy_voxtral_tts.sh
-```
-
-Both GPU TTS workers require available project-wide `GPUS_ALL_REGIONS` quota
-in addition to regional L4 quota. If the scripts print that project-wide GPU
-quota is exhausted, Kokoro should stay live until the quota request is granted
-or the LLM/STT GPU worker is moved to a hosted provider.
+These local/remote provider options are kept for experimentation. The demo UI
+should stay on `Supertonic` unless the team intentionally changes the
+architecture contract.
 
 Local voice turns are written to the same SQLite `conversations` and `turns` tables as the text/API loop, so later eval export and feedback work against the same data store.
 
@@ -535,7 +643,6 @@ Add `--live` when credentials are present and you want to make real provider val
 Current known deployment reality:
 
 - AWS GPU EC2 cannot be launched until AWS approves the rejected G/VT quota request.
-- GCP L4/G2 GPU capacity is now the preferred VM path for the hackathon while AWS credits/quota are blocked.
 - Hosted NVIDIA NIM is the immediate fallback for the high-reasoning model path.
 - Twilio requires `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM_NUMBER`.
 - Local Pipecat voice uses `VOICE_RUNTIME=local_pipecat` and the open-source local dependencies above.
@@ -555,76 +662,6 @@ NVIDIA_MODEL=nvidia/llama-3.3-nemotron-super-49b-v1.5
 ```
 
 Use this when AWS GPU quota is blocked or when NVIDIA API trial access is available.
-
-## GCP GPU vLLM Mode
-
-This is the current preferred cloud path. It keeps the app portable because the backend still talks to an OpenAI-compatible endpoint:
-
-```bash
-LLM_PROVIDER=local
-LOCAL_LLM_BASE_URL=http://<vllm-host>:5000/v1
-LOCAL_LLM_MODEL=<served-model-name>
-```
-
-Before launching paid compute, confirm the active project and quota:
-
-```bash
-gcloud auth login
-gcloud config set project <project-id>
-GCP_PROJECT_ID=<project-id> ./scripts/check_provider_readiness.sh
-```
-
-Launch the default credit-conscious L4 VM:
-
-```bash
-GCP_BILLING_ACK=true \
-GCP_PROJECT_ID=<project-id> \
-GCP_ZONE=us-central1-a \
-ALLOWED_CIDR=<your-ip>/32 \
-./scripts/gcp_deploy_vllm.sh
-```
-
-Defaults:
-
-- VM: `g2-standard-12` with one NVIDIA L4 GPU.
-- Image: Google Deep Learning VM `common-cu128-ubuntu-2204-nvidia-570`.
-- Model: `nvidia/Llama-3.1-Nemotron-Nano-8B-v1` for the smallest practical vLLM profile.
-- Auto-stop: 4 hours.
-- API: port `5000`, restricted by firewall to `ALLOWED_CIDR`.
-
-For a higher-quality benchmark, override the model and machine profile explicitly:
-
-```bash
-GCP_BILLING_ACK=true \
-ALLOW_EXPENSIVE_PROFILE=true \
-GCP_VLLM_MACHINE_TYPE=g2-standard-48 \
-MODEL_ID=nvidia/Llama-3_3-Nemotron-Super-49B-v1_5 \
-SERVED_MODEL_NAME=Llama-3_3-Nemotron-Super-49B-v1_5 \
-TENSOR_PARALLEL_SIZE=4 \
-MAX_MODEL_LEN=32768 \
-./scripts/gcp_deploy_vllm.sh
-```
-
-Deploy the app/Pipecat VM in the same zone and same VPC after vLLM is running:
-
-```bash
-GCP_BILLING_ACK=true \
-GCP_PROJECT_ID=<project-id> \
-GCP_ZONE=us-central1-a \
-GCP_VLLM_INSTANCE_NAME=voice-agent-vllm \
-ALLOWED_CIDR=<your-ip>/32 \
-./scripts/gcp_deploy_app_vm.sh
-```
-
-The app VM serves the console on `http://<app-ip>:8080` and points the backend at vLLM over the internal GCP address. For Twilio, put the app behind HTTPS/WSS first, then set `PUBLIC_BASE_URL` to that HTTPS origin.
-
-Useful operations:
-
-```bash
-./scripts/gcp_vllm_status.sh
-SSH_LOGS=true ./scripts/gcp_vllm_status.sh
-./scripts/gcp_destroy_vllm.sh
-```
 
 ## AWS GPU vLLM Mode
 
