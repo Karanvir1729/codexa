@@ -332,6 +332,7 @@ export function buildLocalCodexImplementationPrompt(input: {
     "Treat .head-developer/MEGAPLAN.md as the approved implementation plan when it exists. Keep changes aligned with it unless the user revises the plan.",
     "Do not claim success unless files exist and validation passes.",
     "Do not run long-lived preview or dev servers as blocking foreground commands. If a server is needed for validation, start it in the background, verify it, stop it before the final JSON response, and report clear run instructions instead of hanging the CLI session.",
+    "Publishing model: the supervisor creates public GitHub repositories and pushes generated project commits directly. Do not create pull requests, PR branches, or review-only handoff branches unless the user explicitly asks for a PR.",
     "Use the Codex CLI tools, skills, plugins, and MCP servers available in this same local account when useful. Before relying on a requested skill or plugin, verify it is available in this CODEX_HOME; if it is missing, say so and continue with the best fallback. Do not fake plugin/tool output; report only what actually happened.",
     "You have full local CLI access. Keep product source of truth in this repo and avoid external/cloud orchestration unless the user explicitly requests it.",
     "Continuous improvement is part of your role: while implementing, look for bugs, UX gaps, performance issues, test gaps, maintainability problems, and feature opportunities that would make the product better.",
