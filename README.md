@@ -1,4 +1,4 @@
-# Voice Agent Feedback Engine
+# Codexa
 
 Draft hackathon submission README.
 
@@ -8,10 +8,10 @@ https://github.com/Karanvir1729/codexa/tree/Cleanreadme
 
 ## 1. What is this?
 
-Voice Agent Feedback Engine is a browser voice coding agent. You speak a coding
-task, the app transcribes it, routes it through a Nemotron-backed agent, sends
-coding work into Codexa/Codex, speaks back status, and records the whole turn so
-failures can become evals and prompt improvements.
+Codexa is a browser voice coding agent. You speak a coding task, the app
+transcribes it, routes it through a Nemotron-backed agent, sends coding work into
+Codexa/Codex, speaks back status, and records the whole turn so failures can
+become evals and prompt improvements.
 
 The project is built around one loop:
 
@@ -49,7 +49,6 @@ agent.
 
 - Project ID: `5817`
 - Agent ID: `18023`
-- Agent name: `Voice Agent Feedback Engine`
 - Provider: self-hosted Custom WebSocket chat
 - Test WebSocket: `/api/cekura/ws`
 - Local status endpoint: `/api/cekura/status`
