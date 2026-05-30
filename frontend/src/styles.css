@@ -2373,6 +2373,11 @@ pre {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .builderGrid,
+  .builderFlowCircuit {
+    grid-template-columns: 1fr;
+  }
+
   .flowPalette,
   .flowInspector {
     min-height: 260px;
@@ -4513,6 +4518,409 @@ input[type="checkbox"] {
   text-transform: uppercase;
 }
 
+.builderConsole {
+  display: grid;
+  gap: 18px;
+  min-height: calc(100vh - 56px);
+}
+
+.builderTopbar h1 {
+  font-size: clamp(30px, 4vw, 48px);
+  line-height: 1.02;
+}
+
+.builderRuntimeStrip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--line-soft);
+}
+
+.builderRuntimeStrip > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  min-height: 78px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.016)),
+    rgba(9, 13, 16, 0.76);
+  padding: 14px;
+}
+
+.builderRuntimeStrip span,
+.builderRepoStrip span,
+.builderFlowLane > span,
+.builderFlowNode span,
+.builderFlowNode small,
+.builderChatMessage span,
+.builderStatusLine {
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.builderRuntimeStrip span,
+.builderFlowLane > span,
+.builderFlowNode span {
+  text-transform: uppercase;
+}
+
+.builderRuntimeStrip strong {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.builderGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.88fr) minmax(420px, 1.12fr);
+  gap: 18px;
+  align-items: stretch;
+}
+
+.builderPanel {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.016)),
+    rgba(9, 13, 16, 0.76);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(18px);
+}
+
+.builderChatPanel,
+.builderCliPanel {
+  display: grid;
+  grid-template-rows: auto minmax(330px, 1fr) auto auto;
+}
+
+.builderPanelActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.builderPanelActions button,
+.builderPanelActions a,
+.builderComposer button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 36px;
+  border: 1px solid rgba(216, 255, 95, 0.34);
+  border-radius: 8px;
+  background: rgba(216, 251, 111, 0.1);
+  color: var(--text-strong);
+  padding: 0 12px;
+  text-decoration: none;
+}
+
+.builderChatLog {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  overflow: auto;
+  padding: 14px;
+}
+
+.builderChatMessage {
+  display: grid;
+  gap: 6px;
+  max-width: 92%;
+}
+
+.builderChatMessage.assistant {
+  justify-self: end;
+}
+
+.builderChatMessage p {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-main);
+  padding: 10px 11px;
+  line-height: 1.42;
+}
+
+.builderChatMessage.assistant p {
+  border-color: rgba(216, 255, 95, 0.34);
+  background: rgba(216, 251, 111, 0.12);
+  color: var(--text-strong);
+}
+
+.builderChatMessage.system p {
+  border-color: rgba(94, 234, 212, 0.28);
+  background: rgba(94, 234, 212, 0.08);
+}
+
+.builderChatMessage.app-voice p {
+  border-color: rgba(96, 165, 250, 0.36);
+  background:
+    linear-gradient(180deg, rgba(96, 165, 250, 0.12), rgba(255, 255, 255, 0.035)),
+    rgba(255, 255, 255, 0.035);
+}
+
+.builderComposer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  border-top: 1px solid var(--line-soft);
+  padding: 14px;
+}
+
+.builderComposer textarea {
+  min-width: 0;
+  resize: vertical;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  outline: none;
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text-strong);
+  padding: 11px 12px;
+  line-height: 1.42;
+}
+
+.builderComposer textarea:focus {
+  border-color: rgba(216, 255, 95, 0.56);
+  box-shadow: 0 0 0 3px rgba(216, 255, 95, 0.08);
+}
+
+.builderStatusLine {
+  border-top: 1px solid var(--line-soft);
+  padding: 10px 14px 13px;
+}
+
+.builderCliPanel pre {
+  overflow: auto;
+  min-height: 420px;
+  max-height: 620px;
+  background: #070a0d;
+  color: #d7ffe0;
+}
+
+.builderFlowPanel,
+.builderMegaplanPanel {
+  overflow: visible;
+}
+
+.builderFlowCircuit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.9fr) minmax(0, 1fr);
+  gap: 22px;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+  background-size: 34px 34px;
+  padding: 16px;
+}
+
+.builderFlowLane {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.026);
+  padding: 12px;
+}
+
+.builderFlowLane::after {
+  position: absolute;
+  top: 54px;
+  bottom: 18px;
+  left: 20px;
+  width: 2px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  content: "";
+}
+
+.builderParallelLane::after {
+  background: linear-gradient(180deg, rgba(94, 234, 212, 0.8), rgba(216, 251, 111, 0.45));
+}
+
+.builderFlowLane > span {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  width: fit-content;
+  min-height: 25px;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 999px;
+  background: rgba(8, 11, 14, 0.82);
+  padding: 0 9px;
+}
+
+.builderFlowNode {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 7px;
+  min-height: 122px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 12px 12px 12px 20px;
+}
+
+.builderFlowNode::before {
+  position: absolute;
+  top: 16px;
+  left: -5px;
+  width: 11px;
+  height: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  background: var(--surface-3);
+  content: "";
+}
+
+.builderFlowNode.running,
+.builderFlowNode.planning {
+  border-color: rgba(94, 234, 212, 0.44);
+  background:
+    linear-gradient(180deg, rgba(94, 234, 212, 0.13), rgba(255, 255, 255, 0.035)),
+    rgba(255, 255, 255, 0.035);
+}
+
+.builderFlowNode.completed::before {
+  border-color: rgba(216, 251, 111, 0.55);
+  background: #d8fb6f;
+}
+
+.builderFlowNode.running::before,
+.builderFlowNode.planning::before {
+  border-color: rgba(94, 234, 212, 0.66);
+  background: #67e8f9;
+  box-shadow: 0 0 18px rgba(103, 232, 249, 0.26);
+}
+
+.builderFlowNode.failed {
+  border-color: rgba(255, 115, 115, 0.38);
+  background: rgba(255, 115, 115, 0.08);
+}
+
+.builderFlowNode strong,
+.builderFlowNode p {
+  overflow-wrap: anywhere;
+}
+
+.builderFlowNode strong {
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+.builderFlowNode div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.builderFlowNode small {
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 999px;
+  padding: 3px 7px;
+}
+
+.builderFlowNode p,
+.builderLaneEmpty {
+  color: var(--text-main);
+  font-size: 12px;
+  line-height: 1.38;
+}
+
+.builderLaneEmpty {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 12px;
+}
+
+.builderRepoStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  border-bottom: 1px solid var(--line-soft);
+  padding: 11px 16px;
+}
+
+.builderRepoStrip span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 3px 8px;
+}
+
+.builderRepoStrip a,
+.builderMarkdown a {
+  color: #d8fb6f;
+}
+
+.builderMarkdown {
+  display: grid;
+  gap: 8px;
+  padding: 18px 22px 24px;
+  color: var(--text-main);
+  line-height: 1.56;
+}
+
+.builderMarkdown h1,
+.builderMarkdown h2,
+.builderMarkdown h3 {
+  color: var(--text-strong);
+}
+
+.builderMarkdown h1 {
+  border-bottom: 1px solid var(--line-soft);
+  padding-bottom: 10px;
+  font-size: 28px;
+}
+
+.builderMarkdown h2 {
+  margin-top: 14px;
+  border-bottom: 1px solid var(--line-soft);
+  padding-bottom: 7px;
+  font-size: 18px;
+}
+
+.builderMarkdown h3 {
+  margin-top: 8px;
+  font-size: 15px;
+}
+
+.builderMarkdown ul {
+  margin: 0;
+  padding-left: 24px;
+}
+
+.builderMarkdown code {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 5px;
+}
+
+.builderMarkdown blockquote {
+  margin: 0;
+  border-left: 3px solid rgba(216, 251, 111, 0.45);
+  color: var(--text-soft);
+  padding: 4px 12px;
+}
+
 @keyframes voiceCorePulse {
   0%,
   100% {
@@ -4630,7 +5038,8 @@ input[type="checkbox"] {
   .statusGrid,
   .selfLearnSessionStrip,
   .selfLearnMetrics,
-  .latencyBreakdown {
+  .latencyBreakdown,
+  .builderRuntimeStrip {
     grid-template-columns: 1fr;
   }
 
@@ -4681,6 +5090,10 @@ input[type="checkbox"] {
   }
 
   .voiceConsoleComposer {
+    grid-template-columns: 1fr;
+  }
+
+  .builderComposer {
     grid-template-columns: 1fr;
   }
 
@@ -5267,7 +5680,9 @@ button {
 :root[data-theme="light"] .codexSyncPanel,
 :root[data-theme="light"] .voiceConversationStrip,
 :root[data-theme="light"] .voiceConsoleInspector,
-:root[data-theme="light"] .voiceSettingsPanel {
+:root[data-theme="light"] .voiceSettingsPanel,
+:root[data-theme="light"] .builderPanel,
+:root[data-theme="light"] .builderRuntimeStrip > div {
   border-color: var(--line-soft);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 253, 247, 0.78)),
@@ -5280,14 +5695,18 @@ button {
 :root[data-theme="light"] .voiceConsoleComposer button,
 :root[data-theme="light"] .voiceConsoleSegmented,
 :root[data-theme="light"] .voiceInspectorHandle,
-:root[data-theme="light"] .settingsRows button {
+:root[data-theme="light"] .settingsRows button,
+:root[data-theme="light"] .builderPanelActions button,
+:root[data-theme="light"] .builderPanelActions a,
+:root[data-theme="light"] .builderComposer button {
   border-color: rgba(23, 56, 33, 0.13);
   background: rgba(255, 255, 255, 0.58);
   color: var(--text-main);
 }
 
 :root[data-theme="light"] .voicePrimaryButton,
-:root[data-theme="light"] .voiceConsoleComposer button[type="submit"] {
+:root[data-theme="light"] .voiceConsoleComposer button[type="submit"],
+:root[data-theme="light"] .builderComposer button[type="submit"] {
   border-color: rgba(22, 138, 67, 0.4);
   background: linear-gradient(180deg, rgba(77, 212, 121, 0.98), rgba(19, 143, 69, 0.96));
   color: #06130b;
@@ -5306,7 +5725,8 @@ button {
   color: var(--text-strong);
 }
 
-:root[data-theme="light"] .voiceConsoleComposer input {
+:root[data-theme="light"] .voiceConsoleComposer input,
+:root[data-theme="light"] .builderComposer textarea {
   border-color: rgba(23, 56, 33, 0.14);
   background: rgba(255, 255, 255, 0.68);
   color: var(--text-strong);
@@ -5326,16 +5746,53 @@ button {
 :root[data-theme="light"] .codexFlowStep,
 :root[data-theme="light"] .rawVariableRow,
 :root[data-theme="light"] .settingsRows label,
-:root[data-theme="light"] .settingsHistory span {
+:root[data-theme="light"] .settingsHistory span,
+:root[data-theme="light"] .builderFlowNode,
+:root[data-theme="light"] .builderLaneEmpty,
+:root[data-theme="light"] .builderRepoStrip span,
+:root[data-theme="light"] .builderChatMessage p {
   border-color: rgba(23, 56, 33, 0.11);
   background: rgba(255, 255, 255, 0.62);
 }
 
-:root[data-theme="light"] .codexFlowStep.active {
+:root[data-theme="light"] .codexFlowStep.active,
+:root[data-theme="light"] .builderFlowNode.running,
+:root[data-theme="light"] .builderFlowNode.planning {
   border-color: rgba(37, 99, 235, 0.28);
   background:
     linear-gradient(180deg, rgba(37, 99, 235, 0.09), rgba(255, 255, 255, 0.68)),
     rgba(255, 255, 255, 0.68);
+}
+
+:root[data-theme="light"] .builderChatMessage.assistant p {
+  border-color: rgba(22, 138, 67, 0.34);
+  background: rgba(22, 138, 67, 0.12);
+  color: var(--text-strong);
+}
+
+:root[data-theme="light"] .builderChatMessage.app-voice p {
+  border-color: rgba(37, 99, 235, 0.24);
+  background: rgba(37, 99, 235, 0.08);
+}
+
+:root[data-theme="light"] .builderFlowLane,
+:root[data-theme="light"] .builderFlowLane > span {
+  border-color: rgba(23, 56, 33, 0.11);
+  background: rgba(255, 255, 255, 0.46);
+}
+
+:root[data-theme="light"] .builderCliPanel pre {
+  background: #0d1610;
+}
+
+:root[data-theme="light"] .builderRepoStrip a,
+:root[data-theme="light"] .builderMarkdown a {
+  color: #0f6a34;
+}
+
+:root[data-theme="light"] .builderMarkdown code {
+  border-color: rgba(23, 56, 33, 0.13);
+  background: rgba(255, 255, 255, 0.62);
 }
 
 :root[data-theme="light"] .codexFlowConnector {

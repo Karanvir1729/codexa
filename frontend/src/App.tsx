@@ -3,6 +3,7 @@ import Activity from "lucide-react/dist/esm/icons/activity.js";
 import Brain from "lucide-react/dist/esm/icons/brain.js";
 import CheckCircle2 from "lucide-react/dist/esm/icons/check-circle-2.js";
 import Clock3 from "lucide-react/dist/esm/icons/clock-3.js";
+import Code2 from "lucide-react/dist/esm/icons/code-2.js";
 import Cpu from "lucide-react/dist/esm/icons/cpu.js";
 import Gauge from "lucide-react/dist/esm/icons/gauge.js";
 import Keyboard from "lucide-react/dist/esm/icons/keyboard.js";
@@ -71,6 +72,7 @@ import {
   type VoiceTextSuiteResponse,
   type VoiceTextTurnResponse
 } from "./api";
+import { AppBuilderPage } from "./AppBuilder";
 import { FlowStudio } from "./FlowStudio";
 import { SelfLearn } from "./SelfLearn";
 import { SmokeBackground } from "./SmokeBackground";
@@ -301,7 +303,7 @@ function formatDebugValue(value: unknown) {
   return String(value);
 }
 
-type AppView = "voice" | "live" | "flow" | "selfLearn";
+type AppView = "voice" | "builder" | "live" | "flow" | "selfLearn";
 
 type VariableBadge = {
   id: string;
@@ -1564,6 +1566,14 @@ export function App() {
             <Mic size={18} /> <span className="navLabel">Voice</span>
           </button>
           <button
+            className={activeView === "builder" ? "active" : ""}
+            onClick={() => setActiveView("builder")}
+            aria-label="App builder"
+            title="App builder"
+          >
+            <Code2 size={18} /> <span className="navLabel">Builder</span>
+          </button>
+          <button
             className={activeView === "flow" ? "active" : ""}
             onClick={() => setActiveView("flow")}
             aria-label="Flow"
@@ -1999,6 +2009,8 @@ export function App() {
               </div>
             )}
           </section>
+        ) : activeView === "builder" ? (
+          <AppBuilderPage onNotice={setNotice} />
         ) : activeView === "flow" ? (
           <FlowStudio
             speechPath={speechPath}

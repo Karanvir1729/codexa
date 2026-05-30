@@ -26,7 +26,12 @@ export default defineConfig({
     proxy: {
       "/api": "http://localhost:8000",
       "/health": "http://localhost:8000",
-      "/twilio": "http://localhost:8000"
+      "/twilio": "http://localhost:8000",
+      "/supervisor-api": {
+        target: "http://localhost:4317",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/supervisor-api/, "")
+      }
     }
   }
 });
