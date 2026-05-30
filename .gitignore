@@ -28,6 +28,8 @@ frontend/vite.config.mjs.timestamp-*.mjs
 .env.codex-phone-supervisor
 tmp/
 node_modules/
+dist/
+release/
 codex-phone-supervisor/frontend/dist/
 codex-auth-docker-smoke-*/
 static-saas-dashboard-shell-smoke-*/

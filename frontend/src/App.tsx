@@ -684,10 +684,11 @@ export function App() {
   }
 
   useEffect(() => {
+    if (activeView === "builder") return;
     refresh()
       .then(() => prewarmVoiceOnLoad())
       .catch((error) => setNotice(error.message));
-  }, []);
+  }, [activeView]);
 
   useEffect(() => {
     const syncViewFromHash = () => {
