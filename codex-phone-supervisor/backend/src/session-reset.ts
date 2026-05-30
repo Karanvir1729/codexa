@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { config } from "./config.js";
+import { isCodexSupervisorCreatedProject } from "./project-ownership.js";
 import { createSession } from "./session.js";
 import { appendAuditEvent, appendOrchestratorEvent, readStore, writeStore } from "./store.js";
 import type { Channel, OrchestratorEvent, PersistedState, ProjectRecord, SessionState } from "./types.js";
@@ -62,6 +63,9 @@ function deletionTargetForGeneratedProject(project: ProjectRecord) {
   }
   if (!isWithinDirectory(target, root)) {
     return { ok: false as const, target, exists, reason: "project_is_not_under_generated_projects_root" };
+  }
+  if (!isCodexSupervisorCreatedProject(project, target)) {
+    return { ok: false as const, target, exists, reason: "project_not_created_by_supervisor" };
   }
   return { ok: true as const, target, exists, reason: exists ? null : "project_directory_was_already_missing" };
 }

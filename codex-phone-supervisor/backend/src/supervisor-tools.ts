@@ -41,6 +41,7 @@ import {
   refreshProjectsFromConfiguredRoots,
   upsertProject,
 } from "./project-store.js";
+import { writeSupervisorProjectMarker } from "./project-ownership.js";
 import { ensureGitHubRepositoryForProject, ensureLocalGitRepository, type GitHubRepoProvisionResult } from "./github-repo.js";
 import { slugifyProjectName } from "./project-naming.js";
 import { cloudOrchestrator } from "./cloud-orchestrator.js";
@@ -280,6 +281,15 @@ function initializeNewProjectRepository(input: {
   const project = projectRecordForWorkspace(input.workspacePath);
   project.display_name = input.displayName;
   project.last_active_session_id = input.session.session_id;
+  project.created_by_codex_supervisor = true;
+  project.created_by_session_id = input.session.session_id;
+  project.created_by_supervisor_at ??= new Date().toISOString();
+  writeSupervisorProjectMarker({
+    workspacePath: input.workspacePath,
+    projectId: project.project_id,
+    sessionId: input.session.session_id,
+    createdAt: project.created_by_supervisor_at,
+  });
   const github = ensureGitHubRepositoryForProject({
     project,
     slug: input.slug,

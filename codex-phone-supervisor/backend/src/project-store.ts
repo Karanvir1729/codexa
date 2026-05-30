@@ -3,6 +3,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { config } from "./config.js";
+import { readSupervisorProjectMarker } from "./project-ownership.js";
 import { listProjectCandidates } from "./project-selector.js";
 import { slugifyProjectName } from "./project-naming.js";
 import { appendOrchestratorEvent, getSession, getStateStore, upsertSession } from "./store.js";
@@ -66,6 +67,7 @@ export function projectRecordForWorkspace(workspacePath: string, existing?: Proj
   const now = new Date().toISOString();
   const repoRoot = gitValue(realPath, "rev-parse", "--show-toplevel");
   const branch = gitValue(realPath, "branch", "--show-current");
+  const marker = readSupervisorProjectMarker(realPath);
   return {
     project_id: existing?.project_id ?? stableProjectId(realPath),
     display_name: existing?.display_name ?? path.basename(realPath),
@@ -82,6 +84,9 @@ export function projectRecordForWorkspace(workspacePath: string, existing?: Proj
     github_last_push_error: existing?.github_last_push_error ?? null,
     default_branch: existing?.default_branch ?? branch ?? "main",
     latest_commit_hash: gitValue(realPath, "rev-parse", "HEAD") ?? existing?.latest_commit_hash ?? null,
+    created_by_codex_supervisor: existing?.created_by_codex_supervisor ?? (marker ? true : null),
+    created_by_session_id: existing?.created_by_session_id ?? marker?.created_by_session_id ?? null,
+    created_by_supervisor_at: existing?.created_by_supervisor_at ?? marker?.created_at ?? null,
     docs_path: existing?.docs_path ?? path.join(realPath, ".head-developer"),
     shared_context_path: existing?.shared_context_path ?? path.join(realPath, ".head-developer", "PROJECT_BRIEF.md"),
     documentation_indexed_at: existing?.documentation_indexed_at ?? null,

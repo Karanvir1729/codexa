@@ -136,6 +136,9 @@ export interface ProjectRecord {
   github_last_push_error?: string | null;
   default_branch?: string | null;
   latest_commit_hash?: string | null;
+  created_by_codex_supervisor?: boolean | null;
+  created_by_session_id?: string | null;
+  created_by_supervisor_at?: string | null;
   docs_path?: string | null;
   shared_context_path?: string | null;
   documentation_indexed_at?: string | null;

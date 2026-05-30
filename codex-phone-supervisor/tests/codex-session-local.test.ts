@@ -885,12 +885,22 @@ test("starting a new local session deletes only the current generated project an
     const { createSession } = await import("./codex-phone-supervisor/backend/src/session.ts");
     const { readStore, upsertCommandEvent, upsertSession, upsertTask } = await import("./codex-phone-supervisor/backend/src/store.ts");
     const { projectRecordForWorkspace, upsertProject } = await import("./codex-phone-supervisor/backend/src/project-store.ts");
+    const { writeSupervisorProjectMarker } = await import("./codex-phone-supervisor/backend/src/project-ownership.ts");
     const { resetSupervisorSession } = await import("./codex-phone-supervisor/backend/src/session-reset.ts");
     const fs = await import("node:fs");
     const project = projectRecordForWorkspace(${JSON.stringify(projectDir)});
-    upsertProject(project);
     const session = createSession("Old generated app", project.workspace_path);
     session.session_id = "session_reset_old";
+    project.created_by_codex_supervisor = true;
+    project.created_by_session_id = session.session_id;
+    project.created_by_supervisor_at = new Date().toISOString();
+    writeSupervisorProjectMarker({
+      workspacePath: project.workspace_path,
+      projectId: project.project_id,
+      sessionId: session.session_id,
+      createdAt: project.created_by_supervisor_at
+    });
+    upsertProject(project);
     session.project_id = project.project_id;
     session.current_project_id = project.project_id;
     session.workspace_path = project.workspace_path;
@@ -1009,6 +1019,57 @@ test("session reset refuses to delete the configured workspace root", () => {
   assert.equal(payload.oldSessionGone, true);
   assert.equal(payload.skippedReason, "generated_projects_root_is_not_deletable");
   assert.equal(payload.deleted, false);
+});
+
+test("session reset refuses to delete an existing selected project that the app did not create", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "local-codex-reset-existing-"));
+  const storeDir = path.join(root, "store");
+  const workspaceRoot = path.join(root, "workspace");
+  const existingProjectDir = path.join(workspaceRoot, "existing-user-project");
+  const codexHome = path.join(root, "codex-home");
+  fs.mkdirSync(existingProjectDir, { recursive: true });
+  fs.mkdirSync(codexHome, { recursive: true });
+  fs.writeFileSync(path.join(existingProjectDir, "README.md"), "user owned project\\n");
+
+  const script = `
+    ${bootstrapEnv(storeDir, workspaceRoot, codexHome)}
+    const { createSession } = await import("./codex-phone-supervisor/backend/src/session.ts");
+    const { readStore, upsertSession } = await import("./codex-phone-supervisor/backend/src/store.ts");
+    const { projectRecordForWorkspace, upsertProject } = await import("./codex-phone-supervisor/backend/src/project-store.ts");
+    const { resetSupervisorSession } = await import("./codex-phone-supervisor/backend/src/session-reset.ts");
+    const fs = await import("node:fs");
+    const project = projectRecordForWorkspace(${JSON.stringify(existingProjectDir)});
+    upsertProject(project);
+    const session = createSession("Existing user project session", project.workspace_path);
+    session.session_id = "session_reset_existing";
+    session.project_id = project.project_id;
+    session.current_project_id = project.project_id;
+    session.workspace_path = project.workspace_path;
+    upsertSession(session);
+    const result = resetSupervisorSession({ sessionId: session.session_id, deleteProject: true, workspacePath: ${JSON.stringify(workspaceRoot)}, channel: "web_text" });
+    const state = readStore();
+    console.log(JSON.stringify({
+      projectDirStillExists: fs.existsSync(${JSON.stringify(existingProjectDir)}),
+      readmeStillExists: fs.existsSync(${JSON.stringify(path.join(existingProjectDir, "README.md"))}),
+      projectStillExists: Boolean(state.projects[project.project_id]),
+      oldSessionGone: !state.sessions.session_reset_existing,
+      lastActiveSessionCleared: state.projects[project.project_id]?.last_active_session_id === null,
+      skippedReason: result.deleted_project.skipped_reason,
+      deleted: result.deleted_project.deleted,
+      stateRemoved: result.deleted_project.state_removed
+    }));
+  `;
+  const result = runIsolated(script);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}") as Record<string, unknown>;
+  assert.equal(payload.projectDirStillExists, true);
+  assert.equal(payload.readmeStillExists, true);
+  assert.equal(payload.projectStillExists, true);
+  assert.equal(payload.oldSessionGone, true);
+  assert.equal(payload.lastActiveSessionCleared, true);
+  assert.equal(payload.skippedReason, "project_not_created_by_supervisor");
+  assert.equal(payload.deleted, false);
+  assert.equal(payload.stateRemoved, false);
 });
 
 test("full-stack Wordle conversation proposes direct local Codex orchestration before approval", () => {

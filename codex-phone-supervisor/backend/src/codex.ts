@@ -8,6 +8,7 @@ import { appendAuditEvent, appendOrchestratorEvent, getSession, upsertSession } 
 import { applySupervisorEvent, mergeCodexReport } from "./reducer.js";
 import { gitDiffSummary } from "./access.js";
 import { findProjectByWorkspace, projectRecordForWorkspace, upsertProject } from "./project-store.js";
+import { writeSupervisorProjectMarker } from "./project-ownership.js";
 import type { CodexStructuredReport, SessionState, SupervisorEvent } from "./types.js";
 
 const activeRuns = new Map<string, { startedAt: number }>();
@@ -284,6 +285,15 @@ export async function runCodexSession(sessionId: string, instruction: string, op
         const project = projectRecordForWorkspace(options.newProject.targetPath, existing ?? undefined);
         project.display_name = options.newProject.displayName;
         project.last_active_session_id = fresh.session_id;
+        project.created_by_codex_supervisor = true;
+        project.created_by_session_id = fresh.session_id;
+        project.created_by_supervisor_at ??= new Date().toISOString();
+        writeSupervisorProjectMarker({
+          workspacePath: options.newProject.targetPath,
+          projectId: project.project_id,
+          sessionId: fresh.session_id,
+          createdAt: project.created_by_supervisor_at,
+        });
         project.updated_at = new Date().toISOString();
         upsertProject(project);
         appendOrchestratorEvent({

@@ -606,12 +606,14 @@ export function AppBuilderPage({ onNotice }: { onNotice: (message: string) => vo
       setFlowchart(null);
       setMegaplan(null);
       const projectMessage = payload.deleted_project.deleted
-        ? "The previous generated project directory was deleted."
+        ? "The previous App Builder project directory was deleted."
         : payload.deleted_project.state_removed
-          ? "The previous generated project was missing, so its session state was cleared."
-          : payload.deleted_project.skipped_reason
-            ? `Project deletion was skipped: ${payload.deleted_project.skipped_reason.replace(/_/g, " ")}.`
-            : "No generated project was attached to the previous session.";
+          ? "The previous App Builder project was missing, so its session state was cleared."
+          : payload.deleted_project.skipped_reason === "project_not_created_by_supervisor"
+            ? "Project deletion was skipped because the selected folder was not created by App Builder."
+            : payload.deleted_project.skipped_reason
+              ? `Project deletion was skipped: ${payload.deleted_project.skipped_reason.replace(/_/g, " ")}.`
+              : "No App Builder project was attached to the previous session.";
       setChatMessages((items) => mergeInteractions(items, [
         {
           id: makeLocalId(),
