@@ -614,16 +614,17 @@ export function AppBuilderPage({ onNotice }: { onNotice: (message: string) => vo
             : payload.deleted_project.skipped_reason
               ? `Project deletion was skipped: ${payload.deleted_project.skipped_reason.replace(/_/g, " ")}.`
               : "No App Builder project was attached to the previous session.";
-      setChatMessages((items) => mergeInteractions(items, [
-        {
-          id: makeLocalId(),
-          role: "system",
-          source: "system",
-          text: `Started a new local Codex session. ${projectMessage}`,
-          ts: new Date().toISOString(),
-          session_id: payload.session_id
-        }
-      ]));
+      const resetMessage: ChatMessage = {
+        id: makeLocalId(),
+        role: "system",
+        source: "system",
+        text: `Started a new local Codex session. ${projectMessage}`,
+        ts: new Date().toISOString(),
+        session_id: payload.session_id
+      };
+      window.localStorage.setItem(interactionStorageKey, JSON.stringify([resetMessage]));
+      setChatInput("");
+      setChatMessages([resetMessage]);
       setSessionResetStatus("New session ready.");
       await refreshBuilder(payload.session_id);
     } catch (error) {

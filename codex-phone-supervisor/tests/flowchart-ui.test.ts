@@ -91,3 +91,19 @@ test("dashboard flowchart nodes are clickable and open the details panel", () =>
   assert.doesNotMatch(source, /Files touched/);
   assert.doesNotMatch(source, /Command failures/);
 });
+
+test("voice UI builder new app reset clears saved chat interactions", () => {
+  const source = fs.readFileSync(path.join(process.cwd(), "frontend", "src", "AppBuilder.tsx"), "utf8");
+  const startIndex = source.indexOf("async function startNewSession()");
+  const endIndex = source.indexOf("async function loadLatestSession()");
+  assert.notEqual(startIndex, -1);
+  assert.notEqual(endIndex, -1);
+  const resetSource = source.slice(startIndex, endIndex);
+  assert.match(resetSource, /\/supervisor\/session\/reset/);
+  assert.match(resetSource, /delete_project: true/);
+  assert.match(resetSource, /const resetMessage: ChatMessage/);
+  assert.match(resetSource, /window\.localStorage\.setItem\(interactionStorageKey, JSON\.stringify\(\[resetMessage\]\)\)/);
+  assert.match(resetSource, /setChatMessages\(\[resetMessage\]\)/);
+  assert.match(resetSource, /setChatInput\(""\)/);
+  assert.doesNotMatch(resetSource, /setChatMessages\(\(items\) => mergeInteractions\(items/);
+});
