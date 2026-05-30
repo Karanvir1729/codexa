@@ -1072,6 +1072,63 @@ test("session reset refuses to delete an existing selected project that the app 
   assert.equal(payload.stateRemoved, false);
 });
 
+test("session reset without an explicit session id does not delete the latest project", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "local-codex-reset-no-session-"));
+  const storeDir = path.join(root, "store");
+  const workspaceRoot = path.join(root, "workspace");
+  const projectDir = path.join(workspaceRoot, "latest-generated-project");
+  const codexHome = path.join(root, "codex-home");
+  fs.mkdirSync(projectDir, { recursive: true });
+  fs.mkdirSync(codexHome, { recursive: true });
+  fs.writeFileSync(path.join(projectDir, "index.html"), "<h1>Keep me</h1>\\n");
+
+  const script = `
+    ${bootstrapEnv(storeDir, workspaceRoot, codexHome)}
+    const { createSession } = await import("./codex-phone-supervisor/backend/src/session.ts");
+    const { readStore, upsertSession } = await import("./codex-phone-supervisor/backend/src/store.ts");
+    const { projectRecordForWorkspace, upsertProject } = await import("./codex-phone-supervisor/backend/src/project-store.ts");
+    const { writeSupervisorProjectMarker } = await import("./codex-phone-supervisor/backend/src/project-ownership.ts");
+    const { resetSupervisorSession } = await import("./codex-phone-supervisor/backend/src/session-reset.ts");
+    const fs = await import("node:fs");
+    const project = projectRecordForWorkspace(${JSON.stringify(projectDir)});
+    const session = createSession("Latest generated app", project.workspace_path);
+    session.session_id = "session_reset_latest";
+    project.created_by_codex_supervisor = true;
+    project.created_by_session_id = session.session_id;
+    project.created_by_supervisor_at = new Date().toISOString();
+    writeSupervisorProjectMarker({
+      workspacePath: project.workspace_path,
+      projectId: project.project_id,
+      sessionId: session.session_id,
+      createdAt: project.created_by_supervisor_at
+    });
+    upsertProject(project);
+    session.project_id = project.project_id;
+    session.current_project_id = project.project_id;
+    session.workspace_path = project.workspace_path;
+    upsertSession(session);
+    const result = resetSupervisorSession({ deleteProject: true, workspacePath: ${JSON.stringify(workspaceRoot)}, channel: "web_text" });
+    const state = readStore();
+    console.log(JSON.stringify({
+      oldSessionStillExists: Boolean(state.sessions.session_reset_latest),
+      projectStillExists: Boolean(state.projects[project.project_id]),
+      projectDirStillExists: fs.existsSync(${JSON.stringify(projectDir)}),
+      skippedReason: result.deleted_project.skipped_reason,
+      deleted: result.deleted_project.deleted,
+      oldSessionId: result.old_session_id
+    }));
+  `;
+  const result = runIsolated(script);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}") as Record<string, unknown>;
+  assert.equal(payload.oldSessionStillExists, true);
+  assert.equal(payload.projectStillExists, true);
+  assert.equal(payload.projectDirStillExists, true);
+  assert.equal(payload.skippedReason, "no_project_attached");
+  assert.equal(payload.deleted, false);
+  assert.equal(payload.oldSessionId, null);
+});
+
 test("full-stack Wordle conversation proposes direct local Codex orchestration before approval", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "local-codex-wordle-plan-"));
   const storeDir = path.join(root, "store");

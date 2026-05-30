@@ -520,6 +520,7 @@ app.post("/supervisor/session/reset", (req, res) => {
   try {
     const result = resetSupervisorSession({
       sessionId: optionalBodyString(req.body?.session_id),
+      fallbackToLatestSession: req.body?.fallback_to_latest_session === true,
       deleteProject: req.body?.delete_project !== false,
       label: optionalBodyString(req.body?.label) || "New local Codex session",
       workspacePath: optionalBodyString(req.body?.workspace_path) || config.defaultWorkspacePath,

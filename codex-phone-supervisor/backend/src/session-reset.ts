@@ -8,6 +8,7 @@ import type { Channel, OrchestratorEvent, PersistedState, ProjectRecord, Session
 
 export interface ResetSupervisorSessionInput {
   sessionId?: string;
+  fallbackToLatestSession?: boolean;
   deleteProject?: boolean;
   label?: string;
   workspacePath?: string;
@@ -256,7 +257,11 @@ function pruneOldSessionState(state: PersistedState, oldSession: SessionState | 
 
 export function resetSupervisorSession(input: ResetSupervisorSessionInput = {}): ResetSupervisorSessionResult {
   const state = readStore();
-  const oldSession = input.sessionId ? state.sessions[input.sessionId] ?? null : latestSessionFromState(state);
+  const oldSession = input.sessionId
+    ? state.sessions[input.sessionId] ?? null
+    : input.fallbackToLatestSession === true
+      ? latestSessionFromState(state)
+      : null;
   const projectId = oldSession?.project_id ?? oldSession?.current_project_id ?? null;
   const project = projectId ? state.projects[projectId] ?? null : null;
   const deletedProject = deleteGeneratedProjectDirectory(project, input.deleteProject !== false);
