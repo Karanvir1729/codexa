@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any, Mapping
 
@@ -28,6 +28,13 @@ _DENIAL_RESPONSES = {
     "deny it",
     "no deny",
     "do not approve",
+}
+_DETAIL_RESPONSES = {
+    "details",
+    "detail",
+    "elaborate",
+    "explain",
+    "more",
 }
 _TASK_VERBS = {
     "add",
@@ -135,6 +142,26 @@ def is_codex_status_request(text: str) -> bool:
             "what did codex do",
             "what changed in the project",
             "show codex status",
+        ]
+    )
+
+
+def is_codex_detail_request(text: str) -> bool:
+    normalized = _normalize(text)
+    if not normalized:
+        return False
+    words = set(normalized.split())
+    return bool(words & _DETAIL_RESPONSES) or any(
+        phrase in normalized
+        for phrase in [
+            "tell me more",
+            "full summary",
+            "longer summary",
+            "more detail",
+            "more details",
+            "walk me through",
+            "what is the megaplan",
+            "show me the megaplan",
         ]
     )
 
@@ -325,10 +352,11 @@ class CodexOrchestratorBridge:
             raw=raw,
         )
         result = await self._enrich_result_with_status(result)
+        result = replace(result, text=self._voice_summary(result, user_text=user_text))
         self._save_result(result)
         return result
 
-    async def status(self, conversation_id: str) -> CodexOrchestratorResult:
+    async def status(self, conversation_id: str, *, user_text: str | None = None) -> CodexOrchestratorResult:
         if not self.settings.codex_orchestrator_enabled:
             return self._local_result(
                 conversation_id,
@@ -383,6 +411,7 @@ class CodexOrchestratorBridge:
             approval_id=_approval_id(pending) or _optional_str(mapping.get("approval_id")),
             raw=self._compact_status_response(raw),
         )
+        result = replace(result, text=self._voice_status_summary(result, fallback=text, user_text=user_text or ""))
         self._save_result(result)
         return result
 
@@ -677,6 +706,9 @@ class CodexOrchestratorBridge:
 
         return (
             "Codexa voice bridge request. Take my recent chatlogs and decide what the user is asking for.\n"
+            "Voice output rule: use AI to write natural speech. Default to one short spoken sentence. "
+            "Mention that the Builder page has the Megaplan for the longer summary. "
+            "If the latest user asks to elaborate, explain more, or asks for a full summary, give the fuller spoken summary.\n"
             "Plan-first rule: ask concise Codexa planning questions as needed. If enough detail is known, "
             "give the final plan and ask for explicit approval. Do not start implementation, create files, "
             "modify files, deploy, install packages, or run Codex implementation until the user explicitly approves "
@@ -727,6 +759,89 @@ class CodexOrchestratorBridge:
             reason = str(pending_action.get("reason") or "").strip()
             parts.append(f"Pending approval: {action}.{(' ' + reason) if reason else ''}")
         return " ".join(part for part in parts if part).strip()
+
+    def _voice_summary(self, result: CodexOrchestratorResult, *, user_text: str) -> str:
+        if result.status in {"disabled", "timeout", "http_error", "unreachable"}:
+            return self._short_text(result.text, limit=110)
+        if is_codex_detail_request(user_text):
+            return self._detailed_voice_text(result.text)
+        if is_codex_approval_response(user_text):
+            return self._short_text(result.text, limit=120) or "Approved. Codex is continuing."
+        if result.requires_approval:
+            return self._with_builder_megaplan_hint(
+                self._with_approval_hint(self._short_text(result.text, limit=120) or "Plan ready.")
+            )
+        if "?" in result.text:
+            return self._short_text(result.text, limit=110)
+        session = _metadata_session(result.raw)
+        current_status = _normalize(str(session.get("current_status") or session.get("status") or "")) if session else ""
+        if any(word in current_status for word in ("running", "working", "busy", "planning")):
+            return self._with_builder_megaplan_hint(
+                self._short_text(result.text, limit=120) or "Codex is working."
+            )
+        if result.codex_session_id:
+            return self._with_builder_megaplan_hint(
+                self._short_text(result.text, limit=120) or "Builder session updated."
+            )
+        return self._short_text(result.text, limit=110)
+
+    def _voice_status_summary(self, result: CodexOrchestratorResult, *, fallback: str, user_text: str) -> str:
+        if is_codex_detail_request(user_text):
+            return self._detailed_voice_text(fallback)
+        if result.requires_approval:
+            return self._with_builder_megaplan_hint(
+                self._with_approval_hint(self._short_text(fallback, limit=120) or "Waiting for approval.")
+            )
+        session = _metadata_session(result.raw)
+        current_status = _normalize(str(session.get("current_status") or session.get("status") or "")) if session else ""
+        if any(word in current_status for word in ("running", "working", "busy", "planning")):
+            return self._with_builder_megaplan_hint(self._short_text(fallback, limit=120) or "Codex is working.")
+        if any(word in current_status for word in ("failed", "error")):
+            return self._with_builder_megaplan_hint(
+                self._short_text(fallback, limit=120) or "Codex hit an issue."
+            )
+        return self._with_builder_megaplan_hint(self._short_text(fallback, limit=120) or "Builder is synced.")
+
+    def _with_builder_megaplan_hint(self, text: str) -> str:
+        cleaned = " ".join(str(text or "").split()).strip()
+        if not cleaned:
+            return "Builder has the Megaplan."
+        normalized = cleaned.casefold()
+        if "builder" in normalized and "megaplan" in normalized:
+            return cleaned
+        if cleaned.endswith((".", "!", "?")):
+            return f"{cleaned} Builder has the Megaplan."
+        return f"{cleaned}. Builder has the Megaplan."
+
+    def _with_approval_hint(self, text: str) -> str:
+        cleaned = " ".join(str(text or "").split()).strip()
+        if not cleaned:
+            return "Say approve to continue."
+        if "approve" in cleaned.casefold():
+            return cleaned
+        if cleaned.endswith((".", "!", "?")):
+            return f"{cleaned} Say approve to continue."
+        return f"{cleaned}. Say approve to continue."
+
+    def _detailed_voice_text(self, text: str) -> str:
+        cleaned = " ".join(str(text or "").split()).strip()
+        if not cleaned:
+            return "I do not have a longer Codex summary yet. Builder has the Megaplan."
+        if "builder" in cleaned.casefold() and "megaplan" in cleaned.casefold():
+            return cleaned
+        return f"{cleaned} Builder has the Megaplan."
+
+    @staticmethod
+    def _short_text(text: str, *, limit: int) -> str:
+        cleaned = " ".join(str(text or "").split())
+        if not cleaned:
+            return ""
+        match = re.search(r"^(.+?[.!?])(?:\s|$)", cleaned)
+        candidate = match.group(1) if match else cleaned
+        if len(candidate) <= limit:
+            return candidate
+        truncated = candidate[:limit].rsplit(" ", 1)[0].rstrip(" ,;:")
+        return f"{truncated}..."
 
     def _local_result(
         self,

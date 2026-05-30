@@ -96,7 +96,7 @@ async def execute_voice_runtime_actions(
                 mode=mode,
             )
         else:
-            result = await codex_bridge.status(conversation_id)
+            result = await codex_bridge.status(conversation_id, user_text=user_text)
 
         codex_metadata = result.metadata()
         codex_metadata["raw"] = result.raw or {}

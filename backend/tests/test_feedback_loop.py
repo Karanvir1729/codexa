@@ -351,7 +351,8 @@ def test_runtime_prompt_adds_conversational_voice_contract():
     assert "I am an AI assistant." in prompt
     assert "latency" in prompt
     assert "story" in prompt
-    assert "one short sentence" not in prompt
+    assert "one short spoken sentence" in prompt
+    assert "Builder page has the Megaplan" in prompt
     assert "human agent" not in prompt
     assert "order ID" not in prompt
     assert "account email" not in prompt

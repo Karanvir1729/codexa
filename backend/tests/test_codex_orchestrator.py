@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 import pytest
 
-from app.codex_orchestrator import CodexOrchestratorBridge, is_codex_task_request
+from app.codex_orchestrator import CodexOrchestratorBridge, is_codex_detail_request, is_codex_task_request
 from app.config import Settings
 from app.db import Database, loads
 from app.flow_runtime import FlowRepository, FlowRuntime
@@ -54,6 +54,11 @@ def test_codex_task_intent_accepts_planning_language_and_codexa_name():
     assert is_codex_task_request(
         "Use the codexa-live-smoke project. Plan adding a tiny static checklist feature."
     )
+
+
+def test_codex_detail_intent_accepts_natural_elaboration_language():
+    assert is_codex_detail_request("Can you elaborate on the Megaplan?")
+    assert is_codex_detail_request("Give me the full summary.")
 
 
 def test_live_voice_request_combines_vad_fragments_for_codex_task():
@@ -277,7 +282,11 @@ async def test_codex_bridge_health_and_status_summary(tmp_path: Path):
     assert result.codex_session_id == "codexa-1"
     assert result.requires_approval is True
     assert "Final plan is waiting for approval." in result.text
-    assert "approve_megaplan" in result.text
+    assert "Builder has the Megaplan" in result.text
+
+    detailed = await bridge.status("voice-codex", user_text="Can you elaborate?")
+    assert "Files modified: app.py, tests/test_app.py." in detailed.text
+    assert "approve_megaplan" in detailed.text
 
 
 @pytest.mark.asyncio
@@ -447,7 +456,7 @@ async def test_runtime_executor_runs_codex_tool_once_and_uses_spoken_result(tmp_
     )
 
     assert calls == 1
-    assert execution.response_text == "Codexa question for the user."
+    assert execution.response_text == "Codexa question for the user. Builder has the Megaplan."
     assert execution.codex["codex_session_id"] == "codexa-1"
     assert execution.statuses[0]["status"] == "completed"
 
@@ -488,7 +497,7 @@ async def test_twilio_agent_turn_delegates_directly_to_codex_without_voice_llm(t
         caller="+14246993915",
     )
 
-    assert response["message"] == "Codexa will plan the app. Reply approve to start."
+    assert response["message"] == "Codexa will plan the app. Say approve to continue. Builder has the Megaplan."
     assert response["provider"] == "codex-orchestrator"
     assert response["codex"]["codex_session_id"] == "codexa-twilio"
     assert response["codex"]["codex_project_id"] == "project-twilio"
@@ -518,7 +527,7 @@ async def test_twilio_agent_turn_delegates_directly_to_codex_without_voice_llm(t
     )
     assert [(turn["role"], turn["content"]) for turn in turns] == [
         ("user", "Build a full stack app for booking classes."),
-        ("assistant", "Codexa will plan the app. Reply approve to start."),
+        ("assistant", "Codexa will plan the app. Say approve to continue. Builder has the Megaplan."),
     ]
     assistant_metrics = loads(turns[1]["metrics_json"], {})
     assert turns[1]["model"] == "codexa-http"
@@ -738,7 +747,7 @@ async def test_flow_codex_task_uses_bridge_when_enabled(tmp_path: Path, monkeypa
         conversation_id="flow-conversation",
     )
 
-    assert result["messages"][-1]["text"] == "Codexa plan question."
+    assert result["messages"][-1]["text"] == "Codexa plan question. Builder has the Megaplan."
     event = db.one(
         """
         SELECT payload_json

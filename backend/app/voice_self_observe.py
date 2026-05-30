@@ -10,6 +10,7 @@ from typing import Any, Literal, Mapping
 
 from .codex_orchestrator import (
     CODEX_ORCHESTRATOR_RUNTIME_TOOLS,
+    is_codex_detail_request,
     is_codex_orchestrator_request,
     is_codex_status_request,
 )
@@ -307,7 +308,8 @@ def runtime_command_context(
     elif codex_enabled and codex_session_active:
         speed_guidance = (
             "There is an active Codex planning session for this voice conversation. "
-            "Choose delegate_to_codex_orchestrator for this user turn, preserving the user's exact answer or instruction. "
+            "If the user asks to elaborate, explain more, or asks for a fuller summary, choose get_codex_orchestrator_status. "
+            "Otherwise choose delegate_to_codex_orchestrator for this user turn, preserving the user's exact answer or instruction. "
             "Do not choose any TTS speed action unless the current user request explicitly asks to speak faster or slower."
         )
     elif codex_enabled and is_codex_orchestrator_request(user_text):
@@ -364,6 +366,22 @@ def fallback_runtime_command_for_request(
 ) -> VoiceRuntimeCommand | None:
     intent = voice_speed_intent(user_text)
     if not intent:
+        if settings.codex_orchestrator_enabled and codex_session_active and is_codex_detail_request(user_text):
+            return VoiceRuntimeCommand(
+                speak="I'll pull the fuller Codex summary.",
+                runtime_actions=[
+                    {
+                        "tool": "get_codex_orchestrator_status",
+                        "args": {"reason": f"fallback_active_session_detail:{reason}"},
+                    }
+                ],
+                reasoning_profile="reasoning",
+                debug={
+                    "intent": "codex_orchestrator_detail",
+                    "source": "runtime_control_fallback",
+                    "fallback_reason": reason,
+                },
+            )
         if settings.codex_orchestrator_enabled and codex_session_active:
             return VoiceRuntimeCommand(
                 speak="I'll send that to Codex.",

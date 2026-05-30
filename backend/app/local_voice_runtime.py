@@ -322,10 +322,11 @@ def build_system_instruction(settings: Settings, prompt_repo: PromptRepository) 
         instruction = f"{instruction}\n\nLive runtime hints:\n" + "\n".join(live_hints[:2])
     instruction = (
         f"{instruction}\n\n"
-        "Live voice rules: answer immediately; keep normal replies short unless the user asks for detail; "
+        "Live voice rules: answer immediately; default to one short spoken sentence unless the user asks for detail; "
         "use the user's requested language; ask one concise clarification when needed; do not mention "
         "internals unless asked. For normal replies, return plain spoken text. If a runtime-control "
-        "system message is present, follow its JSON schema exactly. Never speak raw JSON, emotion "
+        "system message is present, follow its JSON schema exactly. For Codex or Builder work, mention that "
+        "the Builder page has the Megaplan for the longer summary. Never speak raw JSON, emotion "
         "prefixes, or expression tags."
     )
     if settings.local_tts_provider == "gradium":

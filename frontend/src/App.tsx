@@ -153,6 +153,7 @@ const localVoiceSpeechStartFrames = 2;
 const localVoiceSpeechStopFrames = 10;
 const speechPathStorageKey = "voiceops-speech-path";
 const voiceInputModeStorageKey = "voiceops-input-mode";
+const builderSessionStorageKey = "codex-phone-supervisor-session";
 
 function initialSpeechPath(): VoiceSpeechPath {
   if (typeof window === "undefined") return "nvidia_gradium";
@@ -565,6 +566,9 @@ export function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [prompt, setPrompt] = useState<PromptState | null>(null);
   const [conversationId, setConversationId] = useState<string | undefined>();
+  const [builderSessionId, setBuilderSessionId] = useState(
+    () => window.localStorage.getItem(builderSessionStorageKey) ?? ""
+  );
   const [flowConversationId, setFlowConversationId] = useState<string | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [message, setMessage] = useState("");
@@ -649,6 +653,13 @@ export function App() {
     }
   }
 
+  function syncBuilderSessionFromCodex(metadata: Record<string, unknown>) {
+    const sessionId = metadataString(metadata, "codex_session_id");
+    if (!sessionId) return;
+    setBuilderSessionId(sessionId);
+    window.localStorage.setItem(builderSessionStorageKey, sessionId);
+  }
+
   async function refreshCodexStatus(options: { silent?: boolean; conversationId?: string } = {}) {
     const cid = options.conversationId ?? conversationId;
     if (!cid || codexStatusBusy) return null;
@@ -656,6 +667,7 @@ export function App() {
     try {
       const result = await getVoiceCodexOrchestratorStatus(cid);
       setCodexStatus(result);
+      syncBuilderSessionFromCodex(asRecord(result.codex));
       return result;
     } catch (error) {
       if (!options.silent) {
@@ -1313,6 +1325,12 @@ export function App() {
   );
 
   useEffect(() => {
+    if (!codexSessionId) return;
+    setBuilderSessionId(codexSessionId);
+    window.localStorage.setItem(builderSessionStorageKey, codexSessionId);
+  }, [codexSessionId]);
+
+  useEffect(() => {
     refreshVoiceRuntime();
     const interval = window.setInterval(refreshVoiceRuntime, voiceConnected ? 5000 : 10000);
     return () => window.clearInterval(interval);
@@ -1348,6 +1366,7 @@ export function App() {
         const result = await getVoiceCodexOrchestratorStatus(conversationId);
         if (!cancelled) {
           setCodexStatus(result);
+          syncBuilderSessionFromCodex(asRecord(result.codex));
         }
       } catch {
         // Status polling is opportunistic; manual refresh surfaces errors.
@@ -1628,6 +1647,7 @@ export function App() {
 
   function applyVoiceTextResponse(response: VoiceTextTurnResponse) {
     setConversationId(response.conversation_id);
+    syncBuilderSessionFromCodex(asRecord(response.codex));
     setCost(response.cost_guard);
     setTurns((current) => {
       const withUser = appendTurn(current, {
@@ -2391,7 +2411,7 @@ export function App() {
             </section>
           </section>
         ) : activeView === "builder" ? (
-          <AppBuilderPage onNotice={setNotice} />
+          <AppBuilderPage onNotice={setNotice} externalSessionId={builderSessionId || codexSessionId || ""} />
         ) : activeView === "flow" ? (
           <FlowStudio
             speechPath={speechPath}

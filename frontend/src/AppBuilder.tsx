@@ -463,7 +463,13 @@ function FlowNodeCard({ node }: { node: FlowchartNode }) {
   );
 }
 
-export function AppBuilderPage({ onNotice }: { onNotice: (message: string) => void }) {
+export function AppBuilderPage({
+  onNotice,
+  externalSessionId = ""
+}: {
+  onNotice: (message: string) => void;
+  externalSessionId?: string;
+}) {
   const [sessionId, setSessionId] = useState(() => window.localStorage.getItem(sessionStorageKey) ?? "");
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(loadSavedInteractions);
@@ -709,6 +715,14 @@ export function AppBuilderPage({ onNotice }: { onNotice: (message: string) => vo
   ].join("\n\n");
   const activePreview = tasks.find((task) => task.latest_preview?.preview_url)?.latest_preview ?? null;
   const isMegaplanApprovalPending = session?.pending_action?.type === "approve_megaplan" || session?.pending_action?.action === "approve_megaplan";
+
+  useEffect(() => {
+    const nextSessionId = externalSessionId.trim();
+    if (!nextSessionId || nextSessionId === sessionId) return;
+    window.localStorage.setItem(sessionStorageKey, nextSessionId);
+    setSessionId(nextSessionId);
+    void refreshBuilder(nextSessionId);
+  }, [externalSessionId, sessionId]);
 
   useEffect(() => {
     void refreshBuilder().catch(() => undefined);
