@@ -211,14 +211,22 @@ function interactionContentKey(message: ChatMessage) {
   return `${message.session_id ?? ""}:${message.role}:${message.source}:${message.text.trim()}`;
 }
 
+function interactionDuplicateKey(message: ChatMessage) {
+  if (message.role === "assistant" && (message.source === "system" || message.source === "app-text")) {
+    return `${message.session_id ?? ""}:${message.role}:${message.text.trim()}`;
+  }
+  return interactionContentKey(message);
+}
+
 function mergeInteractions(current: ChatMessage[], incoming: ChatMessage[]) {
-  const seenIds = new Set(current.map((message) => message.id));
-  const seenContent = new Set(current.map(interactionContentKey));
-  const merged = [...current];
-  for (const message of incoming) {
-    if (seenIds.has(message.id) || seenContent.has(interactionContentKey(message))) continue;
+  const seenIds = new Set<string>();
+  const seenContent = new Set<string>();
+  const merged: ChatMessage[] = [];
+  for (const message of [...current, ...incoming]) {
+    const contentKey = interactionDuplicateKey(message);
+    if (seenIds.has(message.id) || seenContent.has(contentKey)) continue;
     seenIds.add(message.id);
-    seenContent.add(interactionContentKey(message));
+    seenContent.add(contentKey);
     merged.push(message);
   }
   return merged.slice(-200);
@@ -246,7 +254,14 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function sanitizeFlowText(value: string) {
   return value
-    .replace(/`[^`]*`/g, "implementation detail")
+    .replace(/`([^`]*)`/g, (_match, snippet: string) => {
+      const trimmed = snippet.trim();
+      if (!trimmed) return "implementation detail";
+      if (/(?:^|[\s(])(?:\.{1,2}\/|\/|~\/|[A-Za-z]:[\\/]|[\w.-]+\/)/.test(trimmed)) return "project file";
+      if (/\b[\w.-]+\.(?:tsx?|jsx?|mjs|cjs|json|html|css|md|svg|png|jpe?g|webp|gif|ico|yml|yaml)\b/i.test(trimmed)) return "project file";
+      if (/[$;&|<>]/.test(trimmed)) return "implementation detail";
+      return trimmed.length <= 60 ? trimmed : "implementation detail";
+    })
     .replace(/(?:^|[\s(])(?:\.{1,2}\/|\/|~\/|[A-Za-z]:[\\/]|[\w.-]+\/)[^\s,;:)]+/g, " project file")
     .replace(/\b[\w.-]+\.(?:tsx?|jsx?|mjs|cjs|json|html|css|md|svg|png|jpe?g|webp|gif|ico|yml|yaml)\b/gi, "project file")
     .replace(/\s+/g, " ")
