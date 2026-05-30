@@ -1,0 +1,118 @@
+{
+  "agent_name": "Voice Agent Feedback Engine",
+  "agent_description": "Browser voice coding agent using the nvidia_gradium path: Pipecat SmallWebRTC, NVIDIA WebSocket STT, NVIDIA Nemotron LLM, Gradium semantic VAD/TTS, Codexa orchestration, SQLite transcripts, and prompt/eval feedback loops.",
+  "tags": ["voice-agent-hackathon", "nvidia-gradium", "codexa", "regression"],
+  "default_personality_name": "Normal Male",
+  "evaluators": [
+    {
+      "name": "Identity and no handoff",
+      "first_message": "What's your name?",
+      "expected_outcome": "The main agent says it is an AI assistant and does not claim to be a human agent or offer a human handoff.",
+      "conditions": [
+        {"id": 0, "condition": "FIRST_MESSAGE", "action": "What's your name?", "type": "standard", "fixed_message": true},
+        {"id": 1, "condition": "contains \"AI assistant\"", "action": "Can I talk to a human agent instead?", "type": "standard", "fixed_message": true},
+        {"id": 2, "condition": "contains \"stay\" OR contains \"help\"", "action": "Thanks, goodbye. <endcall />", "type": "standard", "fixed_message": true}
+      ]
+    },
+    {
+      "name": "Voice speed control",
+      "first_message": "Can you talk faster?",
+      "expected_outcome": "The main agent acknowledges faster speech directly and states or implies that the faster speed will be applied.",
+      "conditions": [
+        {"id": 0, "condition": "FIRST_MESSAGE", "action": "Can you talk faster?", "type": "standard", "fixed_message": true},
+        {"id": 1, "condition": "contains \"faster\"", "action": "Great, keep going at that speed. <endcall />", "type": "standard", "fixed_message": true}
+      ]
+    },
+    {
+      "name": "Tone style control",
+      "first_message": "Can you use a spooky tone?",
+      "expected_outcome": "The main agent acknowledges the spooky tone request directly and does not refuse a harmless speaking-style change.",
+      "conditions": [
+        {"id": 0, "condition": "FIRST_MESSAGE", "action": "Can you use a spooky tone?", "type": "standard", "fixed_message": true},
+        {"id": 1, "condition": "contains \"spooky\" OR contains \"tone\"", "action": "Now say one sentence in that style. <endcall />", "type": "standard", "fixed_message": true}
+      ]
+    },
+    {
+      "name": "Long form story request",
+      "first_message": "Tell me a spooky story in four sentences.",
+      "expected_outcome": "The main agent tells a multi-sentence spooky story directly instead of asking what kind of story or how long it should be.",
+      "conditions": [
+        {"id": 0, "condition": "FIRST_MESSAGE", "action": "Tell me a spooky story in four sentences.", "type": "standard", "fixed_message": true},
+        {"id": 1, "condition": "contains \"story\" OR contains \"spooky\" OR contains \"night\" OR contains \"clock\" OR contains \"door\" OR contains \"hallway\" OR contains \"shadow\"", "action": "That works, goodbye. <endcall />", "type": "standard", "fixed_message": true}
+      ]
+    },
+    {
+      "name": "Latency explanation",
+      "first_message": "How are you reducing network latency?",
+      "expected_outcome": "The main agent explains latency in terms of streaming and the NVIDIA/Gradium voice path, without giving an unrelated answer.",
+      "conditions": [
+        {"id": 0, "condition": "FIRST_MESSAGE", "action": "How are you reducing network latency?", "type": "standard", "fixed_message": true},
+        {"id": 1, "condition": "contains \"latency\" OR contains \"streaming\"", "action": "Thanks, that answers it. <endcall />", "type": "standard", "fixed_message": true}
+      ]
+    },
+    {
+      "name": "Ambiguous OnePlus One",
+      "first_message": "What is OnePlus One?",
+      "expected_outcome": "The main agent asks whether the user means the OnePlus phone or the math problem instead of guessing.",
+      "conditions": [
+        {"id": 0, "condition": "FIRST_MESSAGE", "action": "What is OnePlus One?", "type": "standard", "fixed_message": true},
+        {"id": 1, "condition": "contains \"phone\" AND contains \"math\"", "action": "I meant the math problem. <endcall />", "type": "standard", "fixed_message": true}
+      ]
+    },
+    {
+      "name": "Simple math stays concise",
+      "first_message": "What is one plus one?",
+      "expected_outcome": "The main agent answers that one plus one is two concisely and does not over-explain.",
+      "conditions": [
+        {"id": 0, "condition": "FIRST_MESSAGE", "action": "What is one plus one?", "type": "standard", "fixed_message": true},
+        {"id": 1, "condition": "contains \"2\" OR contains \"two\"", "action": "Thanks. <endcall />", "type": "standard", "fixed_message": true}
+      ]
+    },
+    {
+      "name": "Coding request routes to runtime",
+      "first_message": "Create a new Codexa project and plan a tiny TODO app.",
+      "expected_outcome": "The main agent treats the request as a coding/runtime task: it should either start or continue a Codexa planning flow, or clearly report that Codexa is unavailable without crashing.",
+      "conditions": [
+        {"id": 0, "condition": "FIRST_MESSAGE", "action": "Create a new Codexa project and plan a tiny TODO app.", "type": "standard", "fixed_message": true},
+        {"id": 1, "condition": "contains \"Codexa\" OR contains \"project\" OR contains \"plan\" OR contains \"trouble\"", "action": "Understood. <endcall />", "type": "standard", "fixed_message": true}
+      ]
+    },
+    {
+      "name": "Codexa named project planning",
+      "first_message": "Create a new Codexa project named cekura-static-habit-board and plan a tiny static habit board app.",
+      "expected_outcome": "The main agent routes the explicitly named project into Codexa without asking which workspace to use, and responds with a project/planning/approval update or a graceful Codexa-unavailable message.",
+      "conditions": [
+        {"id": 0, "condition": "FIRST_MESSAGE", "action": "Create a new Codexa project named cekura-static-habit-board and plan a tiny static habit board app.", "type": "standard", "fixed_message": true},
+        {"id": 1, "condition": "(contains \"Codexa\" OR contains \"project\" OR contains \"plan\" OR contains \"approval\" OR contains \"trouble\") AND not contains \"which workspace\"", "action": "Thanks, keep it ready for approval. <endcall />", "type": "standard", "fixed_message": true}
+      ]
+    },
+    {
+      "name": "Codexa planning status follow-up",
+      "first_message": "Create a new Codexa project named cekura-status-palette-lab and plan a tiny static palette app.",
+      "expected_outcome": "After a Codexa planning request, a status follow-up should return a concise Codexa/project status instead of losing the session or reverting to unrelated chat.",
+      "conditions": [
+        {"id": 0, "condition": "FIRST_MESSAGE", "action": "Create a new Codexa project named cekura-status-palette-lab and plan a tiny static palette app.", "type": "standard", "fixed_message": true},
+        {"id": 1, "condition": "contains \"Codexa\" OR contains \"project\" OR contains \"plan\" OR contains \"approval\" OR contains \"trouble\"", "action": "What is Codex doing now?", "type": "standard", "fixed_message": true},
+        {"id": 2, "condition": "contains \"Codex\" OR contains \"Codexa\" OR contains \"project\" OR contains \"status\" OR contains \"approval\" OR contains \"running\" OR contains \"trouble\"", "action": "That is enough. <endcall />", "type": "standard", "fixed_message": true}
+      ]
+    },
+    {
+      "name": "Flow interruption cancel",
+      "first_message": "stop, actually cancel that",
+      "expected_outcome": "The main agent handles an interruption/cancel utterance gracefully and records a normal completed interaction instead of leaving the session stuck.",
+      "conditions": [
+        {"id": 0, "condition": "FIRST_MESSAGE", "action": "stop, actually cancel that", "type": "standard", "fixed_message": true},
+        {"id": 1, "condition": "contains \"make sure\" OR contains \"cancel\" OR contains \"understand\"", "action": "That's all. <endcall />", "type": "standard", "fixed_message": true}
+      ]
+    },
+    {
+      "name": "Graceful model failure language",
+      "first_message": "Please answer this normally even if the language model is slow.",
+      "expected_outcome": "The main agent returns a usable spoken response or a concise graceful failure message; it must not expose stack traces or crash the WebSocket.",
+      "conditions": [
+        {"id": 0, "condition": "FIRST_MESSAGE", "action": "Please answer this normally even if the language model is slow.", "type": "standard", "fixed_message": true},
+        {"id": 1, "condition": "contains \"trouble\" OR contains \"try\" OR contains \"help\" OR contains \"response\"", "action": "Thanks. <endcall />", "type": "standard", "fixed_message": true}
+      ]
+    }
+  ]
+}

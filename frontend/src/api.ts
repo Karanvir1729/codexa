@@ -82,7 +82,7 @@ export type VoicePreflight = {
   cloud_vllm: CloudVLLMState;
 };
 
-export type VoiceSpeechPath = "supertone_parakeet";
+export type VoiceSpeechPath = "nvidia_gradium";
 export type VoiceInputMode = "vad" | "push_to_talk";
 export type VoiceRuntimeProfile = {
   profile_version: number;

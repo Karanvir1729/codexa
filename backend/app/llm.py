@@ -180,7 +180,7 @@ class OpenAICompatibleLLMClient:
         self.model = settings.active_model
         if not self.base_url:
             raise ValueError("OpenAI-compatible provider requires a base URL.")
-        if not self.api_key:
+        if settings.active_requires_api_key and not self.api_key:
             raise ValueError(f"{provider} provider requires an API key.")
 
     async def generate(self, messages: list[Message], system_prompt: str) -> LLMResult:
@@ -202,7 +202,9 @@ class OpenAICompatibleLLMClient:
             payload["temperature"] = 0
         if self.provider == "ollama" and self.settings.ollama_keep_alive:
             payload["keep_alive"] = self.settings.ollama_keep_alive
-        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
         timeout = httpx.Timeout(self.settings.llm_timeout_seconds)
         json_response_enforced = json_response_requested
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -259,7 +261,9 @@ class OpenAICompatibleLLMClient:
         }
         if self.provider == "ollama" and self.settings.ollama_keep_alive:
             payload["keep_alive"] = self.settings.ollama_keep_alive
-        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
         timeout = httpx.Timeout(self.settings.llm_timeout_seconds)
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
@@ -348,7 +352,7 @@ def make_llm_client(settings: Settings) -> LLMClient:
             settings,
             f"{settings.llm_provider} provider is missing a base URL.",
         )
-    if not settings.active_api_key:
+    if settings.active_requires_api_key and not settings.active_api_key:
         api_key_name = "NVIDIA_API_KEY" if settings.llm_provider == "nvidia" else "API key"
         return UnavailableLLMClient(
             settings,

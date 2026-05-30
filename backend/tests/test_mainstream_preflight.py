@@ -14,19 +14,22 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 async def test_voice_preflight_includes_codexa_dependency(monkeypatch, tmp_path):
     settings = Settings(
         database_path=str(tmp_path / "agent.sqlite3"),
-        llm_provider="nvidia",
-        nvidia_api_key="test-key",
+        llm_provider="nemotron",
+        nemotron_llm_url="https://nemotron.test/v1",
+        nemotron_llm_model="nvidia/nemotron-test",
         voice_runtime="local_pipecat",
-        local_stt_provider="openrouter",
-        openrouter_api_key="test-openrouter-key",
+        local_stt_provider="nvidia_ws",
+        nvidia_asr_url="ws://nvidia-asr.test",
+        local_tts_provider="gradium",
+        gradium_api_key="test-gradium-key",
         codex_orchestrator_enabled=True,
-        supertonic_language="na",
     )
 
     async def fake_check_voice_dependencies(*_args, **_kwargs):
         return True, [], [], {
-            "stt": {"provider": "openrouter", "healthy": True},
-            "tts": {"provider": "supertonic", "healthy": True},
+            "stt": {"provider": "nvidia_ws", "healthy": True},
+            "tts": {"provider": "gradium", "healthy": True},
+            "vad": {"provider": "gradium", "healthy": True},
         }
 
     async def fake_check_codexa_dependency(_settings):
@@ -41,7 +44,7 @@ async def test_voice_preflight_includes_codexa_dependency(monkeypatch, tmp_path)
     monkeypatch.setattr(main_module, "check_voice_dependencies", fake_check_voice_dependencies)
     monkeypatch.setattr(main_module, "check_codexa_dependency", fake_check_codexa_dependency)
 
-    result = await main_module.voice_preflight("supertone_parakeet")
+    result = await main_module.voice_preflight("nvidia_gradium")
 
     assert result["ready"] is False
     assert "Codexa is offline." in result["reasons"]
@@ -49,11 +52,14 @@ async def test_voice_preflight_includes_codexa_dependency(monkeypatch, tmp_path)
     assert result["dependencies"]["codex"]["healthy"] is False
 
 
-def test_frontend_exposes_only_supertone_speech_path():
+def test_frontend_exposes_only_nvidia_gradium_speech_path():
     api_source = (REPO_ROOT / "frontend/src/api.ts").read_text()
     app_source = (REPO_ROOT / "frontend/src/App.tsx").read_text()
     flow_source = (REPO_ROOT / "frontend/src/FlowStudio.tsx").read_text()
 
-    assert 'export type VoiceSpeechPath = "supertone_parakeet";' in api_source
+    assert 'export type VoiceSpeechPath = "nvidia_gradium";' in api_source
+    assert "supertone_parakeet" not in api_source
+    assert "supertone_parakeet" not in app_source
+    assert "supertone_parakeet" not in flow_source
     assert 'setSpeechPath("current")' not in app_source
     assert 'onSpeechPathChange?.("current")' not in flow_source

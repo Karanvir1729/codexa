@@ -16,6 +16,16 @@ from fastapi.responses import Response
 from pydantic import AliasChoices, BaseModel, Field
 
 from .agent import AgentService
+from .cekura import (
+    assert_cekura_secret,
+    build_cekura_agent_message,
+    cekura_context_from_headers,
+    cekura_conversation_id,
+    cleanup_cekura_state,
+    parse_result_webhook_run_ids,
+    record_cekura_result,
+    seed_cekura_state,
+)
 from .cloud_vm import CloudVLLMError, CloudVLLMManager
 from .config import (
     Settings,
@@ -120,6 +130,16 @@ class VoiceTextSuiteRequest(BaseModel):
     voice_speech_path: str | None = None
     input_mode: str = "push_to_talk"
     cases: list[VoiceTextSuiteCase] | None = None
+
+
+class CekuraHookRequest(BaseModel):
+    run_id: str | None = None
+    scenario_id: str | None = None
+    result_id: str | None = None
+    conversation_id: str | None = None
+    reset_runtime_profile: bool = True
+    all_cekura: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class TwilioConfigureRequest(BaseModel):
@@ -253,8 +273,8 @@ async def health() -> dict[str, Any]:
     return {
         "status": "ok",
         "environment": settings.app_env,
-        "llm_provider": settings.llm_provider,
-        "model": settings.active_model,
+        "llm_provider": voice_settings.llm_provider,
+        "model": voice_settings.active_model,
         "vertex_nim_region": settings.vertex_nim_region
         if settings.llm_provider == "vertex_nim"
         else None,
@@ -268,11 +288,7 @@ async def health() -> dict[str, Any]:
         "voice_emotion_codes_enabled": voice_settings.voice_emotion_codes_enabled,
         "local_stt_provider": voice_settings.local_stt_provider,
         "local_stt_model": voice_settings.local_stt_model,
-        "local_stt_effective_model": (
-            voice_settings.openrouter_stt_model
-            if voice_settings.local_stt_provider == "openrouter"
-            else voice_settings.local_stt_model
-        ),
+        "local_stt_effective_model": voice_settings.local_stt_model,
         "local_tts_provider": voice_settings.local_tts_provider,
         "local_tts_voice": voice_settings.local_tts_voice,
         "local_tts_text_aggregation_mode": voice_settings.local_tts_text_aggregation_mode,
@@ -286,13 +302,9 @@ async def health() -> dict[str, Any]:
             "voice_speech_path": voice_settings.voice_speech_path,
             "voice_runtime": voice_settings.voice_runtime,
             "configured_stt_provider": voice_settings.local_stt_provider,
-            "configured_stt_model": (
-                voice_settings.openrouter_stt_model
-                if voice_settings.local_stt_provider == "openrouter"
-                else voice_settings.local_stt_model
-            ),
+            "configured_stt_model": voice_settings.local_stt_model,
             "configured_tts_provider": voice_settings.local_tts_provider,
-            "configured_tts_language": voice_settings.supertonic_language,
+            "configured_tts_language": voice_settings.gradium_vad_language,
             "codex_orchestrator_enabled": settings.codex_orchestrator_enabled,
         },
         "twilio": {
@@ -324,9 +336,9 @@ async def health() -> dict[str, Any]:
 async def config() -> dict[str, Any]:
     voice_settings = settings_for_speech_path(settings, settings.voice_speech_path)
     return {
-        "llm_provider": settings.llm_provider,
-        "model": settings.active_model,
-        "base_url": settings.active_base_url,
+        "llm_provider": voice_settings.llm_provider,
+        "model": voice_settings.active_model,
+        "base_url": voice_settings.active_base_url,
         "vertex_nim_region": settings.vertex_nim_region
         if settings.llm_provider == "vertex_nim"
         else None,
@@ -340,11 +352,7 @@ async def config() -> dict[str, Any]:
         "voice_emotion_codes_enabled": voice_settings.voice_emotion_codes_enabled,
         "local_stt_provider": voice_settings.local_stt_provider,
         "local_stt_model": voice_settings.local_stt_model,
-        "local_stt_effective_model": (
-            voice_settings.openrouter_stt_model
-            if voice_settings.local_stt_provider == "openrouter"
-            else voice_settings.local_stt_model
-        ),
+        "local_stt_effective_model": voice_settings.local_stt_model,
         "local_tts_provider": voice_settings.local_tts_provider,
         "local_tts_text_aggregation_mode": voice_settings.local_tts_text_aggregation_mode,
         "webrtc_ice_servers": len(voice_settings.small_webrtc_browser_ice_servers),
@@ -418,7 +426,45 @@ async def check_voice_dependencies(
             "provider": active_settings.local_tts_provider,
             "healthy": None,
         },
+        "vad": {
+            "provider": "gradium"
+            if active_settings.local_tts_provider == "gradium"
+            else "silero",
+            "healthy": None,
+        },
     }
+
+    if active_settings.local_stt_provider == "nvidia_ws":
+        status["stt"].update(
+            {
+                "healthy": bool(active_settings.nvidia_asr_url),
+                "health_url": active_settings.nvidia_asr_url,
+                "model": active_settings.local_stt_model,
+            }
+        )
+        if not active_settings.nvidia_asr_url:
+            ready = False
+            reasons.append("NVIDIA_ASR_URL is required.")
+
+    if active_settings.local_tts_provider == "gradium":
+        status["tts"].update(
+            {
+                "healthy": bool(active_settings.gradium_api_key),
+                "health_url": active_settings.gradium_tts_ws_url,
+                "model": active_settings.gradium_tts_model,
+                "voice_id": active_settings.gradium_tts_voice_id,
+            }
+        )
+        status["vad"].update(
+            {
+                "healthy": bool(active_settings.gradium_api_key),
+                "health_url": active_settings.gradium_vad_ws_url,
+                "model": active_settings.gradium_vad_model,
+            }
+        )
+        if not active_settings.gradium_api_key:
+            ready = False
+            reasons.append("GRADIUM_API_KEY is required for Gradium VAD/TTS.")
 
     if active_settings.local_stt_provider == "remote_whisper":
         health_url = f"{active_settings.remote_whisper_base_url.rstrip('/')}/health"
@@ -589,6 +635,12 @@ async def wait_for_voice_dependencies(runtime_settings: Settings | None = None) 
 
 
 async def prepare_llm_runtime(runtime_settings: Settings) -> None:
+    if runtime_settings.llm_provider == "nemotron":
+        if not runtime_settings.nemotron_llm_url:
+            raise CloudVLLMError("NEMOTRON_LLM_URL is required.")
+        if not runtime_settings.nemotron_llm_model:
+            raise CloudVLLMError("NEMOTRON_LLM_MODEL is required.")
+        return
     if runtime_settings.llm_provider != "local":
         return
     if runtime_settings.cloud_vllm_autostart_enabled:
@@ -770,6 +822,34 @@ async def voice_text_test_audio(payload: VoiceTextAudioRequest) -> Response:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    if runtime_settings.local_tts_provider == "gradium":
+        try:
+            from .gradium_voice import synthesize_gradium_tts
+
+            audio, tts_metadata = await synthesize_gradium_tts(
+                runtime_settings,
+                str(tts_payload["text"]),
+                output_format="wav",
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"Gradium TTS failed: {exc}") from exc
+
+        if not audio:
+            raise HTTPException(status_code=502, detail="Gradium TTS returned an empty audio response.")
+
+        return Response(
+            content=audio,
+            media_type="audio/wav",
+            headers={
+                "X-TTS-Provider": runtime_settings.local_tts_provider,
+                "X-TTS-Voice": str(tts_metadata.get("voice_id") or ""),
+                "X-TTS-Speed": str(tts_metadata.get("speed") or ""),
+                "X-TTS-Expression-Tags": ",".join(
+                    str(tag) for tag in rendered.get("expression_tags_used") or []
+                ),
+            },
+        )
+
     endpoint = runtime_settings.supertonic_endpoint
     endpoint = endpoint if endpoint.startswith("/") else f"/{endpoint}"
     url = f"{runtime_settings.supertonic_base_url.rstrip('/')}{endpoint}"
@@ -845,6 +925,141 @@ async def voice_text_test_run(payload: VoiceTextSuiteRequest | None = None) -> d
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _require_cekura_hook_secret(request: Request) -> None:
+    try:
+        assert_cekura_secret(request.headers, settings.cekura_webhook_secret)
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+@app.get("/api/cekura/status")
+async def cekura_status() -> dict[str, Any]:
+    voice_settings = settings_for_speech_path(settings, settings.voice_speech_path)
+    return {
+        "status": "ok",
+        "websocket_path": "/api/cekura/ws",
+        "seed_hook_path": "/api/cekura/hooks/seed",
+        "reset_hook_path": "/api/cekura/hooks/reset",
+        "result_hook_path": "/api/cekura/hooks/result",
+        "websocket_secret_configured": bool(settings.cekura_websocket_secret),
+        "webhook_secret_configured": bool(settings.cekura_webhook_secret),
+        "voice_speech_path": voice_settings.voice_speech_path,
+        "voice_behavior_mode": voice_settings.voice_behavior_mode,
+        "llm_provider": voice_settings.llm_provider,
+        "model": voice_settings.active_model,
+    }
+
+
+@app.post("/api/cekura/hooks/seed")
+async def cekura_seed_hook(payload: CekuraHookRequest, request: Request) -> dict[str, Any]:
+    _require_cekura_hook_secret(request)
+    seeded = seed_cekura_state(
+        db,
+        run_id=payload.run_id,
+        scenario_id=payload.scenario_id,
+        result_id=payload.result_id,
+        metadata=payload.metadata,
+    )
+    return {"status": "seeded", **seeded}
+
+
+@app.post("/api/cekura/hooks/reset")
+async def cekura_reset_hook(payload: CekuraHookRequest, request: Request) -> dict[str, Any]:
+    _require_cekura_hook_secret(request)
+    cleanup = cleanup_cekura_state(
+        db,
+        conversation_id=payload.conversation_id,
+        run_id=payload.run_id,
+        result_id=payload.result_id,
+        all_cekura=payload.all_cekura,
+        reset_runtime_profile=payload.reset_runtime_profile,
+    )
+    return {"status": "reset", **cleanup}
+
+
+@app.post("/api/cekura/hooks/result")
+async def cekura_result_hook(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    _require_cekura_hook_secret(request)
+    recorded = record_cekura_result(db, payload)
+    cleaned: list[dict[str, Any]] = []
+    for run_id in parse_result_webhook_run_ids(payload):
+        cleaned.append(cleanup_cekura_state(db, run_id=run_id, reset_runtime_profile=False))
+    return {"status": "recorded", "recorded": recorded, "cleanup": cleaned}
+
+
+@app.websocket("/api/cekura/ws")
+async def cekura_websocket_chat(websocket: WebSocket) -> None:
+    try:
+        assert_cekura_secret(websocket.headers, settings.cekura_websocket_secret)
+    except PermissionError:
+        await websocket.close(code=1008, reason="Invalid Cekura websocket secret.")
+        return
+
+    await websocket.accept()
+    context = cekura_context_from_headers(websocket.headers)
+    conversation_id = cekura_conversation_id(context.get("run_id"))
+    runtime_settings = settings_for_speech_path(settings, websocket.query_params.get("voice_speech_path"))
+    voice_behavior_mode = websocket.query_params.get("voice_behavior_mode")
+    voice_flow_id = websocket.query_params.get("voice_flow_id")
+    input_mode = websocket.query_params.get("input_mode") or "push_to_talk"
+    try:
+        while True:
+            payload = await websocket.receive_json()
+            metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+            text = str(payload.get("content") or payload.get("text") or "").strip()
+            if payload.get("type") == "end_call":
+                await websocket.send_json(
+                    {
+                        "type": "end_call",
+                        "content": "Goodbye.",
+                        "metadata": {"source": "cekura", "conversation_id": conversation_id, **context},
+                    }
+                )
+                return
+            if not text:
+                await websocket.send_json(
+                    {
+                        "metadata": {
+                            "source": "cekura",
+                            "conversation_id": conversation_id,
+                            "ignored_empty_message": True,
+                            **context,
+                        }
+                    }
+                )
+                continue
+            turn = await run_voice_text_turn(
+                message=text,
+                conversation_id=conversation_id,
+                settings=runtime_settings,
+                db=db,
+                prompt_repo=prompt_repo,
+                agent=agent,
+                flow_runtime=flow_runtime,
+                voice_behavior_mode=metadata.get("voice_behavior_mode") or voice_behavior_mode,
+                voice_flow_id=metadata.get("voice_flow_id") or voice_flow_id,
+                input_mode=metadata.get("input_mode") or input_mode,
+                force_interrupt=bool(metadata.get("force_interrupt")),
+                flow_run_id=metadata.get("flow_run_id"),
+            )
+            await websocket.send_json(build_cekura_agent_message(turn, context))
+    except WebSocketDisconnect:
+        return
+    except Exception as exc:
+        logger.exception("Cekura websocket turn failed")
+        await websocket.send_json(
+            {
+                "content": "I'm having trouble running this test turn right now.",
+                "metadata": {
+                    "source": "cekura",
+                    "conversation_id": conversation_id,
+                    "error_type": type(exc).__name__,
+                    **context,
+                },
+            }
+        )
 
 
 def get_small_webrtc_handler():

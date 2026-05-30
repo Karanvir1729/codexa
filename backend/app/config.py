@@ -7,10 +7,10 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-MAINSTREAM_VOICE_SPEECH_PATH = "supertone_parakeet"
-MAINSTREAM_STT_PROVIDER = "openrouter"
+MAINSTREAM_VOICE_SPEECH_PATH = "nvidia_gradium"
+MAINSTREAM_STT_PROVIDER = "nvidia_ws"
+MAINSTREAM_TTS_PROVIDER = "gradium"
 MAINSTREAM_OPENROUTER_STT_MODEL = "nvidia/parakeet-tdt-0.6b-v3"
-MAINSTREAM_TTS_PROVIDER = "supertonic"
 MAINSTREAM_SUPERTONIC_LANGUAGE = "na"
 
 
@@ -25,7 +25,10 @@ class Settings(BaseSettings):
         "http://localhost:5175,http://127.0.0.1:5175"
     )
 
-    llm_provider: Literal["mock", "nvidia", "vertex_nim", "local", "ollama"] = "nvidia"
+    llm_provider: Literal["mock", "nvidia", "vertex_nim", "local", "ollama", "nemotron"] = "nemotron"
+    nemotron_llm_url: str = "http://nemotron-fleet-alb-1322439314.us-west-2.elb.amazonaws.com/v1"
+    nemotron_llm_model: str = "nvidia/nemotron-3-super"
+    nemotron_llm_api_key: str | None = None
     nvidia_api_key: str | None = None
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     nvidia_model: str = "nvidia/llama-3.3-nemotron-super-49b-v1.5"
@@ -59,6 +62,9 @@ class Settings(BaseSettings):
     cost_guard_nvidia_call_usd: float = Field(default=0.01, ge=0)
     cost_guard_nvidia_input_per_1m_tokens_usd: float = Field(default=0.0, ge=0)
     cost_guard_nvidia_output_per_1m_tokens_usd: float = Field(default=0.0, ge=0)
+    cost_guard_nemotron_call_usd: float = Field(default=0.01, ge=0)
+    cost_guard_nemotron_input_per_1m_tokens_usd: float = Field(default=0.0, ge=0)
+    cost_guard_nemotron_output_per_1m_tokens_usd: float = Field(default=0.0, ge=0)
 
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
@@ -84,7 +90,7 @@ class Settings(BaseSettings):
     voice_runtime: Literal["text", "pipecat", "local_pipecat"] = "text"
     voice_behavior_mode: Literal["assistant", "flow"] = "assistant"
     voice_flow_id: str = "active"
-    voice_speech_path: Literal["supertone_parakeet"] = "supertone_parakeet"
+    voice_speech_path: Literal["nvidia_gradium"] = "nvidia_gradium"
     voice_stt_correction_enabled: bool = False
     voice_emotion_codes_enabled: bool = True
     voice_fast_model: str | None = None
@@ -104,6 +110,11 @@ class Settings(BaseSettings):
     codex_orchestrator_timeout_seconds: float = Field(default=60, ge=0.5)
     codex_orchestrator_transcript_turns: int = Field(default=12, ge=2)
     codex_orchestrator_transcript_max_chars: int = Field(default=4000, ge=500)
+    cekura_api_key: str | None = None
+    cekura_agent_id: str | None = None
+    cekura_project_id: str | None = None
+    cekura_websocket_secret: str | None = None
+    cekura_webhook_secret: str | None = None
     deepgram_api_key: str | None = None
     cartesia_api_key: str | None = None
     cartesia_voice_id: str = "71a7ad14-091c-4e8e-a314-022ece01c121"
@@ -126,12 +137,13 @@ class Settings(BaseSettings):
         "whisperx",
         "mlx_whisper",
         "nvidia",
+        "nvidia_ws",
         "parakeet",
         "openrouter",
         "deepgram",
         "google",
-    ] = "remote_whisper"
-    local_stt_model: str = "large-v3-turbo"
+    ] = "nvidia_ws"
+    local_stt_model: str = "nemotron-speech-streaming"
     local_stt_no_speech_prob: float = Field(default=0.25, ge=0, le=1)
     local_stt_temperature: float = Field(default=0.0, ge=0)
     local_stt_ttfb_timeout: float = Field(default=0.6, ge=0)
@@ -160,12 +172,13 @@ class Settings(BaseSettings):
         "fish_speech",
         "voxtral",
         "supertonic",
+        "gradium",
         "nvidia",
         "cartesia",
         "deepgram",
         "google",
-    ] = "auto"
-    local_tts_voice: str = "af_heart"
+    ] = "gradium"
+    local_tts_voice: str = "YTpq7expH9539ERJ"
     local_tts_text_aggregation_mode: Literal["sentence", "token"] = "sentence"
     kokoro_download_dir: str = "/app/data/kokoro"
     piper_download_dir: str = "/app/data/piper"
@@ -179,6 +192,12 @@ class Settings(BaseSettings):
     parakeet_function_id: str = "d3fe9151-442b-4204-a70d-5fcc597fd610"
     parakeet_model: str = "parakeet-tdt-0.6b-v2"
     parakeet_language: str = "en-US"
+    nvidia_asr_url: str = "ws://44.241.251.184:8080"
+    nvidia_asr_sample_rate: int = Field(default=16000, ge=8000)
+    nvidia_asr_preroll_seconds: float = Field(default=1.0, ge=0)
+    nvidia_asr_strip_interim_prefix: bool = False
+    nvidia_asr_ws_ping_interval: float = Field(default=20.0, ge=1)
+    nvidia_asr_ws_ping_timeout: float = Field(default=20.0, ge=1)
     local_google_credentials: str | None = None
     local_google_credentials_path: str | None = None
     local_google_stt_location: str = "global"
@@ -206,6 +225,24 @@ class Settings(BaseSettings):
     supertonic_expression_mode: Literal["off", "subtle", "demo", "debug"] = "subtle"
     supertonic_max_expression_tags_per_utterance: int = Field(default=1, ge=0, le=2)
     supertonic_timeout_seconds: float = Field(default=60, ge=1)
+    gradium_api_key: str | None = None
+    gradium_vad_ws_url: str = "wss://api.gradium.ai/api/speech/asr"
+    gradium_vad_model: str = "default"
+    gradium_vad_input_format: str = "pcm_16000"
+    gradium_vad_language: str = "en"
+    gradium_vad_delay_in_frames: int = Field(default=8, ge=1)
+    gradium_vad_start_inactivity_threshold: float = Field(default=0.35, ge=0, le=1)
+    gradium_vad_stop_inactivity_threshold: float = Field(default=0.55, ge=0, le=1)
+    gradium_vad_start_consecutive_steps: int = Field(default=2, ge=1)
+    gradium_vad_stop_consecutive_steps: int = Field(default=3, ge=1)
+    gradium_vad_sample_rate: int = Field(default=16000, ge=8000)
+    gradium_tts_ws_url: str = "wss://api.gradium.ai/api/speech/tts"
+    gradium_tts_model: str = "default"
+    gradium_tts_voice_id: str = "YTpq7expH9539ERJ"
+    gradium_tts_output_format: str = "pcm_24000"
+    gradium_tts_speed: float = Field(default=1.0, ge=0.5, le=2.0)
+    gradium_tts_rewrite_rules: str = "en"
+    gradium_tts_timeout_seconds: float = Field(default=60, ge=1)
     voxtral_tts_base_url: str = "http://127.0.0.1:8002/v1"
     voxtral_tts_api_key: str | None = None
     voxtral_tts_model: str = "mistralai/Voxtral-4B-TTS-2603"
@@ -274,9 +311,9 @@ class Settings(BaseSettings):
 
     @field_validator("voice_speech_path", mode="before")
     @classmethod
-    def _legacy_speech_path_is_supertone(cls, value):
-        if value in (None, "", "current"):
-            return "supertone_parakeet"
+    def _legacy_speech_path_is_nvidia_gradium(cls, value):
+        if value in (None, "", "current", "supertone_parakeet"):
+            return "nvidia_gradium"
         return value
 
     @property
@@ -335,6 +372,8 @@ class Settings(BaseSettings):
             return self.local_llm_model
         if self.llm_provider == "ollama":
             return self.ollama_model
+        if self.llm_provider == "nemotron":
+            return self.nemotron_llm_model
         if self.llm_provider == "nvidia":
             return self.nvidia_model
         if self.llm_provider == "vertex_nim":
@@ -347,6 +386,8 @@ class Settings(BaseSettings):
             return self.local_llm_base_url
         if self.llm_provider == "ollama":
             return self.ollama_base_url
+        if self.llm_provider == "nemotron":
+            return self.nemotron_llm_url
         if self.llm_provider == "nvidia":
             return self.nvidia_base_url
         return None
@@ -357,9 +398,15 @@ class Settings(BaseSettings):
             return self.local_llm_api_key
         if self.llm_provider == "ollama":
             return self.ollama_api_key
+        if self.llm_provider == "nemotron":
+            return self.nemotron_llm_api_key
         if self.llm_provider == "nvidia":
             return self.nvidia_api_key or self.parakeet_api_key
         return None
+
+    @property
+    def active_requires_api_key(self) -> bool:
+        return self.llm_provider not in {"mock", "nemotron"}
 
 
 @lru_cache
@@ -369,16 +416,22 @@ def get_settings() -> Settings:
 
 def settings_for_speech_path(settings: Settings, speech_path: str | None) -> Settings:
     normalized = (speech_path or settings.voice_speech_path or MAINSTREAM_VOICE_SPEECH_PATH).strip()
-    if normalized not in {MAINSTREAM_VOICE_SPEECH_PATH, "current"}:
+    if normalized in {"current", "supertone_parakeet"}:
+        normalized = MAINSTREAM_VOICE_SPEECH_PATH
+    if normalized != MAINSTREAM_VOICE_SPEECH_PATH:
         raise ValueError(f"Unsupported voice speech path: {normalized}")
     return settings.model_copy(
         update={
+            "llm_provider": "nemotron",
             "voice_speech_path": MAINSTREAM_VOICE_SPEECH_PATH,
+            "local_stt_provider": MAINSTREAM_STT_PROVIDER,
+            "local_stt_model": "nemotron-speech-streaming",
             "local_tts_provider": MAINSTREAM_TTS_PROVIDER,
-            "local_tts_voice": settings.supertonic_voice,
-            "local_tts_language": settings.supertonic_language,
+            "local_tts_voice": settings.gradium_tts_voice_id,
+            "local_tts_language": settings.gradium_vad_language,
             "local_tts_text_aggregation_mode": "sentence",
-            "local_audio_output_sample_rate": 44100,
+            "local_audio_input_sample_rate": settings.nvidia_asr_sample_rate,
+            "local_audio_output_sample_rate": 24000,
         }
     )
 
@@ -390,15 +443,19 @@ def mainstream_voice_path_errors(settings: Settings) -> list[str]:
     if settings.voice_runtime != "local_pipecat":
         errors.append("VOICE_RUNTIME must be local_pipecat for the browser demo path.")
     if settings.local_stt_provider != MAINSTREAM_STT_PROVIDER:
-        errors.append("LOCAL_STT_PROVIDER must be openrouter for the browser demo path.")
-    if settings.openrouter_stt_model != MAINSTREAM_OPENROUTER_STT_MODEL:
-        errors.append(
-            f"OPENROUTER_STT_MODEL must be {MAINSTREAM_OPENROUTER_STT_MODEL}."
-        )
+        errors.append("LOCAL_STT_PROVIDER must be nvidia_ws for the browser demo path.")
+    if not settings.nvidia_asr_url:
+        errors.append("NVIDIA_ASR_URL is required for streaming STT.")
+    if settings.llm_provider != "nemotron":
+        errors.append("LLM_PROVIDER must be nemotron for the browser demo path.")
+    if not settings.nemotron_llm_url:
+        errors.append("NEMOTRON_LLM_URL is required.")
+    if not settings.nemotron_llm_model:
+        errors.append("NEMOTRON_LLM_MODEL is required.")
     if settings.local_tts_provider != MAINSTREAM_TTS_PROVIDER:
-        errors.append("LOCAL_TTS_PROVIDER must be supertonic for the browser demo path.")
-    if settings.supertonic_language != MAINSTREAM_SUPERTONIC_LANGUAGE:
-        errors.append("SUPERTONIC_LANGUAGE must be na for the Supertonic demo contract.")
+        errors.append("LOCAL_TTS_PROVIDER must be gradium for the browser demo path.")
+    if not settings.gradium_api_key:
+        errors.append("GRADIUM_API_KEY is required for Gradium VAD/TTS.")
     if not settings.codex_orchestrator_enabled:
         errors.append("CODEX_ORCHESTRATOR_ENABLED must be true for voice-to-Codexa.")
     return errors

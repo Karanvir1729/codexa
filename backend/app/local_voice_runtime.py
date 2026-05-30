@@ -122,6 +122,10 @@ class LocalVoiceConversationRecorder:
                         "fish_speech_reference_id": self.settings.fish_speech_reference_id,
                         "supertonic_model": self.settings.supertonic_model,
                         "supertonic_voice": self.settings.supertonic_voice,
+                        "nvidia_asr_url": self.settings.nvidia_asr_url,
+                        "gradium_vad_model": self.settings.gradium_vad_model,
+                        "gradium_tts_model": self.settings.gradium_tts_model,
+                        "gradium_tts_voice_id": self.settings.gradium_tts_voice_id,
                         "transport": self.transport_name,
                         "voice_behavior_mode": self.settings.voice_behavior_mode,
                         "voice_flow_id": self.settings.voice_flow_id,
@@ -266,14 +270,16 @@ def require_openai_compatible_llm(settings: Settings) -> None:
     if settings.llm_provider == "mock":
         raise RuntimeError(
             "Local Pipecat voice needs a streaming-capable OpenAI-compatible LLM. "
-            "Use LLM_PROVIDER=nvidia with NVIDIA_API_KEY, or configure a real local/vLLM "
-            "OpenAI-compatible endpoint explicitly."
+            "Set LLM_PROVIDER=nemotron and NEMOTRON_LLM_URL to the hosted endpoint."
         )
     if not settings.active_base_url:
         raise RuntimeError("Active LLM provider is missing a base URL.")
-    if not settings.active_api_key:
-        api_key_name = "NVIDIA_API_KEY" if settings.llm_provider == "nvidia" else "an API key"
-        raise RuntimeError(f"Active LLM provider is missing {api_key_name}.")
+    if settings.active_requires_api_key and not settings.active_api_key:
+        raise RuntimeError("Active LLM provider is missing an API key.")
+
+
+def openai_compatible_client_api_key(settings: Settings) -> str:
+    return settings.active_api_key or "unused"
 
 
 def build_system_instruction(settings: Settings, prompt_repo: PromptRepository) -> str:
@@ -306,6 +312,11 @@ def build_system_instruction(settings: Settings, prompt_repo: PromptRepository) 
         "system message is present, follow its JSON schema exactly. Never speak raw JSON, emotion "
         "prefixes, or expression tags."
     )
+    if settings.local_tts_provider == "gradium":
+        instruction = (
+            f"{instruction}\n\n"
+            "Gradium TTS: return clean spoken text. Do not write SSML, emotion tags, or audio markup."
+        )
     if settings.local_tts_provider == "supertonic":
         instruction = (
             f"{instruction}\n\n"
@@ -439,6 +450,14 @@ async def create_local_tts_service(settings: Settings):
         if settings.local_tts_text_aggregation_mode == "token"
         else TextAggregationMode.SENTENCE
     )
+    if provider == "gradium":
+        from .gradium_voice import create_gradium_tts_service
+
+        return "gradium", create_gradium_tts_service(
+            settings,
+            text_aggregation_mode=text_aggregation_mode,
+        )
+
     if provider == "nvidia":
         from pipecat.services.nvidia.tts import NvidiaTTSService
 
@@ -553,6 +572,20 @@ async def create_local_tts_service(settings: Settings):
 
 
 def create_local_stt_service(settings: Settings):
+    if settings.local_stt_provider == "nvidia_ws":
+        from .nvidia_ws_stt import NvidiaWebSocketSTTService
+
+        return "nvidia_ws", NvidiaWebSocketSTTService(
+            url=settings.nvidia_asr_url,
+            sample_rate=settings.local_audio_input_sample_rate,
+            stt_ttfb_timeout=settings.local_stt_ttfb_timeout,
+            ttfs_p99_latency=settings.local_stt_ttfs_p99_latency,
+            strip_interim_prefix=settings.nvidia_asr_strip_interim_prefix,
+            preroll_seconds=settings.nvidia_asr_preroll_seconds,
+            ws_ping_interval=settings.nvidia_asr_ws_ping_interval,
+            ws_ping_timeout=settings.nvidia_asr_ws_ping_timeout,
+        )
+
     if settings.local_stt_provider == "parakeet":
         from pipecat.services.nvidia.stt import NvidiaSegmentedSTTService
         from pipecat.transcriptions.language import Language
@@ -939,8 +972,14 @@ async def _run_voice_pipeline(
                 "remote_whisper_base_url": settings.remote_whisper_base_url
                 if settings.local_stt_provider == "remote_whisper"
                 else None,
+                "nvidia_asr_url": settings.nvidia_asr_url
+                if settings.local_stt_provider == "nvidia_ws"
+                else None,
                 "parakeet_function_id": settings.parakeet_function_id
                 if settings.local_stt_provider == "parakeet"
+                else None,
+                "gradium_vad_model": settings.gradium_vad_model
+                if settings.local_tts_provider == "gradium"
                 else None,
                 "tts_provider": tts_provider,
                 "configured_tts_provider": settings.local_tts_provider,
@@ -954,6 +993,12 @@ async def _run_voice_pipeline(
                 else None,
                 "supertonic_base_url": settings.supertonic_base_url
                 if tts_provider == "supertonic"
+                else None,
+                "gradium_tts_model": settings.gradium_tts_model
+                if tts_provider == "gradium"
+                else None,
+                "gradium_tts_output_format": settings.gradium_tts_output_format
+                if tts_provider == "gradium"
                 else None,
                 "llm_provider": settings.llm_provider,
                 "llm_model": self.model_used,
@@ -1039,9 +1084,13 @@ async def _run_voice_pipeline(
     @dataclass
     class VoiceControlState:
         speed: float = (
-            settings.supertonic_speed
-            if settings.local_tts_provider == "supertonic"
-            else settings.voxtral_tts_speed
+            settings.gradium_tts_speed
+            if settings.local_tts_provider == "gradium"
+            else (
+                settings.supertonic_speed
+                if settings.local_tts_provider == "supertonic"
+                else settings.voxtral_tts_speed
+            )
         )
         emotion_code: str = "N"
         emotion: str = "neutral"
@@ -1880,6 +1929,13 @@ async def _run_voice_pipeline(
                         trace.apply_tts_render_history(tts.drain_render_history())
                     if hasattr(tts, "current_params"):
                         trace.tts_params = tts.current_params()
+                    if hasattr(tts, "last_payload"):
+                        last_tts_payload = tts.last_payload()
+                        if isinstance(last_tts_payload, dict):
+                            trace.tts_params["last_tts_payload"] = last_tts_payload
+                            runtime_profile.setdefault("debug", {})[
+                                "last_tts_payload"
+                            ] = last_tts_payload
                     if trace.last_supertonic_payload:
                         trace.tts_params["last_supertonic_payload"] = trace.last_supertonic_payload
                         runtime_profile.setdefault("debug", {})[
@@ -2027,7 +2083,7 @@ async def _run_voice_pipeline(
         f"model={settings.active_model}"
     )
     llm = VoiceOpenAILLMService(
-        api_key=settings.active_api_key,
+        api_key=openai_compatible_client_api_key(settings),
         base_url=settings.active_base_url,
         retry_timeout_secs=settings.llm_timeout_seconds,
         retry_on_timeout=True,
@@ -2047,19 +2103,24 @@ async def _run_voice_pipeline(
     tts_provider, tts = await create_local_tts_service(settings)
     logger.info(f"Created local TTS service: provider={tts_provider}")
     voice_controls.bind_tts(tts)
-    vad = VADProcessor(
-        vad_analyzer=SileroVADAnalyzer(
-            sample_rate=settings.local_audio_input_sample_rate,
-            params=VADParams(
-                confidence=settings.local_vad_confidence,
-                start_secs=settings.local_vad_start_secs,
-                stop_secs=settings.local_vad_stop_secs,
-                min_volume=settings.local_vad_min_volume,
+    if settings.local_tts_provider == "gradium":
+        from .gradium_voice import create_gradium_vad_processor
+
+        vad = create_gradium_vad_processor(settings)
+    else:
+        vad = VADProcessor(
+            vad_analyzer=SileroVADAnalyzer(
+                sample_rate=settings.local_audio_input_sample_rate,
+                params=VADParams(
+                    confidence=settings.local_vad_confidence,
+                    start_secs=settings.local_vad_start_secs,
+                    stop_secs=settings.local_vad_stop_secs,
+                    min_volume=settings.local_vad_min_volume,
+                ),
             ),
-        ),
-        speech_activity_period=settings.local_vad_speech_activity_period,
-        audio_idle_timeout=settings.local_vad_audio_idle_timeout,
-    )
+            speech_activity_period=settings.local_vad_speech_activity_period,
+            audio_idle_timeout=settings.local_vad_audio_idle_timeout,
+        )
     context = LLMContext()
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,

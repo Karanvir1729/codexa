@@ -1295,10 +1295,10 @@ function FlowStudioInner({
           <div className="flowSpeechPathSwitch" aria-label="Speech provider path">
             <button
               className="active"
-              onClick={() => onSpeechPathChange?.("supertone_parakeet")}
+              onClick={() => onSpeechPathChange?.("nvidia_gradium")}
               disabled={flowVoiceConnected || flowVoiceBusy || busy}
             >
-              <Cpu size={15} /> Supertonic
+              <Cpu size={15} /> Gradium
             </button>
           </div>
           <div

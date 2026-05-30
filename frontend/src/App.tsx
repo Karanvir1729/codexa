@@ -148,8 +148,8 @@ const speechPathStorageKey = "voiceops-speech-path";
 const voiceInputModeStorageKey = "voiceops-input-mode";
 
 function initialSpeechPath(): VoiceSpeechPath {
-  if (typeof window === "undefined") return "supertone_parakeet";
-  return "supertone_parakeet";
+  if (typeof window === "undefined") return "nvidia_gradium";
+  return "nvidia_gradium";
 }
 
 function initialVoiceInputMode(): VoiceInputMode {
@@ -945,7 +945,7 @@ export function App() {
   }, [botSpeaking, userSpeaking, voiceConnected, voicePhase]);
 
   const sttBadge = voiceProviderLabel(health?.local_stt_provider, "STT");
-  const ttsBadge = "Supertonic TTS";
+  const ttsBadge = "Gradium TTS";
   const codexDependency = voicePreflight?.dependencies.codex;
   const codexDependencyLabel =
     codexDependency?.healthy === true
@@ -985,7 +985,7 @@ export function App() {
   const lastRuntimeActionStatus = formatDebugValue(runtimeDebug.last_runtime_action_status);
   const lastStructuredOutput = formatDebugValue(runtimeDebug.last_llm_structured_output);
   const parseErrors = formatDebugValue(runtimeDebug.structured_output_parse_errors);
-  const lastSupertonicPayload = formatDebugValue(runtimeDebug.last_supertonic_payload);
+  const lastTtsPayload = formatDebugValue(runtimeDebug.last_tts_payload ?? runtimeDebug.last_supertonic_payload);
   const lastRenderedDebugText = formatDebugValue(
     runtimeDebug.last_tts_rendered_text ?? lastLearningRecord.tts_rendered_text
   );
@@ -1557,7 +1557,7 @@ export function App() {
       setVoiceTextResult(result);
       setVoiceTextSuite(null);
       applyVoiceTextResponse(result);
-      if (result.codex?.codex_session_id && speechPath === "supertone_parakeet") {
+      if (result.codex?.codex_session_id && speechPath === "nvidia_gradium") {
         await playVoiceTextTtsForResult(result, { autoplay: true });
       }
       await refresh();
@@ -1828,10 +1828,10 @@ export function App() {
                       <button
                         type="button"
                         className="active"
-                        onClick={() => setSpeechPath("supertone_parakeet")}
+                        onClick={() => setSpeechPath("nvidia_gradium")}
                         disabled={voiceConnected || voiceBusy}
                       >
-                        <Cpu size={14} /> Supertonic
+                        <Cpu size={14} /> Gradium
                       </button>
                     </div>
                     <div className="voiceConsoleSegmented" aria-label="Input mode">
@@ -2337,10 +2337,10 @@ export function App() {
               <div className="speechPathSwitch" aria-label="Speech provider path">
                 <button
                   className="active"
-                  onClick={() => setSpeechPath("supertone_parakeet")}
+                  onClick={() => setSpeechPath("nvidia_gradium")}
                   disabled={voiceConnected || voiceBusy}
                 >
-                  <Cpu size={15} /> Supertonic
+                  <Cpu size={15} /> Gradium
                 </button>
               </div>
 
@@ -2423,9 +2423,9 @@ export function App() {
                   <small>Rolling first audio</small>
                   <span>{formatMaybeMs(runtimeLatency.rolling_avg_first_audio_ms)}</span>
                   <small>TTS provider</small>
-                  <span>{String(runtimeTts.provider ?? "supertonic")}</span>
+                  <span>{String(runtimeTts.provider ?? "gradium")}</span>
                   <small>Active provider</small>
-                  <span>{String(runtimeTts.provider ?? "supertonic")}</span>
+                  <span>{String(runtimeTts.provider ?? "gradium")}</span>
                   <small>Voice</small>
                   <span>{String(runtimeTts.voice ?? "-")}</span>
                   <small>Current speed</small>
@@ -2452,8 +2452,8 @@ export function App() {
                   <span>{lastRuntimeActionStatus}</span>
                   <small>Parse errors</small>
                   <span>{parseErrors}</span>
-                  <small>Supertonic payload</small>
-                  <span>{lastSupertonicPayload}</span>
+                  <small>TTS payload</small>
+                  <span>{lastTtsPayload}</span>
                 </div>
                 <div className="debugTextPair">
                   <div>
@@ -2604,8 +2604,7 @@ function voiceProviderLabel(provider: string | undefined, kind: "STT" | "TTS") {
   const labels: Record<string, string> = {
     google: `Google ${kind}`,
     nvidia: `NVIDIA ${kind}`,
-    parakeet: "Parakeet STT",
-    openrouter: "OpenRouter STT",
+    nvidia_ws: "NVIDIA WS STT",
     deepgram: `Deepgram ${kind}`,
     cartesia: "Cartesia TTS",
     whisper: "Whisper STT",
@@ -2614,7 +2613,7 @@ function voiceProviderLabel(provider: string | undefined, kind: "STT" | "TTS") {
     mlx_whisper: "MLX Whisper STT",
     kokoro: "Kokoro TTS",
     fish_speech: "Fish Speech TTS",
-    supertonic: "Supertonic TTS",
+    gradium: "Gradium TTS",
     auto: `Auto ${kind}`
   };
   return labels[provider] ?? `${provider} ${kind}`;

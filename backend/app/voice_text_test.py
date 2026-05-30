@@ -97,7 +97,18 @@ def _resolve_flow_id(flow_runtime: FlowRuntime, requested: str | None) -> str:
 
 def _tts_params(settings: Settings, profile: Mapping[str, Any], rendered: Mapping[str, Any]) -> dict[str, Any]:
     tts_profile = profile.get("tts") if isinstance(profile.get("tts"), Mapping) else {}
-    if settings.local_tts_provider == "supertonic":
+    if settings.local_tts_provider == "gradium":
+        speed = tts_profile.get("speed", settings.gradium_tts_speed)
+        if not isinstance(speed, (int, float)) or isinstance(speed, bool):
+            speed = settings.gradium_tts_speed
+        params = {
+            "model_name": settings.gradium_tts_model,
+            "voice_id": settings.gradium_tts_voice_id,
+            "output_format": settings.gradium_tts_output_format,
+            "speed": max(0.5, min(2.0, float(speed))),
+            "rewrite_rules": settings.gradium_tts_rewrite_rules,
+        }
+    elif settings.local_tts_provider == "supertonic":
         params = clamp_supertonic_params(
             {
                 **dict(tts_profile),
@@ -140,8 +151,8 @@ def build_voice_text_tts_payload(
     *,
     user_text: str = "",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    if settings.local_tts_provider != "supertonic":
-        raise ValueError("Audible text voice tests require Supertonic TTS.")
+    if settings.local_tts_provider not in {"gradium", "supertonic"}:
+        raise ValueError("Audible text voice tests require Gradium TTS.")
 
     rendered = render_expression_tags(text, profile, user_text=user_text)
     clean_text = str(rendered.get("clean_text") or text).strip()
@@ -149,25 +160,11 @@ def build_voice_text_tts_payload(
     if not rendered_text:
         raise ValueError("TTS text is required.")
 
-    tts_profile = profile.get("tts") if isinstance(profile.get("tts"), Mapping) else {}
-    params = clamp_supertonic_params(
-        {
-            **dict(tts_profile),
-            "voice": settings.supertonic_voice,
-            "lang": settings.supertonic_language,
-            "speed": tts_profile.get("speed", settings.supertonic_speed),
-            "steps": tts_profile.get("steps", settings.supertonic_steps),
-            "max_chunk_length": tts_profile.get(
-                "max_chunk_length",
-                settings.supertonic_max_chunk_length,
-            ),
-            "silence_duration": tts_profile.get(
-                "silence_duration",
-                settings.supertonic_silence_duration,
-            ),
-            "response_format": "wav",
-        }
-    )
+    params = _tts_params(settings, profile, rendered)
+    if settings.local_tts_provider == "gradium":
+        params["output_format"] = "wav"
+    else:
+        params["response_format"] = "wav"
     return {"text": rendered_text, **params}, rendered
 
 
@@ -607,11 +604,12 @@ async def run_voice_text_turn(
     tts_completed_at = tts_started_at
     tts_params = _tts_params(settings, runtime_profile, rendered)
     runtime_profile.setdefault("debug", {})["last_tts_rendered_text"] = rendered_text
+    runtime_profile.setdefault("debug", {})["last_tts_payload"] = {
+        "text": rendered_text,
+        **tts_params,
+    }
     runtime_profile.setdefault("debug", {})["last_supertonic_payload"] = (
-        {
-            "text": rendered_text,
-            **tts_params,
-        }
+        runtime_profile["debug"]["last_tts_payload"]
         if settings.local_tts_provider == "supertonic"
         else None
     )

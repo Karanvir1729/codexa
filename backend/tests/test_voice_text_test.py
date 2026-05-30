@@ -27,8 +27,8 @@ def voice_text_runtime(tmp_path: Path):
     settings = Settings(
         database_path=str(tmp_path / "agent.sqlite3"),
         llm_provider="mock",
-        local_tts_provider="supertonic",
-        voice_speech_path="supertone_parakeet",
+        local_tts_provider="gradium",
+        voice_speech_path="nvidia_gradium",
     )
     db = Database(settings.database_path)
     prompt_repo = PromptRepository(db)
@@ -39,14 +39,13 @@ def voice_text_runtime(tmp_path: Path):
     return settings, db, prompt_repo, agent, flow_runtime
 
 
-def test_voice_text_tts_payload_renders_supertonic_wav():
+def test_voice_text_tts_payload_renders_gradium_wav():
     settings = Settings(
-        local_tts_provider="supertonic",
-        supertonic_voice="M1",
-        supertonic_language="na",
-        supertonic_speed=1.05,
-        supertonic_steps=8,
-        supertonic_response_format="ogg",
+        local_tts_provider="gradium",
+        gradium_tts_voice_id="gradium-voice",
+        gradium_tts_model="default",
+        gradium_tts_speed=1.05,
+        gradium_tts_output_format="pcm_24000",
     )
     profile = {
         "tts": {
@@ -65,11 +64,10 @@ def test_voice_text_tts_payload_renders_supertonic_wav():
         user_text="Please test TTS.",
     )
 
-    assert payload["response_format"] == "wav"
+    assert payload["output_format"] == "wav"
     assert payload["speed"] == 2.0
-    assert payload["steps"] == 1
-    assert payload["voice"] == "M1"
-    assert payload["lang"] == "na"
+    assert payload["voice_id"] == "gradium-voice"
+    assert payload["model_name"] == "default"
     assert "<breath>" in payload["text"]
     assert rendered["expression_tags_used"] == ["breath"]
 
@@ -78,7 +76,7 @@ def test_voice_text_turn_request_accepts_readme_text_field():
     payload = VoiceTextTurnRequest.model_validate(
         {
             "text": "Hello, can you confirm the voice coding agent is ready?",
-            "voice_speech_path": "supertone_parakeet",
+            "voice_speech_path": "nvidia_gradium",
         }
     )
 
@@ -141,8 +139,8 @@ async def test_voice_text_turn_runtime_speed_raises_on_llm_timeout(tmp_path: Pat
     settings = Settings(
         database_path=str(tmp_path / "agent.sqlite3"),
         llm_provider="mock",
-        local_tts_provider="supertonic",
-        voice_speech_path="supertone_parakeet",
+        local_tts_provider="gradium",
+        voice_speech_path="nvidia_gradium",
     )
     db = Database(settings.database_path)
     prompt_repo = PromptRepository(db)
