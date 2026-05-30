@@ -231,22 +231,30 @@ def merge_runtime_profile(settings: Settings, stored: Mapping[str, Any] | None) 
         if active_profile not in {"fast", "balanced", "reasoning"}:
             profile["active_model_profile"] = settings.voice_default_profile
         llm["current_model"] = settings.active_model
-    profile["tts"].update(
-        {
-            "provider": "gradium",
-            "ws_url": settings.gradium_tts_ws_url,
-            "model_name": settings.gradium_tts_model,
-            "voice_id": settings.gradium_tts_voice_id,
-            "output_format": settings.gradium_tts_output_format,
-            "rewrite_rules": settings.gradium_tts_rewrite_rules,
-            "allowed_expression_tags": list(GRADIUM_EXPRESSION_TAGS),
-            "expression_tag_sources": list(GRADIUM_EXPRESSION_TAG_SOURCES),
-            "max_expression_tags_per_utterance": 0,
-        }
-    )
+    stored_tts = profile.get("tts") if isinstance(profile.get("tts"), Mapping) else {}
+    profile["tts"] = {
+        "provider": "gradium",
+        "ws_url": settings.gradium_tts_ws_url,
+        "model_name": settings.gradium_tts_model,
+        "voice_id": settings.gradium_tts_voice_id,
+        "output_format": settings.gradium_tts_output_format,
+        "speed": stored_tts.get("speed", settings.gradium_tts_speed),
+        "rewrite_rules": settings.gradium_tts_rewrite_rules,
+        "expression_mode": "off",
+        "allowed_expression_tags": list(GRADIUM_EXPRESSION_TAGS),
+        "expression_tag_sources": list(GRADIUM_EXPRESSION_TAG_SOURCES),
+        "max_expression_tags_per_utterance": 0,
+    }
     profile["tts"].update(clamp_gradium_tts_params(profile.get("tts", {})))
     profile["latency"]["target_first_audio_ms"] = settings.voice_target_first_audio_ms
     profile["latency"]["target_llm_ttfb_ms"] = settings.voice_max_llm_ttfb_ms
+    debug = profile.setdefault("debug", {})
+    if isinstance(debug, dict):
+        debug.pop("last_supertonic_payload", None)
+        last_tts_payload = debug.get("last_tts_payload")
+        if isinstance(last_tts_payload, Mapping) and last_tts_payload.get("provider") != "gradium":
+            debug["last_tts_payload"] = None
+        debug["last_runtime_status"] = voice_runtime_status(profile)
     return profile
 
 
