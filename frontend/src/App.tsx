@@ -305,6 +305,35 @@ function formatDebugValue(value: unknown) {
 
 type AppView = "voice" | "builder" | "live" | "flow" | "selfLearn";
 
+const activeViewStorageKey = "voiceops-active-view";
+
+function normalizeAppView(value: string | null | undefined): AppView | null {
+  const normalized = (value ?? "").replace(/^#\/?/, "").trim().toLowerCase();
+  if (normalized === "builder" || normalized === "app-builder" || normalized === "appbuilder") return "builder";
+  if (normalized === "flow") return "flow";
+  if (normalized === "testing" || normalized === "evals" || normalized === "runtime" || normalized === "live") return "live";
+  if (normalized === "self-learn" || normalized === "selflearn") return "selfLearn";
+  if (normalized === "voice" || normalized === "") return "voice";
+  return null;
+}
+
+function hashForAppView(view: AppView) {
+  if (view === "selfLearn") return "#self-learn";
+  if (view === "live") return "#testing";
+  return `#${view}`;
+}
+
+function initialActiveView() {
+  if (typeof window === "undefined") return "voice";
+  const hashView = normalizeAppView(window.location.hash);
+  if (hashView) return hashView;
+  try {
+    return normalizeAppView(window.localStorage.getItem(activeViewStorageKey)) ?? "voice";
+  } catch {
+    return "voice";
+  }
+}
+
 type VariableBadge = {
   id: string;
   label: string;
@@ -498,7 +527,7 @@ function buildSyncedCodexFlowSteps(
 }
 
 export function App() {
-  const [activeView, setActiveView] = useState<AppView>("voice");
+  const [activeView, setActiveViewState] = useState<AppView>(initialActiveView);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [voiceConsoleSidebarOpen, setVoiceConsoleSidebarOpen] = useState(true);
   const [voiceConsoleSettingsOpen, setVoiceConsoleSettingsOpen] = useState(false);
@@ -555,6 +584,17 @@ export function App() {
   const pushToTalkPressedRef = useRef(false);
   const voiceProcessingStartedAtRef = useRef<number | null>(null);
   const previousVariableSnapshotRef = useRef<Record<string, string> | null>(null);
+
+  function setActiveView(view: AppView) {
+    setActiveViewState(view);
+    try {
+      window.localStorage.setItem(activeViewStorageKey, view);
+      const nextHash = hashForAppView(view);
+      if (window.location.hash !== nextHash) window.history.replaceState(null, "", nextHash);
+    } catch {
+      // Navigation still works if storage or history is unavailable.
+    }
+  }
 
   function clearVoiceTextAudioUrl() {
     if (!voiceTextAudioUrlRef.current) return;
@@ -648,6 +688,27 @@ export function App() {
       .then(() => prewarmVoiceOnLoad())
       .catch((error) => setNotice(error.message));
   }, []);
+
+  useEffect(() => {
+    const syncViewFromHash = () => {
+      const nextView = normalizeAppView(window.location.hash);
+      if (nextView) setActiveViewState(nextView);
+    };
+    window.addEventListener("hashchange", syncViewFromHash);
+    return () => window.removeEventListener("hashchange", syncViewFromHash);
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(activeViewStorageKey, activeView);
+      const nextHash = hashForAppView(activeView);
+      if ((activeView !== "voice" || window.location.hash) && window.location.hash !== nextHash) {
+        window.history.replaceState(null, "", nextHash);
+      }
+    } catch {
+      // Keep the console usable if browser storage is unavailable.
+    }
+  }, [activeView]);
 
   async function prewarmVoiceOnLoad() {
     if (voicePrewarmStartedRef.current) return;
