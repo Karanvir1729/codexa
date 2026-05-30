@@ -211,6 +211,33 @@ browser_voice_watchdogs: set[asyncio.Task] = set()
 active_browser_voice_sessions: set[str] = set()
 
 
+async def clear_stale_browser_voice_sessions(reason: str) -> None:
+    for done_task in tuple(browser_voice_tasks):
+        if done_task.done():
+            browser_voice_tasks.discard(done_task)
+    if browser_voice_tasks:
+        logger.warning(
+            "Cancelling %s existing browser voice task(s) before starting a new session: %s",
+            len(browser_voice_tasks),
+            reason,
+        )
+        tasks = tuple(browser_voice_tasks)
+        for task in tasks:
+            task.cancel()
+        await asyncio.wait(tasks, timeout=2)
+        await asyncio.sleep(0)
+        for done_task in tuple(browser_voice_tasks):
+            if done_task.done():
+                browser_voice_tasks.discard(done_task)
+    if not browser_voice_tasks and active_browser_voice_sessions:
+        logger.warning(
+            "Clearing stale browser voice session reservation(s) before starting a new session: %s",
+            reason,
+        )
+        active_browser_voice_sessions.clear()
+        cloud_vllm_manager.session_finished()
+
+
 def is_small_webrtc_renegotiating(connection: object) -> bool:
     return bool(getattr(connection, "_renegotiation_in_progress", False))
 
@@ -1133,6 +1160,8 @@ async def browser_webrtc_offer(
     if reconnecting_known_peer:
         logger.info("Reusing voice session for WebRTC reconnect: pc_id=%s", request.pc_id)
     else:
+        if active_browser_voice_sessions or browser_voice_tasks:
+            await clear_stale_browser_voice_sessions("new WebRTC offer")
         if active_browser_voice_sessions or not cloud_vllm_manager.try_session_started(max_sessions=1):
             raise HTTPException(
                 status_code=409,
