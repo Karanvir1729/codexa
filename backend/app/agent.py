@@ -16,7 +16,6 @@ from .db import Database, dumps, loads
 from .feedback import PromptRepository
 from .llm import LLMClient, Message
 from .voice_self_observe import (
-    fallback_runtime_command_for_request,
     is_voice_tool_request,
     load_runtime_profile,
     parse_voice_runtime_command,
@@ -121,53 +120,6 @@ def _latency_intent(normalized: str, words: set[str]) -> bool:
             "slow response",
         ]
     )
-
-
-def long_form_fallback_response(text: str) -> str | None:
-    normalized = re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
-    words = set(normalized.split())
-    if not _has_long_form_intent(normalized, words):
-        return None
-    if "story" in words or "stories" in words or "narrate" in words:
-        if words & {"spooky", "scary", "creepy", "haunted"}:
-            return (
-                "The old clock stopped at midnight, and the hallway went quiet. "
-                "A soft knock came from the room no one used. "
-                "When the door opened, only cold air and a silver key were waiting. "
-                "By morning, the clock was ticking again from inside the wall."
-            )
-        return (
-            "A traveler found a lantern glowing beside an empty road. "
-            "Each step toward it revealed a path that had not been there before. "
-            "At the end, a stranger handed them a map with tomorrow's sunrise marked in gold. "
-            "They followed it home and never lost their way again."
-        )
-    return (
-        "Here is the short version: the system should answer the request directly, "
-        "cover the main point first, add the most useful detail, and end with one clear next step."
-    )
-
-
-def repair_long_form_response(user_text: str, response_text: str) -> str | None:
-    normalized_user = re.sub(r"[^a-z0-9]+", " ", user_text.casefold()).strip()
-    words = set(normalized_user.split())
-    if not _has_long_form_intent(normalized_user, words):
-        return None
-    normalized_response = re.sub(r"[^a-z0-9?]+", " ", response_text.casefold()).strip()
-    deflection_phrases = [
-        "need a bit more information",
-        "need more information",
-        "could you please tell me",
-        "please tell me if",
-        "what should i focus on",
-        "what would you like the story",
-        "what kind of story",
-        "how long should",
-        "before i",
-    ]
-    if "?" in response_text and any(phrase in normalized_response for phrase in deflection_phrases):
-        return long_form_fallback_response(user_text)
-    return None
 
 
 def fast_policy_response(text: str) -> str | None:
@@ -316,45 +268,7 @@ class AgentService:
             result = await self.llm.generate(messages, runtime_prompt)
         except Exception as exc:
             self.cost_guard.release(reservation_id, {"error": type(exc).__name__})
-            assistant_turn_id = str(uuid.uuid4())
-            response_text = (
-                "I'm having trouble reaching the language model right now. "
-                "Please try again in a moment."
-            )
-            metrics = {
-                "provider": "llm-error",
-                "error_type": type(exc).__name__,
-                "latency_target_ms": self.settings.latency_target_ms,
-                "estimated_cost_usd": 0,
-            }
-            self.db.execute(
-                """
-                INSERT INTO turns(
-                    id, conversation_id, role, content, latency_ms, model, prompt_version, metrics_json
-                )
-                VALUES (?, ?, 'assistant', ?, ?, ?, ?, ?)
-                """,
-                (
-                    assistant_turn_id,
-                    cid,
-                    response_text,
-                    0,
-                    self.settings.active_model,
-                    prompt.version,
-                    dumps(metrics),
-                ),
-            )
-            return {
-                "conversation_id": cid,
-                "user_turn_id": user_turn_id,
-                "assistant_turn_id": assistant_turn_id,
-                "message": response_text,
-                "latency_ms": 0,
-                "model": self.settings.active_model,
-                "provider": "llm-error",
-                "prompt_version": prompt.version,
-                "cost_guard": self.cost_guard.snapshot().to_dict(),
-            }
+            raise RuntimeError(f"LLM provider request failed: {type(exc).__name__}: {exc}") from exc
         actual_cost = self.cost_guard.estimate_llm_call(result.provider, result.raw)
         self.cost_guard.finalize(
             reservation_id,
@@ -362,7 +276,7 @@ class AgentService:
             units=result.raw.get("usage", {}),
             metadata={"conversation_id": cid, "channel": channel},
         )
-        response_text = repair_long_form_response(text, result.text) or result.text
+        response_text = result.text
         assistant_turn_id = str(uuid.uuid4())
         metrics = {
             "provider": result.provider,
@@ -421,7 +335,6 @@ class AgentService:
         runtime_action_status: list[dict[str, Any]] = []
         structured_output: dict[str, Any] | None = None
         parse_errors: list[str] = []
-        fallback_reason: str | None = None
         try:
             result = await asyncio.wait_for(
                 self.llm.generate(
@@ -437,11 +350,9 @@ class AgentService:
             )
         except Exception as exc:
             self.cost_guard.release(reservation_id, {"error": type(exc).__name__})
-            latency_ms = 0
-            provider = "llm-error"
-            model = self.settings.active_model
-            raw: dict[str, Any] = {"error_type": type(exc).__name__}
-            fallback_reason = type(exc).__name__
+            raise RuntimeError(
+                f"Voice runtime LLM request failed: {type(exc).__name__}: {exc}"
+            ) from exc
         else:
             actual_cost = self.cost_guard.estimate_llm_call(result.provider, result.raw)
             self.cost_guard.finalize(
@@ -479,54 +390,19 @@ class AgentService:
                 if runtime_actions and not any(
                     status.get("status") == "completed" for status in runtime_action_status
                 ) and not execution.response_text:
-                    fallback_reason = "runtime_actions_rejected"
+                    raise RuntimeError("Voice runtime action was rejected.")
                 else:
                     save_runtime_profile(self.db, runtime_profile)
                     response_text = execution.response_text or command.speak or "I updated the voice runtime."
             else:
                 parse_errors = parsed.errors or ["structured_output_parse_failed"]
                 runtime_profile.setdefault("debug", {})["structured_output_parse_errors"] = parse_errors
-                fallback_reason = ",".join(parse_errors)
+                raise RuntimeError(
+                    "Voice runtime LLM returned invalid structured output: "
+                    + ", ".join(parse_errors)
+                )
             raw["structured_output"] = structured_output
             raw["structured_output_parse_errors"] = parse_errors
-
-        if fallback_reason:
-            fallback_command = fallback_runtime_command_for_request(
-                text,
-                runtime_profile,
-                self.settings,
-                reason=fallback_reason,
-                codex_session_active=codex_session_active,
-            )
-            if fallback_command:
-                runtime_actions = [dict(action) for action in fallback_command.runtime_actions]
-                structured_output = {
-                    "speak": fallback_command.speak,
-                    "runtime_actions": runtime_actions,
-                    "reasoning_profile": fallback_command.reasoning_profile,
-                    "debug": fallback_command.debug,
-                }
-                runtime_profile.setdefault("debug", {})["last_llm_structured_output"] = structured_output
-                runtime_profile.setdefault("debug", {})["structured_output_parse_errors"] = parse_errors
-                execution = await execute_voice_runtime_actions(
-                    db=self.db,
-                    settings=self.settings,
-                    profile=runtime_profile,
-                    actions=runtime_actions,
-                    conversation_id=conversation_id,
-                    user_text=text,
-                    transcript=self.transcript(conversation_id),
-                )
-                runtime_profile = execution.profile
-                runtime_action_status = execution.statuses
-                save_runtime_profile(self.db, runtime_profile)
-                raw["fallback_structured_output"] = structured_output
-                response_text = execution.response_text or fallback_command.speak
-                provider = "runtime-fallback" if provider == "llm-error" else provider
-                model = "runtime-fallback" if model == self.settings.active_model and provider == "runtime-fallback" else model
-            else:
-                save_runtime_profile(self.db, runtime_profile)
-                response_text = "I'm having trouble updating the voice runtime right now."
 
         assistant_turn_id = str(uuid.uuid4())
         self.db.execute(

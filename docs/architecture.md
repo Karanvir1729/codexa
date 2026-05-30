@@ -21,8 +21,14 @@ OpenRouter Parakeet STT, NVIDIA/OpenAI-compatible runtime tool selection,
 Codexa HTTP orchestration, and Supertonic TTS. The old visible `current`
 speech path is no longer part of the app surface.
 
-Twilio inbound calls hit `/twilio/inbound` and receive `<Connect><Stream>` TwiML.
-The stream can go to either:
+Twilio inbound calls hit `/twilio/inbound` or the compatibility alias
+`/api/twilio/voice`. In default `TWILIO_VOICE_MODE=auto`, local/text runtime
+returns Twilio-native `<Gather input="speech">` TwiML, sends `SpeechResult`
+to `/twilio/voice-turn`, and routes the transcript through the same
+`AgentService.respond` path as the browser voice/text tests.
+
+When streaming providers are configured, the same inbound route can still return
+`<Connect><Stream>` TwiML. The stream can go to either:
 
 - Pipecat Cloud: set `PIPECAT_CLOUD_WS_URL` and `PIPECAT_CLOUD_SERVICE_HOST`.
 - Self-hosted Pipecat: set `VOICE_RUNTIME=pipecat`, install `backend[voice]`, and expose

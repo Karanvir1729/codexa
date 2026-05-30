@@ -30,8 +30,6 @@ from .voice_self_observe import (
     choose_model_profile,
     classify_voice_turn,
     clean_angle_tags,
-    fallback_runtime_command_for_request,
-    fallback_voice_runtime_speak,
     is_voice_tool_request,
     likely_bad_transcript,
     load_runtime_profile,
@@ -87,7 +85,7 @@ def _empty_live_voice_response(user_text: str) -> str:
         return "I'm here."
     if normalized:
         return "I heard you."
-    return fallback_voice_runtime_speak("")
+    return "I understand."
 
 
 @dataclass
@@ -268,13 +266,14 @@ def require_openai_compatible_llm(settings: Settings) -> None:
     if settings.llm_provider == "mock":
         raise RuntimeError(
             "Local Pipecat voice needs a streaming-capable OpenAI-compatible LLM. "
-            "Run with LLM_PROVIDER=ollama after ./scripts/setup_ollama_local.sh, "
-            "or switch to NVIDIA/AWS local vLLM later."
+            "Use LLM_PROVIDER=nvidia with NVIDIA_API_KEY, or configure a real local/vLLM "
+            "OpenAI-compatible endpoint explicitly."
         )
     if not settings.active_base_url:
         raise RuntimeError("Active LLM provider is missing a base URL.")
     if not settings.active_api_key:
-        raise RuntimeError("Active LLM provider is missing an API key.")
+        api_key_name = "NVIDIA_API_KEY" if settings.llm_provider == "nvidia" else "an API key"
+        raise RuntimeError(f"Active LLM provider is missing {api_key_name}.")
 
 
 def build_system_instruction(settings: Settings, prompt_repo: PromptRepository) -> str:
@@ -1453,39 +1452,6 @@ async def _run_voice_pipeline(
             runtime_control_request = (
                 is_voice_tool_request(latest_user_text, settings) or codex_session_active
             )
-            if runtime_control_request:
-                trace = latency_state.active_trace or VoiceLatencyTrace()
-                if latency_state.active_trace is None:
-                    latency_state.active_trace = trace
-                trace.user_text = latest_user_text
-                trace.model_profile = "reasoning" if settings.codex_orchestrator_enabled else "fast"
-                trace.model_used = "voice-runtime-direct"
-                now = time.perf_counter()
-                trace.llm_request_started_at = trace.llm_request_started_at or now
-                trace.llm_first_text_at = now
-                trace.llm_completed_at = now
-                latency_state.response_trace = trace
-                fallback_command = fallback_runtime_command_for_request(
-                    latest_user_text,
-                    runtime_profile,
-                    settings,
-                    reason="live_voice_direct_runtime_intent",
-                    codex_session_active=codex_session_active,
-                )
-                if fallback_command:
-                    text = await apply_voice_runtime_command(
-                        fallback_command,
-                        trace,
-                        event="runtime_control_direct_applied",
-                    )
-                    trace.structured_output_expected = False
-                    emotion_code = (
-                        response_emotion_code(latest_user_text, text)
-                        if settings.voice_emotion_codes_enabled
-                        else "N"
-                    )
-                    await self._push_llm_text(prefix_emotion_code(text, emotion_code))
-                    return
             if (
                 latest_user_text
                 and likely_bad_transcript(latest_user_text)
@@ -1806,21 +1772,12 @@ async def _run_voice_pipeline(
                             in {"delegate_to_codex_orchestrator", "get_codex_orchestrator_status"}
                             for status in trace.runtime_action_status
                         ):
-                            fallback_command = fallback_runtime_command_for_request(
-                                trace.user_text,
-                                runtime_profile,
-                                settings,
-                                reason="runtime_actions_rejected",
-                                codex_session_active=has_codex_orchestrator_session(
-                                    db, recorder.conversation_id
-                                ),
+                            log_latency(
+                                "runtime_control_action_rejected",
+                                trace,
+                                runtime_action_status=trace.runtime_action_status,
                             )
-                            if fallback_command:
-                                text = await apply_voice_runtime_command(
-                                    fallback_command,
-                                    trace,
-                                    event="runtime_control_fallback_applied",
-                                )
+                            text = "The requested runtime change was rejected by the configured action validator."
                     else:
                         errors = parsed.errors or ["structured_output_parse_failed"]
                         trace.structured_output_parse_errors = errors
@@ -1834,26 +1791,14 @@ async def _run_voice_pipeline(
                             save_runtime_profile(db, runtime_profile)
                         except Exception:
                             logger.debug("Failed to persist runtime voice profile", exc_info=True)
-                        fallback_command = fallback_runtime_command_for_request(
-                            trace.user_text,
-                            runtime_profile,
-                            settings,
-                            reason=",".join(errors),
-                            codex_session_active=has_codex_orchestrator_session(
-                                db, recorder.conversation_id
-                            ),
+                        log_latency(
+                            "runtime_control_structured_output_invalid",
+                            trace,
+                            text=text,
+                            errors=errors,
+                            repair_attempted=parsed.repair_attempted,
                         )
-                        if fallback_command:
-                            text = await apply_voice_runtime_command(
-                                fallback_command,
-                                trace,
-                                event="runtime_control_fallback_applied",
-                                parse_errors=errors,
-                                repair_attempted=parsed.repair_attempted,
-                            )
-                        else:
-                            text = fallback_voice_runtime_speak(text)
-                            log_latency("structured_output_parse_failed", trace, text=text, errors=errors)
+                        text = "The configured model did not return a valid runtime command."
                     if not text:
                         text = _empty_live_voice_response(trace.user_text)
                         trace.empty_llm_completions += 1

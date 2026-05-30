@@ -1,0 +1,334 @@
+import fs from "node:fs";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { config } from "./config.js";
+import { appendOrchestratorEvent, getSession } from "./store.js";
+import { getProject } from "./project-store.js";
+import type { PlannerDecision, ProjectRecord, SessionState } from "./types.js";
+
+export interface MegaplanRecord {
+  project_id: string;
+  session_id: string;
+  path: string;
+  content: string;
+  updated_at: string;
+  repo: {
+    name: string;
+    path: string;
+    link: string;
+    web_url: string | null;
+    branch: string | null;
+    commit: string | null;
+    remote_url: string | null;
+  };
+}
+
+function gitValue(cwd: string, ...args: string[]) {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  return result.status === 0 ? result.stdout.trim() || null : null;
+}
+
+function isWithinDirectory(candidate: string, parent: string) {
+  const relative = path.relative(parent, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function isGeneratedProjectWorkspace(workspacePath: string) {
+  try {
+    const workspace = fs.realpathSync(workspacePath);
+    const root = fs.realpathSync(config.newProjectsRoot);
+    return workspace !== root && isWithinDirectory(workspace, root);
+  } catch {
+    return false;
+  }
+}
+
+function webUrlFromGitRemote(remote: string | null) {
+  const value = remote?.trim();
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value)) return value.replace(/\.git$/i, "");
+  const scpLike = value.match(/^git@([^:]+):(.+?)(?:\.git)?$/i);
+  if (scpLike) return `https://${scpLike[1]}/${scpLike[2]}`;
+  const sshUrl = value.match(/^ssh:\/\/git@([^/]+)\/(.+?)(?:\.git)?$/i);
+  if (sshUrl) return `https://${sshUrl[1]}/${sshUrl[2]}`;
+  return null;
+}
+
+function repoMetadata(project: ProjectRecord) {
+  const projectRemote = gitValue(project.workspace_path, "remote", "get-url", "origin");
+  const projectWebUrl = project.github_repo_url ?? webUrlFromGitRemote(projectRemote);
+  if (isGeneratedProjectWorkspace(project.workspace_path)) {
+    return {
+      name: project.github_repo_full_name || project.display_name || path.basename(project.workspace_path),
+      path: project.workspace_path,
+      link: projectWebUrl ?? `file://${project.workspace_path}`,
+      web_url: projectWebUrl,
+      branch: gitValue(project.workspace_path, "branch", "--show-current") || project.git_branch || null,
+      commit: gitValue(project.workspace_path, "rev-parse", "--short", "HEAD") ?? project.latest_commit_hash?.slice(0, 7) ?? null,
+      remote_url: projectRemote,
+    };
+  }
+
+  const repoPath = project.repo_path && fs.existsSync(project.repo_path)
+    ? project.repo_path
+    : gitValue(project.workspace_path, "rev-parse", "--show-toplevel") ?? project.workspace_path;
+  const remote = gitValue(repoPath, "remote", "get-url", "origin");
+  const webUrl = project.github_repo_url ?? webUrlFromGitRemote(remote);
+  return {
+    name: project.github_repo_full_name || project.repo_name || path.basename(repoPath),
+    path: repoPath,
+    link: webUrl ?? `file://${repoPath}`,
+    web_url: webUrl,
+    branch: gitValue(repoPath, "branch", "--show-current") || project.git_branch || null,
+    commit: gitValue(repoPath, "rev-parse", "--short", "HEAD"),
+    remote_url: remote,
+  };
+}
+
+function repositoryDetailLines(repo: MegaplanRecord["repo"]) {
+  return [
+    `- Repo: ${repo.name}`,
+    repo.web_url ? `- Repo URL: [${repo.web_url}](${repo.web_url})` : "- Repo URL: Not attached yet.",
+    `- Branch: ${repo.branch ?? "unknown"}`,
+    repo.commit ? `- Commit: ${repo.commit}` : "",
+    `- Local path: \`${repo.path}\``,
+  ].filter(Boolean);
+}
+
+function repositorySection(repo: MegaplanRecord["repo"]) {
+  return [
+    "## Repository",
+    "",
+    ...repositoryDetailLines(repo),
+    "",
+  ];
+}
+
+function syncRepositorySection(markdown: string, repo: MegaplanRecord["repo"]) {
+  const lines = markdown.split(/\r?\n/);
+  const start = lines.findIndex((line) => line.trim() === "## Repository");
+  if (start === -1) return markdown;
+  const next = lines.findIndex((line, index) => index > start && /^##\s+/.test(line.trim()));
+  const end = next === -1 ? lines.length : next;
+  return [
+    ...lines.slice(0, start),
+    ...repositorySection(repo),
+    ...lines.slice(end),
+  ].join("\n");
+}
+
+function markdownList(items: string[]) {
+  return items.length ? items.map((item) => `- ${item}`).join("\n") : "- None recorded yet.";
+}
+
+function responsibilityLines(decision: PlannerDecision | null) {
+  if (!decision?.proposed_task_split.length) {
+    return [
+      "1. Codex orchestration - Codex will choose the actual internal subagents and responsibility split after approval.",
+      "2. Validation - Codex must run local checks and report concrete results before claiming completion.",
+    ].join("\n");
+  }
+  return decision.proposed_task_split
+    .map((item, index) => {
+      const validation = item.validation.length ? ` Validation: ${item.validation.join(", ")}.` : "";
+      const dependencies = item.depends_on.length ? ` Depends on: ${item.depends_on.join(", ")}.` : "";
+      return `${index + 1}. ${item.title} - ${item.goal}.${dependencies}${validation}`;
+    })
+    .join("\n");
+}
+
+function technicalRequirementLines(decision: PlannerDecision | null, session: SessionState) {
+  const lines: string[] = [];
+  if (decision?.proposed_design) lines.push(`- Architecture/product scope: ${decision.proposed_design}`);
+  const assumptions = decision?.assumptions ?? session.assumptions ?? [];
+  for (const assumption of assumptions) lines.push(`- Assumption: ${assumption}`);
+  const validation = decision?.proposed_task_split.flatMap((item) => item.validation).filter(Boolean) ?? [];
+  if (validation.length) lines.push(`- Local validation expected: ${validation.join("; ")}`);
+  const openQuestions = decision?.open_questions ?? session.open_questions ?? [];
+  for (const question of openQuestions) lines.push(`- Unanswered technical question: ${question}`);
+  if (!lines.length) {
+    lines.push("- Pending technical direction. Codex must ask a clarification before implementation if architecture, stack, data, auth, payments, integrations, preview, or validation requirements are unclear.");
+  }
+  return lines.join("\n");
+}
+
+function subagentCheckInLines(decision: PlannerDecision | null) {
+  const advice = decision?.subagent_advice;
+  if (!advice) {
+    return [
+      "- Codex will decide during implementation whether internal subagents are useful.",
+      "- If subagent use would materially change scope, cost, risk, or timing, Codex must stop and ask first.",
+    ].join("\n");
+  }
+  return [
+    `- Advisor recommendation: ${advice.recommended ? "use internal Codex subagents when useful" : "single-lane Codex run is acceptable"}.`,
+    `- Reason: ${advice.reason}`,
+    `- User check-in: ${advice.user_check_in}`,
+    advice.suggested_responsibilities.length ? `- Likely responsibility areas: ${advice.suggested_responsibilities.join(", ")}` : "",
+    `- Advisor source: ${advice.source}`,
+  ].filter(Boolean).join("\n");
+}
+
+export function buildMegaplanMarkdown(input: {
+  session: SessionState;
+  project: ProjectRecord;
+  userGoal: string;
+  decision: PlannerDecision | null;
+}) {
+  const repo = repoMetadata(input.project);
+  const decision = input.decision;
+  const generatedAt = new Date().toISOString();
+  return {
+    repo,
+    content: [
+      "# Megaplan",
+      "",
+      "> Generated by the Megaplan skill. Approval is required before the local Codex CLI implementation session starts.",
+      "",
+      "## Approval Gate",
+      "",
+      "- Status: Pending user approval",
+      "- To start: reply `approve` in the Codex chat",
+      "- To revise: describe the change before approving",
+      "",
+      ...repositorySection(repo),
+      "## User Request",
+      "",
+      input.userGoal.trim() || input.session.active_task || "No user request recorded.",
+      "",
+      "## Requirement Summary",
+      "",
+      decision?.requirements_summary || input.session.requirement_summary || "Codex will clarify requirements before implementation if needed.",
+      "",
+      "## Technical Requirements",
+      "",
+      technicalRequirementLines(decision, input.session),
+      "",
+      "## Proposed Product Direction",
+      "",
+      decision?.proposed_design || "Keep the implementation scoped to the user request and the current local repo.",
+      "",
+      "## Codex Orchestration",
+      "",
+      "- One local Codex CLI session owns the repo.",
+      "- Codex decides how many internal subagents are useful; for non-trivial work it should prefer visible named responsibility lanes when that is truthful.",
+      "- Subagents are logical Codex responsibilities, not Docker, VM, GKE, or cloud workers.",
+      "- The user can revise subagent use before approval; approval permits Codex to choose the actual internal count and names.",
+      "- If Codex later determines a materially different subagent strategy is needed, it must stop and ask before changing scope, cost, risk, or timeline.",
+      "- The browser flowchart updates rapidly from a parallel Codex flowchart process and shows only the subagents Codex actually reports.",
+      "",
+      "## Subagent Check-In",
+      "",
+      subagentCheckInLines(decision),
+      "",
+      "## Continuous Improvement Loop",
+      "",
+      "- Codex should look for bugs, UX gaps, performance issues, maintainability problems, missing tests, and feature opportunities while implementing.",
+      "- Codex may implement improvements that fit the approved plan or are required for correctness, validation, safety, or a trustworthy MVP.",
+      "- Codex must record deferred ideas in `.head-developer/IMPROVEMENTS.md` instead of silently expanding scope.",
+      "- Improvements that materially change scope, architecture, data, cost, risk, or timeline require user approval before implementation.",
+      "",
+      "## Codex Runtime",
+      "",
+      `- Model: ${config.localCodex.model || "user Codex default"}`,
+      `- Coding reasoning: ${config.localCodex.reasoningEffort || "Codex default"}`,
+      `- Planning/model helper reasoning: ${config.localCodex.planningModel || config.localCodex.model || "user Codex default"} / ${config.localCodex.planningReasoningEffort || "Codex default"}`,
+      `- Access: ${config.localCodex.bypassApprovalsAndSandbox || config.localCodex.sandbox === "danger-full-access" ? "full local access" : config.localCodex.sandbox}`,
+      `- Shell environment: ${config.localCodex.inheritShellEnvironment ? "inherited from the local supervisor process" : "Codex default"}`,
+      `- Account/config/plugins: same local Codex account and CODEX_HOME configuration used by this machine`,
+      config.localCodex.profile ? `- Profile: ${config.localCodex.profile}` : "",
+      config.localCodex.profileV2 ? `- Profile v2: ${config.localCodex.profileV2}` : "",
+      "",
+      "## Proposed Internal Responsibilities",
+      "",
+      responsibilityLines(decision),
+      "",
+      "## Assumptions",
+      "",
+      markdownList(decision?.assumptions ?? input.session.assumptions ?? []),
+      "",
+      "## Open Questions",
+      "",
+      markdownList(decision?.open_questions ?? input.session.open_questions ?? []),
+      "",
+      "## Validation Plan",
+      "",
+      markdownList(decision?.proposed_task_split.flatMap((item) => item.validation).filter(Boolean) ?? [
+        "Required files exist.",
+        "Tests or syntax checks pass when applicable.",
+        "Preview loads locally when applicable.",
+        "Docs are updated.",
+      ]),
+      "",
+      "## Completion Bar",
+      "",
+      "- Files exist in this repo.",
+      "- Validation commands pass or failures are reported honestly.",
+      "- The final summary is grounded in changed files and commands.",
+      "- No docs-only success.",
+      "",
+      `Generated: ${generatedAt}`,
+    ].filter(Boolean).join("\n"),
+  };
+}
+
+export function writeMegaplan(input: {
+  session: SessionState;
+  project: ProjectRecord;
+  userGoal: string;
+  decision: PlannerDecision | null;
+}) {
+  const startedMs = Date.now();
+  const docsDir = path.join(input.project.workspace_path, ".head-developer");
+  fs.mkdirSync(docsDir, { recursive: true });
+  const built = buildMegaplanMarkdown(input);
+  const target = path.join(docsDir, "MEGAPLAN.md");
+  fs.writeFileSync(target, `${built.content.trim()}\n`);
+  const record: MegaplanRecord = {
+    project_id: input.project.project_id,
+    session_id: input.session.session_id,
+    path: target,
+    content: `${built.content.trim()}\n`,
+    updated_at: new Date().toISOString(),
+    repo: built.repo,
+  };
+  appendOrchestratorEvent({
+    scope: "planning",
+    scope_id: input.decision?.planning_decision_id ?? input.session.session_id,
+    type: "megaplan.created",
+    message: "Megaplan skill created .head-developer/MEGAPLAN.md and is waiting for approval.",
+    data: {
+      session_id: input.session.session_id,
+      project_id: input.project.project_id,
+      megaplan_path: target,
+      repo: built.repo,
+      duration_ms: Date.now() - startedMs,
+    },
+  });
+  return record;
+}
+
+export function getMegaplanForSession(sessionId: string): MegaplanRecord | null {
+  const session = getSession(sessionId);
+  if (!session) return null;
+  const projectId = session.project_id ?? session.current_project_id;
+  const project = projectId ? getProject(projectId) : null;
+  if (!project) return null;
+  const target = path.join(project.workspace_path, ".head-developer", "MEGAPLAN.md");
+  if (!fs.existsSync(target)) return null;
+  const repo = repoMetadata(project);
+  let content = fs.readFileSync(target, "utf8");
+  const syncedContent = syncRepositorySection(content, repo);
+  if (syncedContent !== content) {
+    content = syncedContent.trimEnd() + "\n";
+    fs.writeFileSync(target, content);
+  }
+  return {
+    project_id: project.project_id,
+    session_id: session.session_id,
+    path: target,
+    content,
+    updated_at: fs.statSync(target).mtime.toISOString(),
+    repo,
+  };
+}

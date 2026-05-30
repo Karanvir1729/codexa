@@ -143,6 +143,20 @@ class MockLLMClient:
         )
 
 
+class UnavailableLLMClient:
+    """Fail-fast client used when a configured real provider is missing credentials."""
+
+    def __init__(self, settings: Settings, reason: str) -> None:
+        self.settings = settings
+        self.reason = reason
+
+    async def generate(self, messages: list[Message], system_prompt: str) -> LLMResult:
+        raise RuntimeError(self.reason)
+
+    async def warmup(self) -> None:
+        raise RuntimeError(self.reason)
+
+
 def _runtime_number(text: str, pattern: str, default: float) -> float:
     match = re.search(pattern, text)
     if not match:
@@ -329,4 +343,15 @@ def make_llm_client(settings: Settings) -> LLMClient:
         return MockLLMClient(settings)
     if settings.llm_provider == "vertex_nim":
         return VertexNIMLLMClient(settings)
+    if not settings.active_base_url:
+        return UnavailableLLMClient(
+            settings,
+            f"{settings.llm_provider} provider is missing a base URL.",
+        )
+    if not settings.active_api_key:
+        api_key_name = "NVIDIA_API_KEY" if settings.llm_provider == "nvidia" else "API key"
+        return UnavailableLLMClient(
+            settings,
+            f"{settings.llm_provider} provider is missing {api_key_name}.",
+        )
     return OpenAICompatibleLLMClient(settings, settings.llm_provider)

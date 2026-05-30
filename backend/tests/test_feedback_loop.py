@@ -13,7 +13,6 @@ from app.agent import (
     AgentService,
     build_runtime_system_prompt,
     fast_policy_response,
-    repair_long_form_response,
 )
 from app.cloud_vm import CloudVLLMManager
 from app.config import (
@@ -29,7 +28,7 @@ from app.eval_scheduler import EvalScheduler
 from app.evaluator import EvalRunner
 from app.feedback import FeedbackLearner, PromptRepository
 from app.flow_runtime import FlowRepository, FlowRuntime, validate_flow_graph
-from app.llm import LLMResult, MockLLMClient
+from app.llm import LLMResult, MockLLMClient, make_llm_client
 from app.local_voice_runtime import (
     LocalVoiceConversationRecorder,
     _empty_live_voice_response,
@@ -50,8 +49,6 @@ from app.voice_self_observe import (
     clamp_supertonic_params,
     default_runtime_profile,
     execute_runtime_actions,
-    fallback_runtime_command_for_request,
-    fallback_voice_runtime_speak,
     is_runtime_control_request,
     likely_bad_transcript,
     max_tokens_for_profile,
@@ -149,8 +146,17 @@ def test_cost_guard_records_actual_estimated_spend(tmp_path: Path):
 def test_local_voice_requires_real_llm_provider(tmp_path: Path):
     settings = Settings(database_path=str(tmp_path / "agent.sqlite3"), llm_provider="mock")
 
-    with pytest.raises(RuntimeError, match="LLM_PROVIDER=ollama"):
+    with pytest.raises(RuntimeError, match="LLM_PROVIDER=nvidia"):
         require_openai_compatible_llm(settings)
+
+
+@pytest.mark.asyncio
+async def test_default_nvidia_provider_fails_without_api_key() -> None:
+    settings = Settings(_env_file=None)
+    llm = make_llm_client(settings)
+
+    with pytest.raises(RuntimeError, match="nvidia provider is missing NVIDIA_API_KEY"):
+        await llm.generate([{"role": "user", "content": "hello"}], "Reply briefly.")
 
 
 def test_local_voice_uses_auto_detect_stt_and_explicit_tts_language():
@@ -410,48 +416,24 @@ async def test_chat_runtime_speed_uses_structured_tool_action(runtime):
 
 
 @pytest.mark.asyncio
-async def test_chat_runtime_speed_falls_back_to_tool_action_on_llm_timeout(tmp_path: Path):
+async def test_chat_runtime_speed_raises_on_llm_timeout(tmp_path: Path):
     settings = Settings(database_path=str(tmp_path / "agent.sqlite3"), llm_provider="mock")
     db = Database(settings.database_path)
     agent = AgentService(db, settings, FailingRuntimeLLM())
 
-    response = await agent.respond("talk slow please", channel="test")
+    with pytest.raises(RuntimeError, match="Voice runtime LLM request failed"):
+        await agent.respond("talk slow please", channel="test")
 
-    assert response["provider"] == "runtime-fallback"
-    assert "slow" in response["message"].casefold()
     profile = load_runtime_profile(db, settings)
-    assert profile["tts"]["speed"] < settings.supertonic_speed
+    assert profile["tts"]["speed"] == settings.supertonic_speed
 
-    row = db.one(
-        """
-        SELECT metrics_json
-        FROM turns
-        WHERE conversation_id = ? AND role = 'assistant'
-        ORDER BY rowid DESC
-        LIMIT 1
-        """,
-        (response["conversation_id"],),
-    )
-    metrics = loads(row["metrics_json"], {})
-    assert metrics["runtime_actions"][0]["tool"] == "increment_tts_speed"
-    assert metrics["runtime_action_status"][0]["status"] == "completed"
-    assert metrics["raw"]["fallback_structured_output"]["debug"]["source"] == "runtime_control_fallback"
+    turns = db.all("SELECT role FROM turns ORDER BY rowid")
+    assert [row["role"] for row in turns] == ["user"]
 
 
 def test_fast_policy_does_not_block_long_form_requests():
     assert fast_policy_response("Tell me a story in a spooky tone.") is None
     assert fast_policy_response("Explain that in more detail.") is None
-
-
-def test_long_form_repair_replaces_story_deflection():
-    repaired = repair_long_form_response(
-        "Tell me a spooky story in four sentences.",
-        "I need a bit more information. Could you please tell me what kind of story you want?",
-    )
-
-    assert repaired is not None
-    assert "clock" in repaired.casefold()
-    assert repaired.count(".") >= 4
 
 
 def test_voxtral_ref_audio_takes_precedence_and_whisper_is_stronger():
@@ -569,7 +551,7 @@ async def test_agent_uses_compiled_prompt_with_learned_hints(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_agent_returns_fallback_when_llm_fails(tmp_path: Path):
+async def test_agent_raises_when_llm_fails(tmp_path: Path):
     class FailingLLM:
         async def generate(self, _messages, _system_prompt: str) -> LLMResult:
             raise TimeoutError("upstream timed out")
@@ -581,13 +563,11 @@ async def test_agent_returns_fallback_when_llm_fails(tmp_path: Path):
     db = Database(settings.database_path)
     agent = AgentService(db, settings, FailingLLM())
 
-    response = await agent.respond("Can you help?", channel="test")
+    with pytest.raises(RuntimeError, match="LLM provider request failed"):
+        await agent.respond("Can you help?", channel="test")
 
-    assert response["provider"] == "llm-error"
-    assert "language model" in response["message"]
-    transcript = agent.transcript(response["conversation_id"])
-    assert [turn["role"] for turn in transcript] == ["user", "assistant"]
-    assert transcript[-1]["metrics"]["error_type"] == "TimeoutError"
+    transcript = agent.transcript(db.all("SELECT id FROM conversations ORDER BY rowid")[0]["id"])
+    assert [turn["role"] for turn in transcript] == ["user"]
 
 
 def test_local_voice_records_turns_in_feedback_database(tmp_path: Path):
@@ -1103,31 +1083,6 @@ def test_voice_runtime_parser_repairs_missing_action_object_brace():
     ]
 
 
-def test_voice_runtime_fallback_delegates_exact_text_for_active_codex_session():
-    settings = Settings(codex_orchestrator_enabled=True)
-    profile = default_runtime_profile(settings)
-
-    command = fallback_runtime_command_for_request(
-        "Approve the README note plan.",
-        profile,
-        settings,
-        reason="structured_output_parse_failed",
-        codex_session_active=True,
-    )
-
-    assert command is not None
-    assert command.runtime_actions == [
-        {
-            "tool": "delegate_to_codex_orchestrator",
-            "args": {
-                "goal": "Approve the README note plan.",
-                "mode": "plan_first",
-                "reason": "fallback_active_session:structured_output_parse_failed",
-            },
-        }
-    ]
-
-
 def test_voice_runtime_missing_required_action_args_are_rejected():
     settings = Settings()
     profile = default_runtime_profile(settings)
@@ -1140,12 +1095,11 @@ def test_voice_runtime_missing_required_action_args_are_rejected():
     assert statuses[0]["error"] == "missing_delta"
 
 
-def test_voice_runtime_invalid_json_falls_back_without_actions():
+def test_voice_runtime_invalid_json_is_rejected_without_actions():
     parsed = parse_voice_runtime_command("Sure, I'll talk faster.")
 
     assert not parsed.ok
     assert "structured_output_parse_failed:no_json_object" in parsed.errors
-    assert fallback_voice_runtime_speak("{not json}") == "I understand."
 
 
 def test_live_voice_empty_completion_recovers_to_spoken_turn():

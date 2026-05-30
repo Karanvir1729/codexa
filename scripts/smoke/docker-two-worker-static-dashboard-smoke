@@ -1,0 +1,143 @@
+#!/usr/bin/env node
+import fs from "node:fs";
+import {
+  apiGet,
+  apiPost,
+  assertNoDuplicateActiveCodex,
+  assertSmoke,
+  commandIdSummary,
+  containerToHostPath,
+  createSmokeWorkspace,
+  defaultApiBase,
+  ensureDockerCompose,
+  flowchart,
+  log,
+  printJsonSummary,
+  projectTasks,
+  taskCommands,
+  waitForApi,
+  waitForGraph,
+  writeLatestResult,
+} from "./lib.mjs";
+
+const smokeName = "docker-two-worker-static-dashboard-smoke";
+const apiBase = defaultApiBase;
+const prompt = "Build a static SaaS dashboard shell with landing page, login page, dashboard page, and settings page. Static HTML/CSS/JS only. No billing. No backend. No package installs.";
+
+await ensureDockerCompose(2);
+await waitForApi(apiBase);
+
+const workspace = createSmokeWorkspace(smokeName);
+log(`Smoke workspace host path: ${workspace.hostPath}`);
+log(`Smoke workspace container path: ${workspace.containerPath}`);
+
+const { session } = await apiPost(apiBase, "/sessions", {
+  label: smokeName,
+  workspace_path: workspace.containerPath,
+  channel: "web_text",
+  user_id: "smoke-harness",
+});
+const { project } = await apiPost(apiBase, "/projects", {
+  workspace_uri: workspace.containerPath,
+});
+const created = await apiPost(apiBase, "/task-graphs", {
+  project_id: project.project_id,
+  root_user_goal: prompt,
+  worker_mode: "docker_local",
+  auto_start: true,
+  workers: 2,
+});
+
+const graphId = created.graph.task_graph_id;
+const initialAssignments = created.assignments ?? [];
+const initialWorkerIds = initialAssignments.map((item) => item.worker.worker_id);
+const initialTaskIds = initialAssignments.map((item) => item.task.task_id);
+const initialWorktrees = initialAssignments.map((item) => item.node.worktree_path).filter(Boolean);
+
+log(`session_id=${session.session_id}`);
+log(`project_id=${project.project_id}`);
+log(`task_graph_id=${graphId}`);
+for (const item of initialAssignments) {
+  log(`node_id=${item.node.node_id} task_id=${item.task.task_id} worker_id=${item.worker.worker_id} context_packet_id=${item.context.context_packet_id} worktree_path=${item.node.worktree_path}`);
+}
+
+assertSmoke(initialAssignments.length === 2, `Expected exactly two initial worker assignments; got ${initialAssignments.length}.`);
+assertSmoke(new Set(initialWorkerIds).size === 2, `Expected two distinct workers; got ${initialWorkerIds.join(", ")}.`);
+assertSmoke(new Set(initialWorktrees).size === 2, `Expected two distinct worktrees; got ${initialWorktrees.join(", ")}.`);
+for (const worktree of initialWorktrees) {
+  const hostPath = containerToHostPath(worktree);
+  assertSmoke(hostPath && fs.existsSync(hostPath) && fs.statSync(hostPath).isDirectory(), `Worktree is missing on host: ${worktree}`);
+  assertSmoke(worktree.includes(".worktrees"), `Worktree path does not use isolated .worktrees root: ${worktree}`);
+}
+
+const observedMaxActiveCodex = new Map();
+const finalGraphPayload = await waitForGraph(apiBase, graphId, {
+  onPoll: async ({ task_graph: graph }) => {
+    assertSmoke(graph.status !== "review", `Task graph ${graphId} entered review; completion gate repair is required.`);
+    const taskIds = graph.nodes.map((node) => node.task_id);
+    await assertNoDuplicateActiveCodex(apiBase, taskIds, observedMaxActiveCodex);
+  },
+});
+const finalGraph = finalGraphPayload.task_graph;
+assertSmoke(finalGraph.status === "completed", `Expected completed graph; got ${finalGraph.status}.`);
+
+const contextPayload = await apiGet(apiBase, `/worker-context?task_graph_id=${encodeURIComponent(graphId)}`);
+const contexts = contextPayload.packets ?? [];
+assertSmoke(contexts.length >= 2, `Expected at least two worker context packets; got ${contexts.length}.`);
+for (const packet of contexts) {
+  assertSmoke(packet.output_contract, `Context ${packet.context_packet_id} is missing an output contract.`);
+  assertSmoke(Array.isArray(packet.output_contract.acceptance_checks), `Context ${packet.context_packet_id} has malformed acceptance checks.`);
+}
+
+const allTasks = await projectTasks(apiBase, project.project_id);
+const allTaskIds = finalGraph.nodes.map((node) => node.task_id);
+const commandGroups = [];
+for (const taskId of allTaskIds) {
+  const commands = await taskCommands(apiBase, taskId);
+  commandGroups.push({ task_id: taskId, commands });
+}
+
+const appNodeTitles = ["Landing and login pages", "Dashboard and settings pages"];
+const appNodes = finalGraph.nodes.filter((node) => appNodeTitles.includes(node.title));
+assertSmoke(appNodes.length === 2, `Expected landing/login and dashboard/settings app nodes; saw ${appNodes.map((node) => node.title).join(", ")}.`);
+for (const node of appNodes) {
+  assertSmoke(node.status === "completed", `${node.title} did not complete: ${node.status}`);
+  const commands = commandGroups.find((group) => group.task_id === node.task_id)?.commands ?? [];
+  assertSmoke(commands.some((command) => /\bcodex\s+exec\b/.test(command.command) && command.exit_code === 0), `${node.title} has no successful Codex command event.`);
+  assertSmoke(commands.some((command) => /materialize-codex-files\.mjs/.test(command.command) && command.exit_code === 0), `${node.title} has no successful materialization command.`);
+  assertSmoke(commands.some((command) => /^node\s+--check\b/.test(command.command) && command.exit_code === 0), `${node.title} has no successful JS validation command.`);
+}
+
+for (const [taskId, maxActive] of observedMaxActiveCodex.entries()) {
+  assertSmoke(maxActive <= 1, `Task ${taskId} observed ${maxActive} active Codex commands.`);
+}
+
+const flow = await flowchart(apiBase);
+for (const requiredType of ["task_graph", "task_graph_node", "worker", "command", "worktree", "shared_docs"]) {
+  assertSmoke(flow.nodes.some((node) => node.type === requiredType), `Flowchart is missing node type ${requiredType}.`);
+}
+assertSmoke(flow.nodes.some((node) => node.type === "task_graph" && node.id.includes(graphId)), `Flowchart is missing task graph ${graphId}.`);
+
+const commands = commandGroups.flatMap((group) => group.commands);
+const output = {
+  smoke: smokeName,
+  session_id: session.session_id,
+  project_id: project.project_id,
+  task_graph_id: graphId,
+  graph_status: finalGraph.status,
+  worker_ids: [...new Set(finalWorkerIds(finalGraph, initialWorkerIds))],
+  task_ids: allTaskIds,
+  initial_task_ids: initialTaskIds,
+  worktree_paths: finalGraph.nodes.map((node) => node.worktree_path).filter(Boolean),
+  output_contract_context_ids: contexts.map((packet) => packet.context_packet_id),
+  observed_max_active_codex_by_task: Object.fromEntries(observedMaxActiveCodex.entries()),
+  commands: commandIdSummary(commands),
+  task_statuses: allTasks.map((task) => ({ task_id: task.task_id, status: task.status, worker_id: task.worker_id })),
+};
+writeLatestResult(smokeName, output);
+printJsonSummary("docker-two-worker-static-dashboard-smoke passed", output);
+
+function finalWorkerIds(graph, fallback) {
+  const fromGraph = graph.nodes.map((node) => node.assigned_worker_id).filter(Boolean);
+  return fromGraph.length ? fromGraph : fallback;
+}

@@ -8,7 +8,6 @@ from typing import Any, Mapping
 from .agent import (
     AgentService,
     build_runtime_system_prompt,
-    repair_long_form_response,
 )
 from .codex_orchestrator import has_codex_orchestrator_session
 from .config import Settings
@@ -30,7 +29,6 @@ from .voice_self_observe import (
     choose_model_profile,
     classify_voice_turn,
     clamp_supertonic_params,
-    fallback_runtime_command_for_request,
     is_voice_tool_request,
     load_runtime_profile,
     model_for_profile,
@@ -368,7 +366,6 @@ async def run_voice_text_turn(
     raw_result: dict[str, Any] = {}
     structured_output: dict[str, Any] | None = None
     parse_errors: list[str] = []
-    fallback_reason: str | None = None
     codex_metadata: dict[str, Any] = {}
 
     async def apply_runtime_command(
@@ -446,12 +443,9 @@ async def run_voice_text_turn(
             )
         except Exception as exc:
             agent.cost_guard.release(reservation_id, {"error": type(exc).__name__})
-            response_source = "voice-runtime-error"
-            provider = "llm-error"
-            model = settings.active_model
-            raw_result = {"error_type": type(exc).__name__}
-            fallback_reason = type(exc).__name__
-            llm_completed_at = time.perf_counter()
+            raise RuntimeError(
+                f"Voice runtime LLM request failed: {type(exc).__name__}: {exc}"
+            ) from exc
         else:
             actual_cost = agent.cost_guard.estimate_llm_call(result.provider, result.raw)
             agent.cost_guard.finalize(
@@ -477,35 +471,16 @@ async def run_voice_text_turn(
                 if runtime_actions and not any(
                     status.get("status") == "completed" for status in runtime_action_status
                 ) and not codex_metadata:
-                    fallback_reason = "runtime_actions_rejected"
+                    raise RuntimeError("Voice runtime action was rejected.")
                 raw_result["structured_output"] = structured_output
             else:
                 parse_errors = parsed.errors or ["structured_output_parse_failed"]
                 runtime_profile.setdefault("debug", {})["structured_output_parse_errors"] = parse_errors
                 raw_result["structured_output_parse_errors"] = parse_errors
-                fallback_reason = ",".join(parse_errors)
-        if fallback_reason:
-            fallback_command = fallback_runtime_command_for_request(
-                text,
-                runtime_profile,
-                settings,
-                reason=fallback_reason,
-                codex_session_active=codex_session_active,
-            )
-            if fallback_command:
-                response_text = await apply_runtime_command(
-                    fallback_command.speak,
-                    [dict(action) for action in fallback_command.runtime_actions],
-                    fallback_command.reasoning_profile,
-                    fallback_command.debug,
+                raise RuntimeError(
+                    "Voice runtime LLM returned invalid structured output: "
+                    + ", ".join(parse_errors)
                 )
-                raw_result["fallback_structured_output"] = structured_output
-                response_source = "voice-runtime-tools"
-                if provider == "llm-error":
-                    provider = "runtime-fallback"
-                    model = "runtime-fallback"
-            else:
-                response_text = "I'm having trouble updating the voice runtime right now."
         save_runtime_profile(db, runtime_profile)
         llm_completed_at = time.perf_counter()
     elif mode == "flow":
@@ -572,15 +547,7 @@ async def run_voice_text_turn(
             )
         except Exception as exc:
             agent.cost_guard.release(reservation_id, {"error": type(exc).__name__})
-            response_text = (
-                "I'm having trouble reaching the language model right now. "
-                "Please try again in a moment."
-            )
-            response_source = "llm-error"
-            provider = "llm-error"
-            model = settings.active_model
-            raw_result = {"error_type": type(exc).__name__}
-            llm_completed_at = time.perf_counter()
+            raise RuntimeError(f"LLM provider request failed: {type(exc).__name__}: {exc}") from exc
         else:
             actual_cost = agent.cost_guard.estimate_llm_call(result.provider, result.raw)
             agent.cost_guard.finalize(
@@ -590,7 +557,6 @@ async def run_voice_text_turn(
                 metadata={"conversation_id": cid, "channel": "browser_voice_text", "assumed_stt": True},
             )
             response_text = result.text
-            response_text = repair_long_form_response(text, response_text) or response_text
             response_source = "llm"
             provider = result.provider
             model = result.model

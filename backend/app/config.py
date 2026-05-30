@@ -1,6 +1,7 @@
 from functools import lru_cache
 from typing import Any
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -24,10 +25,10 @@ class Settings(BaseSettings):
         "http://localhost:5175,http://127.0.0.1:5175"
     )
 
-    llm_provider: Literal["mock", "nvidia", "vertex_nim", "local", "ollama"] = "mock"
+    llm_provider: Literal["mock", "nvidia", "vertex_nim", "local", "ollama"] = "nvidia"
     nvidia_api_key: str | None = None
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
-    nvidia_model: str = "mistralai/mistral-nemotron"
+    nvidia_model: str = "nvidia/llama-3.3-nemotron-super-49b-v1.5"
     vertex_nim_project: str | None = None
     vertex_nim_region: str = "us-east4"
     vertex_nim_endpoint_id: str | None = None
@@ -62,7 +63,20 @@ class Settings(BaseSettings):
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
     twilio_from_number: str | None = None
+    twilio_phone_number: str | None = None
+    twilio_phone_number_sid: str | None = None
+    twilio_webhook_base_url: str | None = None
+    twilio_voice_webhook_url: str | None = None
+    twilio_sms_webhook_url: str | None = None
+    twilio_status_callback_url: str | None = None
     twilio_validate_signature: bool = False
+    twilio_validate_signatures: bool | None = None
+    twilio_voice_mode: Literal["auto", "gather", "media_stream"] = "auto"
+    twilio_gather_language: str = "en-US"
+    twilio_say_voice: str = "alice"
+    twilio_gather_timeout: int = Field(default=5, ge=1, le=30)
+    twilio_gather_speech_timeout: str = "auto"
+    twilio_gather_max_empty_turns: int = Field(default=2, ge=1, le=10)
 
     pipecat_cloud_ws_url: str | None = None
     pipecat_cloud_service_host: str | None = None
@@ -283,6 +297,36 @@ class Settings(BaseSettings):
                 }
             )
         return servers
+
+    @property
+    def twilio_effective_from_number(self) -> str | None:
+        return self.twilio_from_number or self.twilio_phone_number
+
+    @property
+    def twilio_effective_public_base_url(self) -> str:
+        if self.twilio_webhook_base_url:
+            return self.twilio_webhook_base_url.rstrip("/")
+        if self.twilio_voice_webhook_url:
+            parsed = urlparse(self.twilio_voice_webhook_url)
+            if parsed.scheme and parsed.netloc:
+                return f"{parsed.scheme}://{parsed.netloc}"
+        return self.public_base_url.rstrip("/")
+
+    @property
+    def twilio_effective_voice_webhook_url(self) -> str:
+        return self.twilio_voice_webhook_url or (
+            f"{self.twilio_effective_public_base_url}/twilio/inbound"
+        )
+
+    @property
+    def twilio_effective_status_callback_url(self) -> str:
+        return self.twilio_status_callback_url or (
+            f"{self.twilio_effective_public_base_url}/twilio/status"
+        )
+
+    @property
+    def twilio_should_validate_signature(self) -> bool:
+        return bool(self.twilio_validate_signature or self.twilio_validate_signatures)
 
     @property
     def active_model(self) -> str:

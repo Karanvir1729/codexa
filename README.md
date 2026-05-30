@@ -19,10 +19,9 @@ Built locally:
 
 - FastAPI backend with health checks, chat endpoint, Twilio inbound webhook, feedback capture, prompt-versioning, and eval APIs.
 - OpenAI-compatible LLM adapter supporting:
-  - `mock` mode for free local testing.
-  - Ollama mode for local real-model workflow tests.
-  - NVIDIA NIM endpoint mode.
+  - NVIDIA NIM endpoint mode as the default live app path.
   - self-hosted local/AWS vLLM endpoint mode.
+  - explicitly selected Ollama/local experiment modes.
 - Continuous feedback loop:
   - stores transcripts, feedback, latency records, eval runs, and prompt versions in SQLite.
   - converts low-rated user feedback into prompt improvements.
@@ -422,14 +421,16 @@ curl -sS -X POST http://127.0.0.1:8000/api/voice/text-test/turn \
   | python -m json.tool
 ```
 
-If this returns `provider: llm-error` or times out, switch to a known-responsive
-NVIDIA/OpenAI-compatible model before demo.
+If this returns HTTP 503, fix the configured NVIDIA/OpenAI-compatible provider
+before demo. The app no longer reports mock success when the provider is
+unavailable.
 
 ## Important Cost Boundary
 
 There is no universal AWS switch that blocks every paid action, especially while using the root account. This project therefore uses practical guardrails:
 
-- keep the default runtime in free local `mock` mode.
+- keep the default runtime on the NVIDIA API path and let missing credentials
+  fail readiness/text turns explicitly.
 - require budget setup before GPU deployment scripts proceed.
 - use the smallest practical NVIDIA GPU profile first.
 - auto-stop GPU instances.
@@ -481,29 +482,18 @@ http://localhost:5173
 The default `.env.example` uses:
 
 ```bash
-LLM_PROVIDER=mock
+LLM_PROVIDER=nvidia
+NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
+NVIDIA_MODEL=nvidia/llama-3.3-nemotron-super-49b-v1.5
 ```
 
-That mode is intentionally free and does not call paid APIs.
+Set `NVIDIA_API_KEY` before testing live text or voice turns. If the key is
+missing or the provider is unavailable, the API returns an explicit provider
+error instead of switching providers or using a mock response.
 
-For the fastest local real LLM profile, install Ollama and pull the Qwen 2.5 0.5B model:
-
-```bash
-./scripts/setup_ollama_local.sh
-```
-
-Then run the backend with:
-
-```bash
-LLM_PROVIDER=ollama \
-OLLAMA_BASE_URL=http://localhost:11434/v1 \
-OLLAMA_MODEL=qwen2.5:0.5b \
-OLLAMA_KEEP_ALIVE=30m \
-MAX_COMPLETION_TOKENS=24 \
-./scripts/run_backend.sh
-```
-
-`qwen2.5:0.5b` is the default local real LLM because this repo prioritizes voice turn latency. The local profile keeps the model warm and caps completions tightly so evals and voice turns do not pay repeated cold-start or rambling-token latency. Swap `OLLAMA_MODEL` or `LLM_PROVIDER` to a hosted external model when you are ready for higher quality.
+Ollama and other local OpenAI-compatible endpoints remain available for
+deliberate experiments by setting `LLM_PROVIDER` yourself, but they are no
+longer the default app path.
 
 ## Local Pipecat Voice
 
@@ -536,11 +526,12 @@ Default local/cloud voice stack:
 - Transport: Pipecat `LocalAudioTransport` using the Mac microphone and speaker.
 - STT: Pipecat `WhisperSTTService` / Faster Whisper with multilingual `LOCAL_STT_MODEL=base` and `LOCAL_STT_LANGUAGE=auto`, which keeps Hindi/English input usable without the 2s+ CPU latency of `small`. Use `LOCAL_STT_PROVIDER=whisperx` or `LOCAL_STT_PROVIDER=nvidia` for heavier model paths.
 - TTS: production target is a separate GPU-backed Fish Speech or Voxtral worker.
-  `kokoro` is the CPU fallback that keeps the demo usable while GPU quota is
+  `kokoro` is the CPU experiment path that keeps local speech development usable while GPU quota is
   unavailable. Keep `LOCAL_TTS_TEXT_AGGREGATION_MODE=sentence`; token-level
   aggregation makes local voices sound word-by-word.
 - VAD/interruption: Pipecat Silero VAD with a 50 ms speech-start window, 120 ms speech-stop window, 120 ms user speech timeout, and 10 ms output chunks.
-- LLM: Ollama OpenAI-compatible API using `qwen2.5:0.5b`.
+- LLM: configured NVIDIA/OpenAI-compatible provider. Ollama is only used when
+  explicitly selected for local experiments.
 
 On the first run, Kokoro downloads its ONNX model/voice files and Whisper downloads the selected Whisper model. macOS may ask for microphone permission for the terminal app. Speak over the assistant while it is talking to test interruption.
 
@@ -571,7 +562,7 @@ The remote Whisper interface accepts raw 16 kHz int16 PCM, defaults to
 hallucinate filler text. This is a provider experiment, not the mainstream
 browser demo path.
 
-For an Apple-Silicon MLX fallback, switch provider and model explicitly:
+For an Apple-Silicon MLX experiment, switch provider and model explicitly:
 
 ```bash
 LOCAL_STT_PROVIDER=mlx_whisper \
@@ -643,7 +634,8 @@ Add `--live` when credentials are present and you want to make real provider val
 Current known deployment reality:
 
 - AWS GPU EC2 cannot be launched until AWS approves the rejected G/VT quota request.
-- Hosted NVIDIA NIM is the immediate fallback for the high-reasoning model path.
+- Hosted NVIDIA NIM is the default high-reasoning model path while AWS GPU
+  quota remains blocked.
 - Twilio requires `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM_NUMBER`.
 - Local Pipecat voice uses `VOICE_RUNTIME=local_pipecat` and the open-source local dependencies above.
 - Twilio Pipecat provider mode still requires either `PIPECAT_CLOUD_WS_URL` + `PIPECAT_CLOUD_SERVICE_HOST`, or `VOICE_RUNTIME=pipecat` with Deepgram and Cartesia keys.
@@ -715,6 +707,41 @@ Destroy GPU compute when finished:
 
 ## Twilio + Pipecat
 
+The default Twilio path is now the local voice bot through Twilio's native
+speech gather/TTS loop. This works with the existing backend agent and does not
+require Pipecat Cloud, Deepgram, or Cartesia:
+
+```bash
+TWILIO_ACCOUNT_SID=<account sid>
+TWILIO_AUTH_TOKEN=<auth token>
+TWILIO_PHONE_NUMBER=<voice-capable number>
+TWILIO_PHONE_NUMBER_SID=<incoming phone number sid>
+TWILIO_WEBHOOK_BASE_URL=https://<your-public-tunnel-or-api-host>
+TWILIO_VOICE_MODE=auto
+```
+
+Point the Twilio voice webhook to:
+
+```text
+POST https://<your-public-tunnel-or-api-host>/twilio/inbound
+```
+
+The older deployed console path is also supported:
+
+```text
+POST https://<your-public-tunnel-or-api-host>/api/twilio/voice
+```
+
+To configure the Twilio phone number from local credentials:
+
+```bash
+.venv/bin/python scripts/configure_twilio_voice_webhook.py
+```
+
+The endpoint returns TwiML with `<Gather input="speech">`, sends the transcript
+to the same `AgentService.respond` path used by the browser voice/text tests,
+then loops with the agent response as `<Say>`.
+
 For Pipecat Cloud:
 
 ```bash
@@ -738,12 +765,6 @@ For local open-source voice without telephony:
 ```bash
 VOICE_RUNTIME=local_pipecat
 ./scripts/run_local_voice.sh
-```
-
-Point the Twilio voice webhook to:
-
-```text
-POST https://<your-api-host>/twilio/inbound
 ```
 
 ## Evaluation Loop
@@ -810,8 +831,9 @@ Recommended first Cekura coverage for this repo:
   and records interruption metrics.
 - Flow mode: selected voice flow variables mutate only through the runtime action
   bridge and produce visible variable badges.
-- LLM fallback: a provider timeout returns a graceful spoken apology and records
-  `llm-error` without crashing the WebRTC session.
+- LLM provider failures: text endpoints return HTTP 503 and voice runtime paths
+  surface an explicit provider/runtime error instead of reporting successful
+  alternate output.
 - Eval feedback loop: a failed local YAML eval is stored, reflected in
   `/api/self-learn`, and can create a new prompt version.
 

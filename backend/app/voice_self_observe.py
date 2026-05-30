@@ -238,12 +238,9 @@ def merge_runtime_profile(settings: Settings, stored: Mapping[str, Any] | None) 
         _deep_update(profile, stored)
     llm = profile.setdefault("llm", {})
     if isinstance(llm, dict):
-        if settings.voice_fast_model:
-            llm["fast_model"] = settings.voice_fast_model
-        if settings.voice_balanced_model:
-            llm["balanced_model"] = settings.voice_balanced_model
-        if settings.voice_reasoning_model:
-            llm["reasoning_model"] = settings.voice_reasoning_model
+        llm["fast_model"] = settings.voice_fast_model
+        llm["balanced_model"] = settings.voice_balanced_model or settings.active_model
+        llm["reasoning_model"] = settings.voice_reasoning_model
         if llm.get("fast_model") in LEGACY_HEAVY_VOICE_MODELS:
             llm["fast_model"] = settings.voice_fast_model or settings.active_model
         if llm.get("balanced_model") in LEGACY_HEAVY_VOICE_MODELS:
@@ -365,111 +362,6 @@ Canonical faster example: {{"speak":"Sure, I'll talk faster.","runtime_actions":
 Canonical Codex example: {{"speak":"I'll route that to Codex planning.","runtime_actions":[{{"tool":"delegate_to_codex_orchestrator","args":{{"goal":"user_goal","mode":"plan_first","reason":"user_requested_codex_planning"}}}}],"reasoning_profile":"reasoning","debug":{{"intent":"codex_orchestrator_delegate"}}}}.
 Rules: The current user request is authoritative; do not copy runtime_actions from prior turns. voice/audio/talking speed changes use TTS speed tools, not model_profile. model_profile only changes LLM strength. Short follow-ups like faster/fastest/slower should follow recent context; if that context is speech speed, choose a numeric TTS speed or delta within range. `speed` is an absolute multiplier and must never be negative; use a negative `delta` for slower speech. Runtime-change requests must include an action. Never return a bare tool object; always return the full object with speak and runtime_actions. Never put <tags> in speak; expression tags are added later by the renderer. Keep speak short.
 Choose runtime_actions yourself from the current user request and runtime state. If the current request mentions Codex or asks for a coding/project task, include delegate_to_codex_orchestrator."""
-
-
-def fallback_runtime_command_for_request(
-    user_text: str,
-    profile: Mapping[str, Any],
-    settings: Settings,
-    *,
-    reason: str,
-    codex_session_active: bool = False,
-) -> VoiceRuntimeCommand | None:
-    intent = voice_speed_intent(user_text)
-    if not intent:
-        if settings.codex_orchestrator_enabled and codex_session_active:
-            return VoiceRuntimeCommand(
-                speak="I'll send that to Codex.",
-                runtime_actions=[
-                    {
-                        "tool": "delegate_to_codex_orchestrator",
-                        "args": {
-                            "goal": user_text.strip(),
-                            "mode": "plan_first",
-                            "reason": f"fallback_active_session:{reason}",
-                        },
-                    }
-                ],
-                reasoning_profile="reasoning",
-                debug={
-                    "intent": "codex_orchestrator_followup",
-                    "source": "runtime_control_fallback",
-                    "fallback_reason": reason,
-                },
-            )
-        if settings.codex_orchestrator_enabled and is_codex_status_request(user_text):
-            return VoiceRuntimeCommand(
-                speak="I'll check Codex status.",
-                runtime_actions=[
-                    {
-                        "tool": "get_codex_orchestrator_status",
-                        "args": {"reason": f"fallback:{reason}"},
-                    }
-                ],
-                reasoning_profile="fast",
-                debug={
-                    "intent": "codex_orchestrator_status",
-                    "source": "runtime_control_fallback",
-                    "fallback_reason": reason,
-                },
-            )
-        if settings.codex_orchestrator_enabled and is_codex_orchestrator_request(user_text):
-            return VoiceRuntimeCommand(
-                speak="I'll route that to Codex planning.",
-                runtime_actions=[
-                    {
-                        "tool": "delegate_to_codex_orchestrator",
-                        "args": {
-                            "goal": user_text.strip(),
-                            "mode": "plan_first",
-                            "reason": f"fallback:{reason}",
-                        },
-                    }
-                ],
-                reasoning_profile="reasoning",
-                debug={
-                    "intent": "codex_orchestrator_delegate",
-                    "source": "runtime_control_fallback",
-                    "fallback_reason": reason,
-                },
-            )
-        return None
-    tts = profile.get("tts") if isinstance(profile.get("tts"), Mapping) else {}
-    current = clamp_number(tts.get("speed"), settings.supertonic_speed, 0.7, 2.0)
-    natural_min, natural_max = natural_tts_speed_bounds(settings)
-    if intent == "very_fast":
-        speed = natural_max
-        action = {"tool": "set_tts_speed", "args": {"speed": speed, "reason": "fallback_user_requested_very_fast_speech"}}
-        speak = f"Got it, I'll talk faster at {speed:.2g}x."
-    elif intent == "faster":
-        delta = 0.2
-        speed = clamp_live_tts_speed(settings, current + delta)
-        action = {"tool": "increment_tts_speed", "args": {"delta": delta, "reason": "fallback_user_requested_faster_speech"}}
-        speak = f"Sure, I'll talk faster at {speed:.2g}x."
-    elif intent == "very_slow":
-        speed = natural_min
-        action = {"tool": "set_tts_speed", "args": {"speed": speed, "reason": "fallback_user_requested_very_slow_speech"}}
-        speak = f"Sure, I'll talk slower at {speed:.2g}x."
-    elif intent == "slower":
-        delta = -0.2
-        speed = clamp_live_tts_speed(settings, current + delta)
-        action = {"tool": "increment_tts_speed", "args": {"delta": delta, "reason": "fallback_user_requested_slower_speech"}}
-        speak = f"Sure, I'll talk slower at {speed:.2g}x."
-    else:
-        speed = 1.0
-        action = {"tool": "set_tts_speed", "args": {"speed": speed, "reason": "fallback_user_requested_normal_speech_speed"}}
-        speak = "Sure, I'll use normal speed."
-    return VoiceRuntimeCommand(
-        speak=speak,
-        runtime_actions=[action],
-        reasoning_profile="fast",
-        debug={
-            "intent": "runtime_control",
-            "source": "runtime_control_fallback",
-            "fallback_reason": reason,
-            "current_tts_speed": round(current, 2),
-        },
-    )
 
 
 def _strip_json_fence(text: str) -> str:
@@ -622,14 +514,6 @@ def parse_voice_runtime_command(raw_text: str) -> VoiceRuntimeParseResult:
             raw=candidate,
         )
     )
-
-
-def fallback_voice_runtime_speak(raw_text: str) -> str:
-    clean, _kept, _stripped = clean_angle_tags(raw_text, [])
-    clean = clean.strip()
-    if not clean or clean.startswith("{"):
-        return "I understand."
-    return clean[:220]
 
 
 def execute_runtime_actions(

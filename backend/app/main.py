@@ -13,7 +13,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from .agent import AgentService
 from .cloud_vm import CloudVLLMError, CloudVLLMManager
@@ -35,7 +35,7 @@ from .llm import make_llm_client
 from .local_voice_runtime import require_openai_compatible_llm, run_browser_pipecat_voice_agent
 from .pipecat_runtime import run_pipecat_twilio_bot
 from .training_data import export_sft_jsonl
-from .twilio_routes import inbound_twiml
+from .twilio_routes import error_twiml, inbound_twiml, no_input_twiml, twilio_conversation_id, voice_turn_twiml
 from .voice_self_observe import load_runtime_profile
 from .voice_text_test import build_voice_text_tts_payload, run_voice_text_suite, run_voice_text_turn
 from .webrtc_sessions import is_known_webrtc_peer
@@ -82,7 +82,7 @@ class VoicePrepareRequest(BaseModel):
 
 
 class VoiceTextTurnRequest(BaseModel):
-    message: str = Field(min_length=1)
+    message: str = Field(min_length=1, validation_alias=AliasChoices("message", "text"))
     conversation_id: str | None = None
     voice_behavior_mode: str | None = None
     voice_flow_id: str | None = None
@@ -120,6 +120,12 @@ class VoiceTextSuiteRequest(BaseModel):
     voice_speech_path: str | None = None
     input_mode: str = "push_to_talk"
     cases: list[VoiceTextSuiteCase] | None = None
+
+
+class TwilioConfigureRequest(BaseModel):
+    phone_number_sid: str | None = None
+    voice_url: str | None = None
+    status_callback_url: str | None = None
 
 
 class FlowCreateRequest(BaseModel):
@@ -288,6 +294,16 @@ async def health() -> dict[str, Any]:
             "configured_tts_language": voice_settings.supertonic_language,
             "codex_orchestrator_enabled": settings.codex_orchestrator_enabled,
         },
+        "twilio": {
+            "ready": bool(
+                settings.twilio_account_sid
+                and settings.twilio_auth_token
+                and settings.twilio_effective_from_number
+            ),
+            "voice_mode": settings.twilio_voice_mode,
+            "voice_webhook_url": settings.twilio_effective_voice_webhook_url,
+            "signature_validation": settings.twilio_should_validate_signature,
+        },
         "webrtc_ice_servers": len(voice_settings.small_webrtc_browser_ice_servers),
         "voxtral_tts_model": voice_settings.voxtral_tts_model
         if voice_settings.local_tts_provider == "voxtral"
@@ -335,7 +351,14 @@ async def config() -> dict[str, Any]:
         if voice_settings.local_tts_provider == "voxtral"
         else None,
         "max_completion_tokens": settings.max_completion_tokens,
-        "twilio_ready": bool(settings.twilio_account_sid and settings.twilio_auth_token),
+        "twilio_ready": bool(
+            settings.twilio_account_sid
+            and settings.twilio_auth_token
+            and settings.twilio_effective_from_number
+        ),
+        "twilio_voice_mode": settings.twilio_voice_mode,
+        "twilio_phone_number_configured": bool(settings.twilio_effective_from_number),
+        "twilio_voice_webhook_url": settings.twilio_effective_voice_webhook_url,
         "pipecat_cloud_ready": bool(settings.pipecat_cloud_ws_url and settings.pipecat_cloud_service_host),
         "cost_guard": cost_guard.snapshot().to_dict(),
         "cloud_vllm": await cloud_vllm_manager.refreshed_snapshot(),
@@ -726,6 +749,8 @@ async def voice_text_test_turn(payload: VoiceTextTurnRequest) -> dict[str, Any]:
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Flow or run not found.") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -815,6 +840,8 @@ async def voice_text_test_run(payload: VoiceTextSuiteRequest | None = None) -> d
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Flow or run not found.") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1013,13 +1040,16 @@ async def cost() -> dict[str, Any]:
 
 @app.post("/api/chat")
 async def chat(payload: ChatRequest) -> dict[str, Any]:
-    return await agent.respond(
-        payload.message,
-        conversation_id=payload.conversation_id,
-        channel=payload.channel,
-        caller=payload.caller,
-        metadata=payload.metadata,
-    )
+    try:
+        return await agent.respond(
+            payload.message,
+            conversation_id=payload.conversation_id,
+            channel=payload.channel,
+            caller=payload.caller,
+            metadata=payload.metadata,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/api/flows")
@@ -1571,6 +1601,8 @@ async def websocket_chat(websocket: WebSocket) -> None:
             )
             conversation_id = response["conversation_id"]
             await websocket.send_json({"type": "assistant_message", **response})
+    except RuntimeError as exc:
+        await websocket.send_json({"type": "error", "message": str(exc)})
     except WebSocketDisconnect:
         return
 
@@ -1671,21 +1703,184 @@ async def training_export(payload: ExportTrainingDataRequest) -> dict[str, Any]:
     return export_sft_jsonl(db, payload.output_path)
 
 
-@app.post("/twilio/inbound")
-async def twilio_inbound(request: Request) -> Response:
-    if settings.twilio_validate_signature:
+async def _twilio_form_params(request: Request) -> dict[str, str]:
+    raw_body = (await request.body()).decode()
+    return dict(parse_qsl(raw_body, keep_blank_values=True))
+
+
+def _twilio_public_request_url(request: Request) -> str:
+    base_url = f"{settings.twilio_effective_public_base_url}{request.url.path}"
+    if request.url.query:
+        return f"{base_url}?{request.url.query}"
+    return base_url
+
+
+def _validate_twilio_request(request: Request, params: dict[str, str]) -> None:
+    if settings.twilio_should_validate_signature:
         from twilio.request_validator import RequestValidator
 
         if not settings.twilio_auth_token:
             raise HTTPException(status_code=500, detail="TWILIO_AUTH_TOKEN is required.")
         signature = request.headers.get("X-Twilio-Signature", "")
-        raw_body = (await request.body()).decode()
-        params = dict(parse_qsl(raw_body, keep_blank_values=True))
-        public_url = f"{settings.public_base_url.rstrip('/')}{request.url.path}"
         validator = RequestValidator(settings.twilio_auth_token)
-        if not validator.validate(public_url, params, signature):
+        if not validator.validate(_twilio_public_request_url(request), params, signature):
             raise HTTPException(status_code=403, detail="Invalid Twilio signature.")
-    return Response(content=inbound_twiml(settings), media_type="application/xml")
+
+
+def _safe_int(value: str | None, default: int = 0) -> int:
+    try:
+        return int(value) if value is not None else default
+    except ValueError:
+        return default
+
+
+@app.post("/api/twilio/voice")
+@app.post("/twilio/inbound")
+async def twilio_inbound(request: Request) -> Response:
+    params = await _twilio_form_params(request)
+    _validate_twilio_request(request, params)
+    call_sid = params.get("CallSid")
+    conversation_id = twilio_conversation_id(call_sid)
+    if conversation_id:
+        agent.ensure_conversation(
+            conversation_id,
+            "twilio",
+            caller=params.get("From"),
+            metadata={
+                "call_sid": call_sid,
+                "to": params.get("To"),
+                "from": params.get("From"),
+                "voice_mode": settings.twilio_voice_mode,
+            },
+        )
+    return Response(content=inbound_twiml(settings, call_sid), media_type="application/xml")
+
+
+@app.post("/twilio/voice-turn")
+async def twilio_voice_turn(request: Request) -> Response:
+    params = await _twilio_form_params(request)
+    _validate_twilio_request(request, params)
+    conversation_id = (
+        request.query_params.get("conversation_id")
+        or twilio_conversation_id(params.get("CallSid"))
+        or str(uuid.uuid4())
+    )
+    no_input_count = _safe_int(request.query_params.get("no_input_count"))
+    user_text = (params.get("SpeechResult") or params.get("Digits") or "").strip()
+    if not user_text:
+        return Response(
+            content=no_input_twiml(settings, conversation_id, no_input_count),
+            media_type="application/xml",
+        )
+    try:
+        result = await agent.respond(
+            user_text,
+            conversation_id=conversation_id,
+            channel="twilio",
+            caller=params.get("From"),
+            metadata={
+                "call_sid": params.get("CallSid"),
+                "to": params.get("To"),
+                "speech_confidence": params.get("Confidence"),
+                "voice_mode": "gather",
+            },
+        )
+    except Exception:
+        logger.exception("Twilio voice turn failed")
+        return Response(content=error_twiml(settings), media_type="application/xml")
+    return Response(
+        content=voice_turn_twiml(settings, result["message"], conversation_id),
+        media_type="application/xml",
+    )
+
+
+@app.post("/twilio/status")
+async def twilio_status(request: Request) -> Response:
+    params = await _twilio_form_params(request)
+    _validate_twilio_request(request, params)
+    call_sid = params.get("CallSid")
+    conversation_id = twilio_conversation_id(call_sid)
+    if conversation_id:
+        agent.ensure_conversation(
+            conversation_id,
+            "twilio",
+            caller=params.get("From"),
+            metadata={"call_sid": call_sid, "to": params.get("To"), "from": params.get("From")},
+        )
+        db.execute(
+            """
+            INSERT INTO turns(id, conversation_id, role, content, metrics_json)
+            VALUES (?, ?, 'system', ?, ?)
+            """,
+            (
+                str(uuid.uuid4()),
+                conversation_id,
+                f"Twilio call status: {params.get('CallStatus', 'unknown')}",
+                dumps(
+                    {
+                        "source": "twilio_status_callback",
+                        "call_sid": call_sid,
+                        "call_status": params.get("CallStatus"),
+                        "duration": params.get("CallDuration") or params.get("Duration"),
+                    }
+                ),
+            ),
+        )
+    return Response(status_code=204)
+
+
+@app.get("/api/twilio/status")
+async def twilio_config_status() -> dict[str, Any]:
+    return {
+        "ready": bool(
+            settings.twilio_account_sid
+            and settings.twilio_auth_token
+            and settings.twilio_effective_from_number
+        ),
+        "account_sid_configured": bool(settings.twilio_account_sid),
+        "auth_token_configured": bool(settings.twilio_auth_token),
+        "from_number_configured": bool(settings.twilio_effective_from_number),
+        "phone_number_sid_configured": bool(settings.twilio_phone_number_sid),
+        "voice_mode": settings.twilio_voice_mode,
+        "voice_webhook_url": settings.twilio_effective_voice_webhook_url,
+        "status_callback_url": settings.twilio_effective_status_callback_url,
+        "signature_validation": settings.twilio_should_validate_signature,
+    }
+
+
+@app.post("/api/twilio/configure")
+async def twilio_configure(payload: TwilioConfigureRequest) -> dict[str, Any]:
+    phone_number_sid = payload.phone_number_sid or settings.twilio_phone_number_sid
+    if not (settings.twilio_account_sid and settings.twilio_auth_token and phone_number_sid):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER_SID "
+                "are required to configure the Twilio voice webhook."
+            ),
+        )
+    voice_url = payload.voice_url or settings.twilio_effective_voice_webhook_url
+    status_callback_url = (
+        payload.status_callback_url or settings.twilio_effective_status_callback_url
+    )
+    from twilio.rest import Client
+
+    client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
+    updated = client.incoming_phone_numbers(phone_number_sid).update(
+        voice_url=voice_url,
+        voice_method="POST",
+        status_callback=status_callback_url,
+        status_callback_method="POST",
+    )
+    return {
+        "status": "updated",
+        "phone_number_sid": updated.sid,
+        "phone_number": updated.phone_number,
+        "voice_url": updated.voice_url,
+        "voice_method": updated.voice_method,
+        "status_callback": updated.status_callback,
+        "status_callback_method": updated.status_callback_method,
+    }
 
 
 @app.websocket("/twilio/media-stream")
@@ -1695,28 +1890,11 @@ async def twilio_media_stream(websocket: WebSocket) -> None:
         return
 
     await websocket.accept()
-    conversation_id = agent.ensure_conversation(None, "twilio", metadata={"mode": "text-fallback"})
-    try:
-        while True:
-            message = await websocket.receive_json()
-            event = message.get("event")
-            if event == "start":
-                db.execute(
-                    """
-                    INSERT INTO turns(id, conversation_id, role, content, metrics_json)
-                    VALUES (?, ?, 'system', ?, ?)
-                    """,
-                    (
-                        str(uuid.uuid4()),
-                        conversation_id,
-                        "Twilio media stream started. Set VOICE_RUNTIME=pipecat for live STT/LLM/TTS.",
-                        dumps(message.get("start", {})),
-                    ),
-                )
-                await websocket.send_json({"event": "mark", "streamSid": message["start"]["streamSid"], "mark": {"name": "ready"}})
-            elif event == "media":
-                continue
-            elif event == "stop":
-                break
-    except WebSocketDisconnect:
-        return
+    await websocket.send_json(
+        {
+            "event": "error",
+            "message": "Twilio media streaming requires VOICE_RUNTIME=pipecat.",
+        }
+    )
+    await websocket.close(code=1011)
+    return

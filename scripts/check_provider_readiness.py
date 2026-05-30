@@ -386,7 +386,7 @@ def check_ollama(file_env: dict[str, str], live: bool) -> Check:
 def check_twilio(file_env: dict[str, str], live: bool) -> Check:
     sid = env_value("TWILIO_ACCOUNT_SID", file_env)
     token = env_value("TWILIO_AUTH_TOKEN", file_env)
-    number = env_value("TWILIO_FROM_NUMBER", file_env)
+    number = env_value("TWILIO_FROM_NUMBER", file_env) or env_value("TWILIO_PHONE_NUMBER", file_env)
     if not sid or not token or not number:
         return Check(
             "twilio",
@@ -516,6 +516,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Check provider readiness for the voice-agent system.")
     parser.add_argument("--env-file", default=".env", help="Path to environment file. Defaults to .env.")
     parser.add_argument("--live", action="store_true", help="Make live provider API calls where credentials are present.")
+    parser.add_argument("--all-providers", action="store_true", help="Check inactive experiment providers too.")
     parser.add_argument("--json", action="store_true", help="Emit JSON only.")
     args = parser.parse_args()
 
@@ -523,12 +524,26 @@ def main() -> int:
     region = env_value("AWS_REGION", file_env) or env_value("AWS_DEFAULT_REGION", file_env) or "us-east-2"
     gcp_zone = env_value("GCP_ZONE", file_env) or "us-central1-a"
     gcp_region = env_value("GCP_REGION", file_env) or gcp_zone.rsplit("-", 1)[0]
+    llm_provider = env_value("LLM_PROVIDER", file_env) or "nvidia"
+
+    provider_checks: list[Check] = []
+    if args.all_providers or llm_provider == "ollama":
+        provider_checks.append(check_ollama(file_env, args.live))
+    if args.all_providers or llm_provider == "nvidia":
+        provider_checks.append(check_nvidia(file_env, args.live))
+    if llm_provider not in {"ollama", "nvidia", "vertex_nim", "local"}:
+        provider_checks.append(
+            Check(
+                "llm_provider",
+                "blocked",
+                f"Unsupported LLM_PROVIDER={llm_provider}; use nvidia for the default local app path.",
+            )
+        )
 
     checks = [
         *check_gcp(file_env),
         *check_aws(region),
-        check_ollama(file_env, args.live),
-        check_nvidia(file_env, args.live),
+        *provider_checks,
         check_twilio(file_env, args.live),
         check_pipecat(file_env),
         check_backend(),

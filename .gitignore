@@ -21,3 +21,15 @@ logs/
 .playwright-cli/
 .certs/
 frontend/vite.config.mjs.timestamp-*.mjs
+
+# Codex supervisor local/runtime artifacts.
+.codex-worker-home/
+.codex-vm-home/
+.env.codex-phone-supervisor
+tmp/
+node_modules/
+codex-phone-supervisor/frontend/dist/
+codex-auth-docker-smoke-*/
+static-saas-dashboard-shell-smoke-*/
+lexiforge-docker-local/
+lexiforge-docker-local.worktrees/

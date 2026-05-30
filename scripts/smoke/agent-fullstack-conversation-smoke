@@ -1,0 +1,267 @@
+#!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
+import {
+  apiGet,
+  apiPost,
+  assertNoDuplicateActiveCodex,
+  assertSmoke,
+  commandIdSummary,
+  containerToHostPath,
+  createSmokeWorkspace,
+  defaultApiBase,
+  ensureDockerCompose,
+  flowchart,
+  log,
+  printJsonSummary,
+  projectTasks,
+  readLatestResult,
+  runCommand,
+  sanitizeLabel,
+  taskCommands,
+  waitForApi,
+  waitForGraph,
+  writeLatestResult,
+} from "./lib.mjs";
+
+const smokeName = "agent-fullstack-conversation-smoke";
+const apiBase = defaultApiBase;
+const workerMode = process.env.SMOKE_WORKER_MODE || "docker_local";
+const workerCount = Number(process.env.SMOKE_WORKER_COUNT || (workerMode === "gke_job" ? "1" : "2"));
+const nonce = process.env.SMOKE_NONCE || `NONCE-FULLSTACK-${workerMode.toUpperCase().replace(/[^A-Z0-9]+/g, "-")}-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+const appName = process.env.SMOKE_APP_NAME || `LexiForge ${workerMode} ${sanitizeLabel(nonce, 36)}`;
+const proofFile = `SMOKE_PROOF_${sanitizeLabel(nonce, 50)}.txt`;
+const prompt = process.env.SMOKE_PROMPT || [
+  `Build a complex full-stack Wordle-style vocabulary game named ${appName}.`,
+  "Use vanilla Node.js only; no package installs and no external network calls.",
+  "Create a backend server with JSON API endpoints for starting a game, submitting guesses, and reading stats.",
+  "Create a frontend with HTML/CSS/JS that calls the API, renders guesses, keyboard state, and win/loss feedback.",
+  "Expected outputs include package.json, server.js, public/index.html, public/styles.css, public/app.js, .head-developer/VALIDATION.md, and .head-developer/WORKER_HANDOFFS.md.",
+  `Create ${proofFile} containing exact text ${nonce}.`,
+  "Run or recommend node --check validation for every generated JavaScript file.",
+  workerMode === "gke_job" ? "Use GKE Job workers." : "Use Docker Local workers.",
+].join(" ");
+
+if (!["docker_local", "gke_job"].includes(workerMode)) {
+  throw new Error(`SMOKE_WORKER_MODE must be docker_local or gke_job; got ${workerMode}.`);
+}
+
+if (workerMode === "docker_local") {
+  await ensureDockerCompose(workerCount);
+}
+await waitForApi(apiBase, Number(process.env.SMOKE_API_TIMEOUT_MS || "180000"));
+
+const workspace = workerMode === "docker_local"
+  ? createSmokeWorkspace(`${smokeName}-${workerMode}`)
+  : {
+    name: `${smokeName}-${workerMode}`,
+    hostPath: null,
+    containerPath: process.env.SMOKE_PROJECT_WORKSPACE || "/workspace",
+  };
+
+log(`worker_mode=${workerMode}`);
+log(`worker_count=${workerCount}`);
+log(`nonce=${nonce}`);
+log(`proof_file=${proofFile}`);
+log(`workspace=${workspace.containerPath}`);
+
+const { session } = await apiPost(apiBase, "/sessions", {
+  label: `${smokeName}-${workerMode}`,
+  workspace_path: workspace.containerPath,
+  channel: "web_text",
+  user_id: "smoke-harness",
+});
+const { project } = await apiPost(apiBase, "/projects", {
+  workspace_uri: workspace.containerPath,
+});
+await apiPost(apiBase, "/projects/select", {
+  session_id: session.session_id,
+  project_id: project.project_id,
+});
+
+const transcript = [];
+async function say(text) {
+  transcript.push({ role: "user", text });
+  const response = await apiPost(apiBase, `/sessions/${encodeURIComponent(session.session_id)}/message`, {
+    text,
+    channel: "web_text",
+  });
+  transcript.push({ role: "assistant", text: response.response ?? response.message ?? JSON.stringify(response) });
+  return response;
+}
+
+await say(workerMode === "gke_job" ? "Use GKE Job workers for future tasks." : "Use Docker Local workers for future tasks.");
+await say(prompt);
+
+let latestSession = await apiGet(apiBase, `/sessions/${encodeURIComponent(session.session_id)}`);
+for (let i = 0; i < 4 && latestSession.session?.pending_action; i += 1) {
+  await say("approve");
+  latestSession = await apiGet(apiBase, `/sessions/${encodeURIComponent(session.session_id)}`);
+}
+
+const graphProjectId = latestSession.session?.project_id ||
+  latestSession.session?.current_project_id ||
+  latestSession.session?.active_project_id ||
+  project.project_id;
+const graph = await latestTaskGraph(graphProjectId);
+assertSmoke(graph, "No task graph was created after the conversation and approvals.");
+const executionProjectId = graph.project_id || graphProjectId;
+log(`session_id=${session.session_id}`);
+log(`project_id=${executionProjectId}`);
+log(`task_graph_id=${graph.task_graph_id}`);
+
+const observedMaxActiveCodex = new Map();
+const finalGraphPayload = await waitForGraph(apiBase, graph.task_graph_id, {
+  timeoutMs: Number(process.env.SMOKE_GRAPH_TIMEOUT_MS || (workerMode === "gke_job" ? "2400000" : "1800000")),
+  intervalMs: Number(process.env.SMOKE_POLL_INTERVAL_MS || "10000"),
+  onPoll: async ({ task_graph }) => {
+    const taskIds = task_graph.nodes.map((node) => node.task_id);
+    await assertNoDuplicateActiveCodex(apiBase, taskIds, observedMaxActiveCodex);
+  },
+});
+const finalGraph = finalGraphPayload.task_graph;
+
+const tasks = await projectTasks(apiBase, executionProjectId);
+const commandGroups = [];
+for (const node of finalGraph.nodes) {
+  commandGroups.push({ task_id: node.task_id, commands: await taskCommands(apiBase, node.task_id) });
+}
+const commands = commandGroups.flatMap((group) => group.commands);
+const codexCommands = commands.filter((command) => /\bcodex\s+exec\b/.test(command.command));
+const materializeCommands = commands.filter((command) => /materialize-codex-files\.mjs/.test(command.command));
+const validationCommands = commands.filter((command) => /^node\s+--check\b/.test(command.command));
+const generatedFiles = generatedFilesFromCommands(commands);
+const localProof = workerMode === "docker_local" ? inspectLocalFiles(finalGraph, proofFile, nonce) : null;
+const proofFromEvents = generatedFiles.includes(proofFile) || commands.some((command) => [command.command, command.summary, command.stdout_preview, command.stderr_preview].filter(Boolean).join("\n").includes(proofFile));
+
+assertSmoke(finalGraph.status === "completed", `Expected completed graph; got ${finalGraph.status}.`);
+assertSmoke(codexCommands.some((command) => command.exit_code === 0), "No successful codex exec command event was recorded.");
+assertSmoke(materializeCommands.some((command) => command.exit_code === 0), "No successful materialization command event was recorded.");
+assertSmoke(validationCommands.some((command) => command.exit_code === 0), "No successful node --check validation command event was recorded.");
+if (workerMode === "docker_local") {
+  assertSmoke(localProof?.nonceFound, `Nonce was not found in local generated files for ${workerMode}.`);
+  assertSmoke(localProof?.proof_file_seen, `Expected proof file ${proofFile} was not created for ${workerMode}.`);
+  assertSmoke(localProof?.hasBackend, "Local generated files do not include a backend server file.");
+  assertSmoke(localProof?.hasFrontend, "Local generated files do not include frontend HTML/CSS/JS files.");
+} else {
+  assertSmoke(proofFromEvents, `GKE command events did not prove generated proof file ${proofFile}.`);
+  assertSmoke(generatedFiles.some((file) => file.endsWith(proofFile)), `GKE command events did not show created proof file ${proofFile}.`);
+  assertSmoke(generatedFiles.some((file) => /(^|\/)server\.(js|mjs|cjs|ts)$/.test(file)), "GKE generated file evidence does not include a backend server file.");
+  assertSmoke(generatedFiles.some((file) => /(^|\/)index\.html$/.test(file)) &&
+    generatedFiles.some((file) => /\.(css)$/.test(file)) &&
+    generatedFiles.some((file) => /(^|\/)(app|script|main)\.(js|mjs|cjs)$/.test(file)), "GKE generated file evidence does not include frontend HTML/CSS/JS files.");
+}
+
+const chart = await flowchart(apiBase);
+assertSmoke(chart.nodes?.some((node) => node.type === "planner_decision"), "Flowchart is missing planner decision evidence.");
+assertSmoke(chart.nodes?.some((node) => node.type === "task_graph" && node.id.includes(finalGraph.task_graph_id)), "Flowchart is missing the task graph.");
+assertSmoke(chart.nodes?.some((node) => node.type === "worker"), "Flowchart is missing worker evidence.");
+assertSmoke(chart.nodes?.some((node) => node.type === "command"), "Flowchart is missing command evidence.");
+
+let cleanup = null;
+if (workerMode === "gke_job" && process.env.SMOKE_CLEANUP !== "0") {
+  cleanup = await cleanupGkeJobs(finalGraph);
+}
+
+const output = {
+  smoke: smokeName,
+  worker_mode: workerMode,
+  worker_count: workerCount,
+  session_id: session.session_id,
+  project_id: executionProjectId,
+  initial_project_id: project.project_id,
+  task_graph_id: finalGraph.task_graph_id,
+  graph_status: finalGraph.status,
+  graph_nodes: finalGraph.nodes.map((node) => ({
+    title: node.title,
+    status: node.status,
+    task_id: node.task_id,
+    worker_id: node.assigned_worker_id,
+    worktree_path: node.worktree_path ?? null,
+  })),
+  nonce,
+  proof_file: proofFile,
+  generated_files: generatedFiles,
+  local_file_proof: localProof,
+  observed_max_active_codex_by_task: Object.fromEntries(observedMaxActiveCodex.entries()),
+  commands: commandIdSummary(commands),
+  task_statuses: tasks.map((task) => ({ task_id: task.task_id, status: task.status, worker_id: task.worker_id })),
+  transcript,
+  cleanup,
+  previous_latest: readLatestResult(`${smokeName}-${workerMode}`)?.task_graph_id ?? null,
+};
+writeLatestResult(`${smokeName}-${workerMode}`, output);
+printJsonSummary(`${smokeName} ${workerMode} passed`, output);
+
+async function latestTaskGraph(projectId) {
+  for (let i = 0; i < 30; i += 1) {
+    const payload = await apiGet(apiBase, `/task-graphs?project_id=${encodeURIComponent(projectId)}`);
+    const graphs = payload.task_graphs ?? [];
+    if (graphs.length) return graphs.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0];
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  return null;
+}
+
+function generatedFilesFromCommands(commands) {
+  const files = new Set();
+  for (const command of commands) {
+    const text = [command.summary, command.stdout_preview, command.stderr_preview].filter(Boolean).join("\n");
+    for (const match of text.matchAll(/(?:created|modified):\s+([^\n,]+)/gi)) files.add(match[1].trim());
+  }
+  return [...files].sort();
+}
+
+function inspectLocalFiles(graph, expectedProofFile, expectedNonce) {
+  const roots = new Set([
+    graph.nodes.map((node) => node.worktree_path).filter(Boolean),
+    [workspace.containerPath],
+  ].flat());
+  const files = [];
+  const nonceFiles = [];
+  for (const root of roots) {
+    const hostRoot = containerToHostPath(root);
+    if (!hostRoot || !fs.existsSync(hostRoot)) continue;
+    walk(hostRoot, hostRoot, files, nonceFiles, expectedNonce);
+  }
+  const normalized = files.map((item) => item.relative);
+  return {
+    inspected_roots: [...roots],
+    files: normalized.sort(),
+    proof_file_seen: normalized.some((file) => file.endsWith(expectedProofFile)),
+    nonceFound: nonceFiles.length > 0,
+    nonce_files: nonceFiles.map((item) => item.relative).sort(),
+    hasBackend: normalized.some((file) => /(^|\/)server\.(js|mjs|cjs|ts)$/.test(file)),
+    hasFrontend: normalized.some((file) => /(^|\/)index\.html$/.test(file)) &&
+      normalized.some((file) => /\.(css)$/.test(file)) &&
+      normalized.some((file) => /(^|\/)(app|script|main)\.(js|mjs|cjs)$/.test(file)),
+  };
+}
+
+function walk(root, dir, files, nonceFiles, expectedNonce) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if ([".git", "node_modules", ".worktrees"].includes(entry.name)) continue;
+    const absolute = path.join(dir, entry.name);
+    const relative = path.relative(root, absolute).replace(/\\/g, "/");
+    if (entry.isDirectory()) {
+      walk(root, absolute, files, nonceFiles, expectedNonce);
+    } else if (entry.isFile()) {
+      files.push({ absolute, relative });
+      if (/\.(html?|css|js|mjs|cjs|json|md|txt)$/i.test(entry.name)) {
+        const text = fs.readFileSync(absolute, "utf8");
+        if (text.includes(expectedNonce)) nonceFiles.push({ absolute, relative });
+      }
+    }
+  }
+}
+
+async function cleanupGkeJobs(graph) {
+  const namespace = process.env.HEAD_DEVELOPER_GKE_NAMESPACE || "head-developer-workers";
+  const results = [];
+  for (const workerId of graph.nodes.map((node) => node.assigned_worker_id).filter(Boolean)) {
+    await runCommand("kubectl", ["delete", "job", "-n", namespace, "-l", `app=head-developer,worker_id=${workerId}`, "--ignore-not-found=true"], { timeoutMs: 120_000 });
+    results.push({ worker_id: workerId, selector: `app=head-developer,worker_id=${workerId}` });
+  }
+  const remaining = await runCommand("kubectl", ["get", "jobs,pods", "-n", namespace, "-l", "app=head-developer", "-o", "name"], { timeoutMs: 60_000 }).catch((error) => ({ stdout: `error: ${error.message}` }));
+  return { namespace, deleted: results, remaining: remaining.stdout.trim() };
+}
