@@ -1967,15 +1967,17 @@ async def twilio_status(request: Request) -> Response:
 
 @app.get("/api/twilio/status")
 async def twilio_config_status() -> dict[str, Any]:
+    phone_number = settings.twilio_effective_from_number
     return {
         "ready": bool(
             settings.twilio_account_sid
             and settings.twilio_auth_token
-            and settings.twilio_effective_from_number
+            and phone_number
         ),
         "account_sid_configured": bool(settings.twilio_account_sid),
         "auth_token_configured": bool(settings.twilio_auth_token),
-        "from_number_configured": bool(settings.twilio_effective_from_number),
+        "from_number_configured": bool(phone_number),
+        "phone_number": phone_number,
         "phone_number_sid_configured": bool(settings.twilio_phone_number_sid),
         "voice_mode": settings.twilio_voice_mode,
         "voice_webhook_url": settings.twilio_effective_voice_webhook_url,

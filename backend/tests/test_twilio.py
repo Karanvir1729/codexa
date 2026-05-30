@@ -186,6 +186,34 @@ def test_twilio_number_alias_supports_existing_env_name():
 
 
 @pytest.mark.asyncio
+async def test_twilio_status_endpoint_returns_configured_phone_number(monkeypatch):
+    monkeypatch.setattr(
+        main_module,
+        "settings",
+        Settings(
+            _env_file=None,
+            twilio_account_sid="AC123",
+            twilio_auth_token="secret",
+            twilio_phone_number="+15551234567",
+            twilio_phone_number_sid="PN123",
+            twilio_voice_webhook_url="https://voice.example.com/api/twilio/voice",
+            twilio_status_callback_url="https://voice.example.com/twilio/status",
+        ),
+    )
+
+    transport = httpx.ASGITransport(app=main_module.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/api/twilio/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ready"] is True
+    assert payload["phone_number"] == "+15551234567"
+    assert payload["from_number_configured"] is True
+    assert payload["voice_webhook_url"] == "https://voice.example.com/api/twilio/voice"
+
+
+@pytest.mark.asyncio
 async def test_twilio_call_logs_endpoint_returns_transcript_and_status(monkeypatch, tmp_path):
     test_db = Database(str(tmp_path / "agent.sqlite3"))
     monkeypatch.setattr(main_module, "db", test_db)

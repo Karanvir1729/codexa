@@ -38,6 +38,12 @@ export type Health = {
   reasoning_mode: string;
   cost_guard: CostGuard;
   cloud_vllm?: CloudVLLMState;
+  twilio?: Partial<TwilioStatus> & {
+    ready?: boolean;
+    voice_mode?: string;
+    voice_webhook_url?: string;
+    signature_validation?: boolean;
+  };
 };
 
 export type CloudVLLMState = {
@@ -189,6 +195,19 @@ export type TwilioCallLog = {
   updated_at: string;
   last_message: string;
   turns: TwilioCallLogTurn[];
+};
+
+export type TwilioStatus = {
+  ready: boolean;
+  account_sid_configured: boolean;
+  auth_token_configured: boolean;
+  from_number_configured: boolean;
+  phone_number: string | null;
+  phone_number_sid_configured: boolean;
+  voice_mode: string;
+  voice_webhook_url: string;
+  status_callback_url: string;
+  signature_validation: boolean;
 };
 
 export type TwilioCallLogsResponse = {
@@ -619,6 +638,10 @@ export function getVoiceCodexOrchestratorStatus(conversationId: string) {
 
 export function getTwilioCallLogs(limit = 8) {
   return request<TwilioCallLogsResponse>(`/api/twilio/call-logs?limit=${encodeURIComponent(String(limit))}`);
+}
+
+export function getTwilioStatus() {
+  return request<TwilioStatus>("/api/twilio/status");
 }
 
 export async function synthesizeVoiceTextAudio(payload: {

@@ -51,6 +51,7 @@ import {
   getWebRTCIceConfig,
   getPrompt,
   getTwilioCallLogs,
+  getTwilioStatus,
   Health,
   listEvalRuns,
   prepareVoice,
@@ -66,6 +67,7 @@ import {
   type VoicePreflight,
   type VoiceCodexStatusResponse,
   type TwilioCallLog,
+  type TwilioStatus,
   type VoiceRuntimeProfileResponse,
   type VoiceInputMode,
   type VoiceSpeechPath,
@@ -303,15 +305,16 @@ function formatDebugValue(value: unknown) {
   return String(value);
 }
 
-type AppView = "voice" | "builder" | "live" | "flow" | "selfLearn";
+type AppView = "voice" | "twilio" | "builder" | "live" | "flow" | "selfLearn";
 
 const activeViewStorageKey = "voiceops-active-view";
 
 function normalizeAppView(value: string | null | undefined): AppView | null {
   const normalized = (value ?? "").replace(/^#\/?/, "").trim().toLowerCase();
+  if (normalized === "twilio" || normalized === "phone" || normalized === "calls") return "twilio";
   if (normalized === "builder" || normalized === "app-builder" || normalized === "appbuilder") return "builder";
   if (normalized === "flow") return "flow";
-  if (normalized === "testing" || normalized === "evals" || normalized === "runtime" || normalized === "live") return "live";
+  if (normalized === "testing" || normalized === "live") return "live";
   if (normalized === "self-learn" || normalized === "selflearn") return "selfLearn";
   if (normalized === "voice" || normalized === "") return "voice";
   return null;
@@ -384,6 +387,15 @@ function formatCallTime(value: string) {
   const date = new Date(normalized);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function formatPhoneNumber(value: string | null | undefined) {
+  return value?.trim() || "Not configured";
+}
+
+function phoneHref(value: string | null | undefined) {
+  const normalized = value?.replace(/[^\d+]/g, "");
+  return normalized ? `tel:${normalized}` : undefined;
 }
 
 function valueText(value: unknown) {
@@ -547,6 +559,7 @@ export function App() {
   const [voiceTextAudioBusy, setVoiceTextAudioBusy] = useState(false);
   const [voiceTextResult, setVoiceTextResult] = useState<VoiceTextTurnResponse | null>(null);
   const [voiceTextSuite, setVoiceTextSuite] = useState<VoiceTextSuiteResponse | null>(null);
+  const [twilioStatus, setTwilioStatus] = useState<TwilioStatus | null>(null);
   const [twilioCallLogs, setTwilioCallLogs] = useState<TwilioCallLog[]>([]);
   const [twilioLogsBusy, setTwilioLogsBusy] = useState(false);
   const [evalBusy, setEvalBusy] = useState(false);
@@ -632,6 +645,19 @@ export function App() {
     }
   }
 
+  async function refreshTwilioStatus(options: { silent?: boolean } = {}) {
+    try {
+      const result = await getTwilioStatus();
+      setTwilioStatus(result);
+      return result;
+    } catch (error) {
+      if (!options.silent) {
+        setNotice(error instanceof Error ? error.message : "Twilio status refresh failed");
+      }
+      return null;
+    }
+  }
+
   async function refreshTwilioLogs(options: { silent?: boolean } = {}) {
     if (twilioLogsBusy) return twilioCallLogs;
     setTwilioLogsBusy(true);
@@ -659,6 +685,7 @@ export function App() {
       improvementState,
       runtimeState,
       preflightState,
+      twilioStatusState,
       twilioState
     ] = await Promise.all([
       getHealth(),
@@ -669,6 +696,7 @@ export function App() {
       getAutoImprovement(),
       getVoiceRuntimeProfile().catch(() => null),
       getVoicePreflight(speechPath).catch(() => null),
+      getTwilioStatus().catch(() => null),
       getTwilioCallLogs(8).catch(() => null)
     ]);
     setHealth(healthState);
@@ -679,6 +707,7 @@ export function App() {
     setAutoImprovement(improvementState);
     setVoiceRuntime(runtimeState);
     setVoicePreflight(preflightState);
+    setTwilioStatus(twilioStatusState);
     if (twilioState) setTwilioCallLogs(twilioState.calls);
     return healthState;
   }
@@ -1000,6 +1029,17 @@ export function App() {
   );
   const codexFlowVisible = Boolean(codexSessionId);
   const recentHistoryTurns = turns.slice(-8);
+  const configuredTwilioNumber = twilioStatus?.phone_number?.trim() || null;
+  const twilioNumberDisplay =
+    configuredTwilioNumber ?? (twilioStatus?.from_number_configured ? "Configured" : null);
+  const configuredTwilioHref = phoneHref(configuredTwilioNumber);
+  const twilioReady = twilioStatus?.ready ?? false;
+  const twilioCredentialsReady = Boolean(
+    twilioStatus?.account_sid_configured &&
+      twilioStatus?.auth_token_configured &&
+      twilioStatus?.from_number_configured
+  );
+  const twilioRecentTurns = twilioCallLogs.reduce((total, call) => total + call.turns.length, 0);
   const observedVariables = useMemo(
     () => ({
       transport: voiceState,
@@ -1183,14 +1223,20 @@ export function App() {
   }, [activeView, codexSessionId, conversationId]);
 
   useEffect(() => {
-    if (activeView !== "voice") return;
+    if (activeView !== "twilio") return;
     let cancelled = false;
     const poll = async () => {
       try {
-        const result = await getTwilioCallLogs(8);
-        if (!cancelled) setTwilioCallLogs(result.calls);
+        const [status, logs] = await Promise.all([
+          getTwilioStatus().catch(() => null),
+          getTwilioCallLogs(8).catch(() => null)
+        ]);
+        if (!cancelled) {
+          if (status) setTwilioStatus(status);
+          if (logs) setTwilioCallLogs(logs.calls);
+        }
       } catch {
-        // Manual refresh surfaces call-log fetch errors.
+        // Manual refresh surfaces Twilio errors.
       }
     };
     poll();
@@ -1627,6 +1673,14 @@ export function App() {
             <Mic size={18} /> <span className="navLabel">Voice</span>
           </button>
           <button
+            className={activeView === "twilio" ? "active" : ""}
+            onClick={() => setActiveView("twilio")}
+            aria-label="Twilio"
+            title="Twilio"
+          >
+            <PhoneCall size={18} /> <span className="navLabel">Twilio</span>
+          </button>
+          <button
             className={activeView === "builder" ? "active" : ""}
             onClick={() => setActiveView("builder")}
             aria-label="App builder"
@@ -1657,12 +1711,6 @@ export function App() {
             title="Self-learn"
           >
             <Brain size={18} /> <span className="navLabel">Self-learn</span>
-          </button>
-          <button onClick={() => setActiveView("live")} aria-label="Evals" title="Evals">
-            <Activity size={18} /> <span className="navLabel">Evals</span>
-          </button>
-          <button onClick={() => setActiveView("live")} aria-label="Runtime" title="Runtime">
-            <Gauge size={18} /> <span className="navLabel">Runtime</span>
           </button>
         </nav>
         <div className="railFooter">
@@ -1866,76 +1914,6 @@ export function App() {
                   </section>
                 )}
 
-                <section className="twilioCallLogPanel">
-                  <div className="voicePanelHeader">
-                    <div>
-                      <h2>Twilio Calls</h2>
-                      <p>
-                        {twilioCallLogs.length > 0
-                          ? `${twilioCallLogs.length} recent calls · live polling`
-                          : "Waiting for phone traffic"}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      className="voiceConsoleIconButton"
-                      onClick={() => refreshTwilioLogs()}
-                      disabled={twilioLogsBusy}
-                      aria-label="Refresh Twilio calls"
-                      title="Refresh Twilio calls"
-                    >
-                      <RefreshCcw size={16} />
-                    </button>
-                  </div>
-                  <div className="twilioCallList">
-                    {twilioCallLogs.length === 0 ? (
-                      <div className="emptyState compact">
-                        <PhoneCall size={20} />
-                        <p>Call the Twilio number to see live speech turns here.</p>
-                      </div>
-                    ) : (
-                      twilioCallLogs.map((call) => (
-                        <article
-                          className={`twilioCallCard ${conversationId === call.conversation_id ? "active" : ""}`}
-                          key={call.conversation_id}
-                        >
-                          <div className="twilioCallCardTop">
-                            <div>
-                              <strong>{call.caller ?? "Unknown caller"}</strong>
-                              <span>{formatCallTime(call.updated_at)}</span>
-                            </div>
-                            <Badge color={call.status === "completed" ? "secondary" : "active"}>
-                              {call.status}
-                            </Badge>
-                          </div>
-                          <div className="twilioCallMeta">
-                            <span>{truncateValue(call.call_sid ?? call.conversation_id, 30)}</span>
-                            <span>{formatCallDuration(call.duration_seconds)}</span>
-                            <span>{call.turns.length} events</span>
-                          </div>
-                          <div className="twilioCallTurns">
-                            {call.turns.filter((turn) => turn.role !== "system").slice(-4).map((turn) => (
-                              <p key={turn.id}>
-                                <span>{turn.role}</span>
-                                {turn.content}
-                              </p>
-                            ))}
-                            {!call.turns.some((turn) => turn.role !== "system") && (
-                              <p>
-                                <span>system</span>
-                                Call connected.
-                              </p>
-                            )}
-                          </div>
-                          <button type="button" onClick={() => watchTwilioCall(call)}>
-                            Watch in Codexa
-                          </button>
-                        </article>
-                      ))
-                    )}
-                  </div>
-                </section>
-
                 <section className="voiceConversationStrip">
                   <div className="voicePanelHeader">
                     <div>
@@ -2069,6 +2047,170 @@ export function App() {
                 ))}
               </div>
             )}
+          </section>
+        ) : activeView === "twilio" ? (
+          <section className="twilioPage">
+            <header className="twilioTopbar">
+              <div>
+                <p className="eyebrow">Phone Line</p>
+                <h1>Twilio</h1>
+              </div>
+              <div className="voiceConsoleHeaderActions">
+                <Badge color={twilioReady ? "active" : "inactive"}>
+                  {twilioReady ? "ready" : "not ready"}
+                </Badge>
+                <Badge color="secondary">{twilioStatus?.voice_mode ?? "mode loading"}</Badge>
+                <button
+                  className="voiceConsoleIconButton"
+                  type="button"
+                  onClick={() => {
+                    void refreshTwilioStatus();
+                    void refreshTwilioLogs();
+                  }}
+                  aria-label="Refresh Twilio"
+                  title="Refresh Twilio"
+                >
+                  <RefreshCcw size={17} />
+                </button>
+              </div>
+            </header>
+
+            <section className="twilioNumberBand">
+              <div className="twilioNumberBlock">
+                <span>Inbound number</span>
+                {configuredTwilioHref ? (
+                  <a href={configuredTwilioHref}>{formatPhoneNumber(twilioNumberDisplay)}</a>
+                ) : (
+                  <strong>{formatPhoneNumber(twilioNumberDisplay)}</strong>
+                )}
+                <p>
+                  {twilioReady && configuredTwilioNumber
+                    ? "Calls to this number route into Codexa."
+                    : twilioReady
+                      ? "Twilio is ready for calls."
+                    : "Add Twilio credentials and a phone number to enable calls."}
+                </p>
+              </div>
+              <div className="twilioQuickStats">
+                <div>
+                  <small>Credentials</small>
+                  <strong>{twilioCredentialsReady ? "configured" : "incomplete"}</strong>
+                </div>
+                <div>
+                  <small>Recent calls</small>
+                  <strong>{twilioCallLogs.length}</strong>
+                </div>
+                <div>
+                  <small>Logged events</small>
+                  <strong>{twilioRecentTurns}</strong>
+                </div>
+              </div>
+            </section>
+
+            <section className="twilioPageGrid">
+              <section className="twilioInfoPanel">
+                <div className="voicePanelHeader">
+                  <div>
+                    <h2>Configuration</h2>
+                    <p>{twilioReady ? "Phone bridge is active" : "Phone bridge needs configuration"}</p>
+                  </div>
+                </div>
+                <div className="twilioDetailList">
+                  <div>
+                    <span>Voice webhook</span>
+                    <strong>{twilioStatus?.voice_webhook_url ?? "-"}</strong>
+                  </div>
+                  <div>
+                    <span>Status callback</span>
+                    <strong>{twilioStatus?.status_callback_url ?? "-"}</strong>
+                  </div>
+                  <div>
+                    <span>Signature validation</span>
+                    <strong>{valueText(twilioStatus?.signature_validation)}</strong>
+                  </div>
+                  <div>
+                    <span>Phone SID</span>
+                    <strong>{twilioStatus?.phone_number_sid_configured ? "configured" : "not configured"}</strong>
+                  </div>
+                </div>
+              </section>
+
+              <section className="twilioCallLogPanel">
+                <div className="voicePanelHeader">
+                  <div>
+                    <h2>Recent Calls</h2>
+                    <p>
+                      {twilioCallLogs.length > 0
+                        ? `${twilioCallLogs.length} recent calls`
+                        : "Waiting for phone traffic"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="voiceConsoleIconButton"
+                    onClick={() => refreshTwilioLogs()}
+                    disabled={twilioLogsBusy}
+                    aria-label="Refresh Twilio calls"
+                    title="Refresh Twilio calls"
+                  >
+                    <RefreshCcw size={16} />
+                  </button>
+                </div>
+                <div className="twilioCallList">
+                  {twilioCallLogs.length === 0 ? (
+                    <div className="emptyState compact">
+                      <PhoneCall size={20} />
+                      <p>{configuredTwilioNumber ? `Call ${configuredTwilioNumber} to start a Codexa session.` : "No Twilio number is configured yet."}</p>
+                    </div>
+                  ) : (
+                    twilioCallLogs.map((call) => (
+                      <article
+                        className={`twilioCallCard ${conversationId === call.conversation_id ? "active" : ""}`}
+                        key={call.conversation_id}
+                      >
+                        <div className="twilioCallCardTop">
+                          <div>
+                            <strong>{call.caller ?? "Unknown caller"}</strong>
+                            <span>{formatCallTime(call.updated_at)}</span>
+                          </div>
+                          <Badge color={call.status === "completed" ? "secondary" : "active"}>
+                            {call.status}
+                          </Badge>
+                        </div>
+                        <div className="twilioCallMeta">
+                          <span>{truncateValue(call.call_sid ?? call.conversation_id, 30)}</span>
+                          <span>{formatCallDuration(call.duration_seconds)}</span>
+                          <span>{call.turns.length} events</span>
+                        </div>
+                        <div className="twilioCallTurns">
+                          {call.turns.filter((turn) => turn.role !== "system").slice(-4).map((turn) => (
+                            <p key={turn.id}>
+                              <span>{turn.role}</span>
+                              {truncateValue(turn.content, 180)}
+                            </p>
+                          ))}
+                          {!call.turns.some((turn) => turn.role !== "system") && (
+                            <p>
+                              <span>system</span>
+                              Call connected.
+                            </p>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            watchTwilioCall(call);
+                            setActiveView("voice");
+                          }}
+                        >
+                          Watch in Voice
+                        </button>
+                      </article>
+                    ))
+                  )}
+                </div>
+              </section>
+            </section>
           </section>
         ) : activeView === "builder" ? (
           <AppBuilderPage onNotice={setNotice} />
