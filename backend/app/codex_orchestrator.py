@@ -287,6 +287,7 @@ class CodexOrchestratorBridge:
         user_text: str,
         transcript: list[Mapping[str, Any]] | None = None,
         mode: str = "plan_first",
+        allow_spoken_detail: bool = True,
     ) -> CodexOrchestratorResult:
         if not self.settings.codex_orchestrator_enabled:
             return self._local_result(
@@ -299,7 +300,13 @@ class CodexOrchestratorBridge:
         text = (
             user_text.strip()
             if mapping.get("codex_session_id")
-            else self._codexa_text(conversation_id, user_text, transcript or [], mode)
+            else self._codexa_text(
+                conversation_id,
+                user_text,
+                transcript or [],
+                mode,
+                allow_spoken_detail=allow_spoken_detail,
+            )
         )
         payload = {
             "user_id": f"voice-agent:{conversation_id}",
@@ -352,11 +359,24 @@ class CodexOrchestratorBridge:
             raw=raw,
         )
         result = await self._enrich_result_with_status(result)
-        result = replace(result, text=self._voice_summary(result, user_text=user_text))
+        result = replace(
+            result,
+            text=self._voice_summary(
+                result,
+                user_text=user_text,
+                allow_spoken_detail=allow_spoken_detail,
+            ),
+        )
         self._save_result(result)
         return result
 
-    async def status(self, conversation_id: str, *, user_text: str | None = None) -> CodexOrchestratorResult:
+    async def status(
+        self,
+        conversation_id: str,
+        *,
+        user_text: str | None = None,
+        allow_spoken_detail: bool = True,
+    ) -> CodexOrchestratorResult:
         if not self.settings.codex_orchestrator_enabled:
             return self._local_result(
                 conversation_id,
@@ -411,7 +431,15 @@ class CodexOrchestratorBridge:
             approval_id=_approval_id(pending) or _optional_str(mapping.get("approval_id")),
             raw=self._compact_status_response(raw),
         )
-        result = replace(result, text=self._voice_status_summary(result, fallback=text, user_text=user_text or ""))
+        result = replace(
+            result,
+            text=self._voice_status_summary(
+                result,
+                fallback=text,
+                user_text=user_text or "",
+                allow_spoken_detail=allow_spoken_detail,
+            ),
+        )
         self._save_result(result)
         return result
 
@@ -696,6 +724,8 @@ class CodexOrchestratorBridge:
         user_text: str,
         transcript: list[Mapping[str, Any]],
         mode: str,
+        *,
+        allow_spoken_detail: bool = True,
     ) -> str:
         if is_codex_approval_response(user_text):
             return user_text.strip()
@@ -703,12 +733,22 @@ class CodexOrchestratorBridge:
         transcript_text = self._format_transcript(transcript)
         if mode != "plan_first":
             return user_text.strip()
+        if allow_spoken_detail:
+            voice_rule = (
+                "Voice output rule: use AI to write natural speech. Default to one short spoken sentence. "
+                "Mention that the Builder page has the Megaplan for the longer summary. "
+                "If the latest user asks to elaborate, explain more, or asks for a full summary, give the fuller spoken summary.\n"
+            )
+        else:
+            voice_rule = (
+                "Voice output rule: use AI to write natural speech, but always return one short spoken sentence. "
+                "Tell the user the Builder page has the Megaplan for the longer summary. "
+                "Do not give the full plan or long summary in the spoken response.\n"
+            )
 
         return (
             "Codexa voice bridge request. Take my recent chatlogs and decide what the user is asking for.\n"
-            "Voice output rule: use AI to write natural speech. Default to one short spoken sentence. "
-            "Mention that the Builder page has the Megaplan for the longer summary. "
-            "If the latest user asks to elaborate, explain more, or asks for a full summary, give the fuller spoken summary.\n"
+            f"{voice_rule}"
             "Plan-first rule: ask concise Codexa planning questions as needed. If enough detail is known, "
             "give the final plan and ask for explicit approval. Do not start implementation, create files, "
             "modify files, deploy, install packages, or run Codex implementation until the user explicitly approves "
@@ -760,10 +800,16 @@ class CodexOrchestratorBridge:
             parts.append(f"Pending approval: {action}.{(' ' + reason) if reason else ''}")
         return " ".join(part for part in parts if part).strip()
 
-    def _voice_summary(self, result: CodexOrchestratorResult, *, user_text: str) -> str:
+    def _voice_summary(
+        self,
+        result: CodexOrchestratorResult,
+        *,
+        user_text: str,
+        allow_spoken_detail: bool,
+    ) -> str:
         if result.status in {"disabled", "timeout", "http_error", "unreachable"}:
             return self._short_text(result.text, limit=110)
-        if is_codex_detail_request(user_text):
+        if allow_spoken_detail and is_codex_detail_request(user_text):
             return self._detailed_voice_text(result.text)
         if is_codex_approval_response(user_text):
             return self._short_text(result.text, limit=120) or "Approved. Codex is continuing."
@@ -785,8 +831,15 @@ class CodexOrchestratorBridge:
             )
         return self._short_text(result.text, limit=110)
 
-    def _voice_status_summary(self, result: CodexOrchestratorResult, *, fallback: str, user_text: str) -> str:
-        if is_codex_detail_request(user_text):
+    def _voice_status_summary(
+        self,
+        result: CodexOrchestratorResult,
+        *,
+        fallback: str,
+        user_text: str,
+        allow_spoken_detail: bool,
+    ) -> str:
+        if allow_spoken_detail and is_codex_detail_request(user_text):
             return self._detailed_voice_text(fallback)
         if result.requires_approval:
             return self._with_builder_megaplan_hint(
@@ -809,9 +862,8 @@ class CodexOrchestratorBridge:
         normalized = cleaned.casefold()
         if "builder" in normalized and "megaplan" in normalized:
             return cleaned
-        if cleaned.endswith((".", "!", "?")):
-            return f"{cleaned} Builder has the Megaplan."
-        return f"{cleaned}. Builder has the Megaplan."
+        base = cleaned.rstrip(" .!?")
+        return f"{base}; Builder has the Megaplan."
 
     def _with_approval_hint(self, text: str) -> str:
         cleaned = " ".join(str(text or "").split()).strip()
@@ -819,9 +871,8 @@ class CodexOrchestratorBridge:
             return "Say approve to continue."
         if "approve" in cleaned.casefold():
             return cleaned
-        if cleaned.endswith((".", "!", "?")):
-            return f"{cleaned} Say approve to continue."
-        return f"{cleaned}. Say approve to continue."
+        base = cleaned.rstrip(" .!?")
+        return f"{base}; say approve to continue."
 
     def _detailed_voice_text(self, text: str) -> str:
         cleaned = " ".join(str(text or "").split()).strip()

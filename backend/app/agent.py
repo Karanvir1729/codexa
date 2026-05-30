@@ -386,6 +386,7 @@ class AgentService:
             user_text=text,
             transcript=self.transcript(conversation_id),
             mode="plan_first",
+            allow_spoken_detail=False,
         )
         latency_ms = max(0, int((time.perf_counter() - started_at) * 1000))
         metadata = result.metadata()

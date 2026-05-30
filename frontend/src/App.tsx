@@ -470,6 +470,17 @@ function latestCodexMetadataFromActionStatus(value: unknown) {
   return {};
 }
 
+function latestCodexMetadataFromTwilioCall(call: TwilioCallLog) {
+  const callCodex = asRecord(call.codex);
+  if (metadataString(callCodex, "codex_session_id")) return callCodex;
+  for (let index = call.turns.length - 1; index >= 0; index -= 1) {
+    const metrics = asRecord(call.turns[index].metrics);
+    const codex = asRecord(metrics.codex);
+    if (metadataString(codex, "codex_session_id")) return codex;
+  }
+  return {};
+}
+
 function buildCodexFlowSteps(metadata: Record<string, unknown>, hasConversationTurns: boolean): CodexFlowStep[] {
   const sessionId = metadataString(metadata, "codex_session_id");
   const projectId = metadataString(metadata, "codex_project_id");
@@ -658,6 +669,16 @@ export function App() {
     if (!sessionId) return;
     setBuilderSessionId(sessionId);
     window.localStorage.setItem(builderSessionStorageKey, sessionId);
+  }
+
+  function syncBuilderSessionFromTwilioCalls(calls: TwilioCallLog[]) {
+    for (const call of calls) {
+      const metadata = latestCodexMetadataFromTwilioCall(call);
+      if (metadataString(metadata, "codex_session_id")) {
+        syncBuilderSessionFromCodex(metadata);
+        return;
+      }
+    }
   }
 
   async function refreshCodexStatus(options: { silent?: boolean; conversationId?: string } = {}) {
@@ -1391,7 +1412,10 @@ export function App() {
         ]);
         if (!cancelled) {
           if (status) setTwilioStatus(status);
-          if (logs) setTwilioCallLogs(logs.calls);
+          if (logs) {
+            setTwilioCallLogs(logs.calls);
+            syncBuilderSessionFromTwilioCalls(logs.calls);
+          }
         }
       } catch {
         // Manual refresh surfaces Twilio errors.
@@ -1667,6 +1691,7 @@ export function App() {
 
   function watchTwilioCall(call: TwilioCallLog) {
     setConversationId(call.conversation_id);
+    syncBuilderSessionFromCodex(latestCodexMetadataFromTwilioCall(call));
     setTurns(
       call.turns.map((turn) => ({
         id: turn.id,

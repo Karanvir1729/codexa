@@ -244,7 +244,16 @@ async def test_twilio_call_logs_endpoint_returns_transcript_and_status(monkeypat
             "turn-assistant",
             "twilio-call-CA123",
             "What should I name the project?",
-            dumps({"provider": "codex-orchestrator"}),
+            dumps(
+                {
+                    "provider": "codex-orchestrator",
+                    "codex": {
+                        "codex_session_id": "codexa-call",
+                        "codex_project_id": "project-call",
+                        "requires_approval": True,
+                    },
+                }
+            ),
         ),
     )
     test_db.execute(
@@ -271,6 +280,7 @@ async def test_twilio_call_logs_endpoint_returns_transcript_and_status(monkeypat
     assert payload["calls"][0]["status"] == "completed"
     assert payload["calls"][0]["duration_seconds"] == "601"
     assert payload["calls"][0]["last_message"] == "What should I name the project?"
+    assert payload["calls"][0]["codex"]["codex_session_id"] == "codexa-call"
     assert [turn["role"] for turn in payload["calls"][0]["turns"]] == [
         "user",
         "assistant",

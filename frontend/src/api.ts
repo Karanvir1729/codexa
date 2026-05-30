@@ -194,6 +194,7 @@ export type TwilioCallLog = {
   started_at: string;
   updated_at: string;
   last_message: string;
+  codex?: Record<string, unknown>;
   turns: TwilioCallLogTurn[];
 };
 

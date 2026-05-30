@@ -281,7 +281,7 @@ async def test_codex_bridge_health_and_status_summary(tmp_path: Path):
     assert result.status == "completed"
     assert result.codex_session_id == "codexa-1"
     assert result.requires_approval is True
-    assert "Final plan is waiting for approval." in result.text
+    assert "Final plan is waiting for approval" in result.text
     assert "Builder has the Megaplan" in result.text
 
     detailed = await bridge.status("voice-codex", user_text="Can you elaborate?")
@@ -456,7 +456,7 @@ async def test_runtime_executor_runs_codex_tool_once_and_uses_spoken_result(tmp_
     )
 
     assert calls == 1
-    assert execution.response_text == "Codexa question for the user. Builder has the Megaplan."
+    assert execution.response_text == "Codexa question for the user; Builder has the Megaplan."
     assert execution.codex["codex_session_id"] == "codexa-1"
     assert execution.statuses[0]["status"] == "completed"
 
@@ -497,7 +497,7 @@ async def test_twilio_agent_turn_delegates_directly_to_codex_without_voice_llm(t
         caller="+14246993915",
     )
 
-    assert response["message"] == "Codexa will plan the app. Say approve to continue. Builder has the Megaplan."
+    assert response["message"] == "Codexa will plan the app; say approve to continue; Builder has the Megaplan."
     assert response["provider"] == "codex-orchestrator"
     assert response["codex"]["codex_session_id"] == "codexa-twilio"
     assert response["codex"]["codex_project_id"] == "project-twilio"
@@ -527,12 +527,50 @@ async def test_twilio_agent_turn_delegates_directly_to_codex_without_voice_llm(t
     )
     assert [(turn["role"], turn["content"]) for turn in turns] == [
         ("user", "Build a full stack app for booking classes."),
-        ("assistant", "Codexa will plan the app. Say approve to continue. Builder has the Megaplan."),
+        ("assistant", "Codexa will plan the app; say approve to continue; Builder has the Megaplan."),
     ]
     assistant_metrics = loads(turns[1]["metrics_json"], {})
     assert turns[1]["model"] == "codexa-http"
     assert assistant_metrics["source"] == "codex-orchestrator"
     assert assistant_metrics["codex"]["codex_session_id"] == "codexa-twilio"
+
+
+@pytest.mark.asyncio
+async def test_twilio_codex_detail_request_stays_short(tmp_path: Path, monkeypatch):
+    settings = _settings(tmp_path)
+    db = Database(settings.database_path)
+    agent = AgentService(db, settings, FailingLLM())
+
+    async def fake_request(self, method, path, *, json=None, params=None):
+        if path == "/agent/chat":
+            return {
+                "text": (
+                    "Full plan: build the project, add backend endpoints, wire the UI, "
+                    "run tests, and deploy the app. This should not be spoken in full."
+                ),
+                "sessionId": "codexa-twilio-detail",
+                "projectId": "project-twilio-detail",
+            }
+        if path == "/codex/status":
+            return {
+                "session": {
+                    "session_id": "codexa-twilio-detail",
+                    "project_id": "project-twilio-detail",
+                }
+            }
+        return {"ok": True}
+
+    monkeypatch.setattr(CodexOrchestratorBridge, "_request_json", fake_request)
+
+    response = await agent.respond(
+        "Can you elaborate on the plan?",
+        conversation_id="twilio-call-CADETAIL",
+        channel="twilio",
+        caller="+14246993915",
+    )
+
+    assert response["message"] == "Full plan: build the project, add backend endpoints, wire the UI, run tests, and deploy the app; Builder has the Megaplan."
+    assert "This should not be spoken in full" not in response["message"]
 
 
 @pytest.mark.asyncio
@@ -747,7 +785,7 @@ async def test_flow_codex_task_uses_bridge_when_enabled(tmp_path: Path, monkeypa
         conversation_id="flow-conversation",
     )
 
-    assert result["messages"][-1]["text"] == "Codexa plan question. Builder has the Megaplan."
+    assert result["messages"][-1]["text"] == "Codexa plan question; Builder has the Megaplan."
     event = db.one(
         """
         SELECT payload_json

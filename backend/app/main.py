@@ -2100,6 +2100,15 @@ def _twilio_call_log_record(row: Any) -> dict[str, Any]:
         ),
         None,
     )
+    codex_turn = next(
+        (
+            turn
+            for turn in reversed(turns)
+            if isinstance(turn["metrics"].get("codex"), dict)
+            and turn["metrics"]["codex"].get("codex_session_id")
+        ),
+        None,
+    )
     status_metrics = status_turn["metrics"] if status_turn else {}
     return {
         "conversation_id": row["id"],
@@ -2112,6 +2121,7 @@ def _twilio_call_log_record(row: Any) -> dict[str, Any]:
         "started_at": row["started_at"],
         "updated_at": (turns[-1]["created_at"] if turns else row["started_at"]),
         "last_message": last_speech_turn["content"] if last_speech_turn else "",
+        "codex": codex_turn["metrics"]["codex"] if codex_turn else {},
         "turns": turns,
     }
 
