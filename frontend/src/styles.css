@@ -1,0 +1,5289 @@
+:root {
+  color-scheme: dark;
+  font-family: "Geist Variable", Inter, ui-sans-serif, system-ui, sans-serif;
+  background: #080a0d;
+  color: #f3f6f8;
+  font-synthesis: none;
+  text-rendering: geometricPrecision;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #080a0d;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.rail {
+  border-right: 1px solid #1d242b;
+  background: #0c1014;
+  padding: 24px 18px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+}
+
+.brandMark {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: #d8fb6f;
+  color: #11160c;
+}
+
+.brand strong,
+.brand span {
+  display: block;
+}
+
+.brand strong {
+  font-size: 17px;
+}
+
+.brand span {
+  color: #94a3ad;
+  font-size: 13px;
+}
+
+.nav {
+  display: grid;
+  gap: 8px;
+  margin-top: 36px;
+}
+
+.nav a,
+.nav button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 0;
+  background: transparent;
+  color: #a9b6bf;
+  text-decoration: none;
+  text-align: left;
+}
+
+.nav a.active,
+.nav button.active {
+  background: #172027;
+  color: #f8fbfd;
+}
+
+.workspace {
+  min-width: 0;
+  padding: 28px;
+  background:
+    linear-gradient(180deg, rgba(216, 251, 111, 0.04), transparent 280px),
+    #080a0d;
+}
+
+.topbar,
+.sectionHead,
+.feedbackActions,
+.buttonRow,
+.composer,
+.statusGrid,
+.metric,
+.evalRow {
+  display: flex;
+  align-items: center;
+}
+
+.topbar {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  color: #d8fb6f;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(30px, 5vw, 54px);
+  line-height: 0.96;
+  letter-spacing: 0;
+}
+
+h2 {
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+.iconButton,
+.sectionHead button,
+.feedbackActions button,
+.composer button,
+.promptChips button {
+  min-height: 38px;
+  border-radius: 8px;
+  color: #10140c;
+  background: #d8fb6f;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.iconButton {
+  width: 42px;
+  padding: 0;
+}
+
+.statusGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin: 28px 0;
+  border: 1px solid #1d242b;
+  background: #1d242b;
+}
+
+.metric {
+  gap: 14px;
+  min-height: 96px;
+  padding: 18px;
+  background: #0f1419;
+}
+
+.metric > span {
+  color: #d8fb6f;
+}
+
+.metric small,
+.metric strong,
+.metric em {
+  display: block;
+  font-style: normal;
+}
+
+.metric small,
+.metric em,
+.sectionHead p,
+.muted {
+  color: #91a0aa;
+  font-size: 13px;
+}
+
+.metric strong {
+  overflow: hidden;
+  max-width: 100%;
+  font-size: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mainGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.8fr);
+  gap: 18px;
+  align-items: stretch;
+}
+
+.conversationPanel,
+.panel {
+  border: 1px solid #1d242b;
+  border-radius: 8px;
+  background: #0f1419;
+}
+
+.conversationPanel {
+  min-height: 650px;
+  display: grid;
+  grid-template-rows: auto minmax(280px, 1fr) auto auto;
+}
+
+.sectionHead {
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px;
+  border-bottom: 1px solid #1d242b;
+}
+
+.feedbackActions {
+  gap: 8px;
+}
+
+.buttonRow {
+  gap: 8px;
+}
+
+.feedbackActions button {
+  background: #172027;
+  color: #dbe7ee;
+}
+
+.transcript {
+  overflow: auto;
+  padding: 18px;
+}
+
+.emptyState {
+  min-height: 280px;
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  color: #91a0aa;
+  text-align: center;
+}
+
+.emptyState p {
+  max-width: 360px;
+}
+
+.turn {
+  max-width: 82%;
+  margin-bottom: 14px;
+}
+
+.turn.assistant {
+  margin-left: auto;
+}
+
+.turn span {
+  display: block;
+  margin-bottom: 6px;
+  color: #91a0aa;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.turn p {
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: #172027;
+  line-height: 1.45;
+}
+
+.turn.assistant p {
+  background: #d8fb6f;
+  color: #11160c;
+}
+
+.turn small {
+  display: block;
+  margin-top: 6px;
+  color: #91a0aa;
+}
+
+.promptChips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 0 18px 18px;
+}
+
+.promptChips button {
+  flex: 0 0 auto;
+  background: #172027;
+  color: #dbe7ee;
+}
+
+.composer {
+  gap: 10px;
+  padding: 18px;
+  border-top: 1px solid #1d242b;
+}
+
+.composer input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid #26313a;
+  border-radius: 8px;
+  outline: none;
+  background: #0a0e12;
+  color: #f3f6f8;
+  padding: 0 14px;
+}
+
+.composer input:focus {
+  border-color: #d8fb6f;
+}
+
+.sideStack {
+  display: grid;
+  gap: 18px;
+  grid-template-rows: auto auto auto 1fr;
+}
+
+.panel {
+  min-width: 0;
+}
+
+.pipecatKitPanel {
+  overflow: visible;
+}
+
+.voiceModeSwitch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 14px 18px 0;
+}
+
+.speechPathSwitch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px 18px 0;
+}
+
+.flowSpeechPathSwitch {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.voiceModeSwitch button,
+.speechPathSwitch button,
+.flowSpeechPathSwitch button {
+  min-width: 0;
+  min-height: 38px;
+  border-radius: 8px;
+  border: 1px solid #26313a;
+  background: #0a0e12;
+  color: #a9b6bf;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.voiceModeSwitch button.active,
+.speechPathSwitch button.active,
+.flowSpeechPathSwitch button.active {
+  border-color: rgba(216, 251, 111, 0.6);
+  background: #172027;
+  color: #f3f6f8;
+}
+
+.kitStage {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  padding: 18px;
+}
+
+.kitBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border: 1px solid #2a333d;
+  border-radius: 6px;
+  padding: 3px 8px;
+  color: #d8e2ea;
+  background: #0f151b;
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.kitBadge-active,
+.kitBadge-agent {
+  border-color: rgba(216, 251, 111, 0.55);
+  color: #e7ff9a;
+}
+
+.kitBadge-client {
+  border-color: rgba(103, 232, 249, 0.55);
+  color: #baf5ff;
+}
+
+.kitBadge-inactive,
+.kitBadge-secondary {
+  color: #95a3af;
+}
+
+.kitWaveform {
+  position: relative;
+  display: grid;
+  place-items: center;
+  border: 1px solid #1d2730;
+  border-radius: 50%;
+  background: var(--wave-bg);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03), 0 18px 60px rgba(0, 0, 0, 0.32);
+}
+
+.kitWaveform::after {
+  content: "";
+  width: 58%;
+  height: 58%;
+  border-radius: 50%;
+  border: 1px solid #27313b;
+  background: #0f151b;
+}
+
+.kitWaveform.isRotating {
+  animation: waveformRotate 12s linear infinite;
+}
+
+.kitWaveformBar {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 999px;
+  transform-origin: 50% 0;
+  opacity: 0.78;
+}
+
+.kitWaveform.isThinking .kitWaveformBar {
+  animation: waveformPulse 920ms ease-in-out infinite alternate;
+}
+
+.kitBadges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+@keyframes waveformRotate {
+  to {
+    rotate: 360deg;
+  }
+}
+
+@keyframes waveformPulse {
+  to {
+    scale: 1 1.24;
+    opacity: 1;
+  }
+}
+
+.kitControlBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  border-top: 1px solid #1d242b;
+  padding: 14px 18px 18px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.kitControlBar button {
+  min-height: 40px;
+}
+
+.evalList {
+  display: grid;
+  gap: 1px;
+  background: #1d242b;
+}
+
+.improvementList {
+  display: grid;
+  gap: 8px;
+  padding: 0 16px 16px;
+}
+
+.improvementList span {
+  border: 1px solid #26333d;
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #dbe7ee;
+  background: #111820;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.padX {
+  padding: 0 18px 14px;
+}
+
+.errorText {
+  margin: 0;
+  padding: 0 18px 14px;
+  color: #ffb0b0;
+  font-size: 13px;
+}
+
+.evalRow {
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 58px;
+  padding: 0 18px;
+  background: #0f1419;
+}
+
+.evalRow span {
+  border-radius: 999px;
+  padding: 4px 9px;
+  background: #172027;
+  color: #dbe7ee;
+  font-size: 12px;
+}
+
+.evalRow span.passed {
+  background: rgba(216, 251, 111, 0.16);
+  color: #d8fb6f;
+}
+
+.evalRow span.failed {
+  background: rgba(255, 115, 115, 0.16);
+  color: #ff9d9d;
+}
+
+.evalRow small {
+  color: #91a0aa;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selfLearn {
+  display: grid;
+  gap: 18px;
+}
+
+.selfLearnTopbar {
+  align-items: flex-end;
+}
+
+.selfLearnTopActions,
+.selfLearnScope,
+.selfLearnSessionStrip,
+.selfLearnMetrics,
+.selfLearnEvent,
+.latencyBreakdown > div {
+  display: flex;
+  align-items: center;
+}
+
+.selfLearnTopActions {
+  gap: 10px;
+}
+
+.selfLearnScope {
+  gap: 6px;
+  min-height: 42px;
+  border: 1px solid #26313a;
+  border-radius: 8px;
+  background: #0f1419;
+  padding: 4px;
+}
+
+.selfLearnScope button {
+  min-height: 32px;
+  border-radius: 6px;
+  background: transparent;
+  color: #a9b6bf;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.selfLearnScope button.active {
+  background: #d8fb6f;
+  color: #10140c;
+}
+
+.selfLearnSessionStrip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid #1d242b;
+  background: #1d242b;
+}
+
+.selfLearnSessionPill {
+  min-width: 0;
+  background: #0f1419;
+  padding: 13px 14px;
+}
+
+.selfLearnSessionPill small,
+.selfLearnSessionPill strong {
+  display: block;
+}
+
+.selfLearnSessionPill small {
+  color: #91a0aa;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.selfLearnSessionPill strong {
+  overflow: hidden;
+  margin-top: 3px;
+  color: #f3f6f8;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selfLearnError {
+  border: 1px solid rgba(255, 115, 115, 0.2);
+  border-radius: 8px;
+  background: rgba(255, 115, 115, 0.08);
+  padding: 12px 14px;
+}
+
+.selfLearnMetrics {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid #1d242b;
+  background: #1d242b;
+}
+
+.selfLearnMetric {
+  min-height: 104px;
+}
+
+.selfLearnGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(360px, 0.78fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.selfLearnPanel {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #1d242b;
+  border-radius: 8px;
+  background: #0f1419;
+}
+
+.selfLearnTimelinePanel {
+  min-height: 720px;
+}
+
+.selfLearnLiveBadge {
+  border: 1px solid rgba(216, 251, 111, 0.45);
+  border-radius: 999px;
+  background: rgba(216, 251, 111, 0.1);
+  color: #e7ff9a;
+  padding: 5px 9px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.selfLearnTimeline {
+  display: grid;
+  gap: 10px;
+  overflow: auto;
+  max-height: 660px;
+  padding: 14px;
+}
+
+.emptyState.compact {
+  min-height: 180px;
+}
+
+.selfLearnEvent {
+  display: grid;
+  grid-template-columns: minmax(124px, 0.28fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  border-left: 3px solid #67e8f9;
+  border-radius: 8px;
+  background: #121820;
+  padding: 12px 13px;
+}
+
+.selfLearnEvent.flow {
+  border-left-color: #49d36d;
+}
+
+.selfLearnEvent.fix {
+  border-left-color: #d8fb6f;
+}
+
+.selfLearnEvent.latency {
+  border-left-color: #f5b400;
+}
+
+.selfLearnEvent.data {
+  border-left-color: #8aa2ff;
+}
+
+.selfLearnEvent span,
+.selfLearnEvent strong,
+.selfLearnEvent small,
+.selfLearnEvent p {
+  min-width: 0;
+}
+
+.selfLearnEvent span {
+  display: block;
+  color: #91a0aa;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.selfLearnEvent strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 4px;
+  color: #f3f6f8;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selfLearnEvent p {
+  overflow: hidden;
+  color: #dbe7ee;
+  line-height: 1.42;
+  text-overflow: ellipsis;
+}
+
+.selfLearnEvent small {
+  display: block;
+  grid-column: 2;
+  color: #91a0aa;
+  font-size: 12px;
+}
+
+.selfLearnSideStack {
+  display: grid;
+  gap: 18px;
+}
+
+.fixList,
+.learnedPolicy,
+.latencyBreakdown {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.fixList article {
+  border: 1px solid #26313a;
+  border-radius: 8px;
+  background: #111820;
+  padding: 10px 11px;
+}
+
+.fixList span,
+.fixList small,
+.learnedPolicy strong {
+  display: block;
+}
+
+.fixList span {
+  color: #d8fb6f;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.fixList p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin-top: 6px;
+  color: #dbe7ee;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.fixList small {
+  margin-top: 6px;
+  color: #91a0aa;
+  font-size: 12px;
+}
+
+.learnedPolicy {
+  border-top: 1px solid #1d242b;
+}
+
+.learnedPolicy strong {
+  color: #f3f6f8;
+  font-size: 13px;
+}
+
+.learnedPolicy span {
+  border-left: 2px solid #d8fb6f;
+  background: #111820;
+  color: #dbe7ee;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.selfLearnHints {
+  padding-top: 14px;
+}
+
+.latencyBreakdown {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.latencyBreakdown > div {
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  min-height: 58px;
+  border: 1px solid #26313a;
+  border-radius: 8px;
+  background: #111820;
+  padding: 10px;
+}
+
+.latencyBreakdown span,
+.latencyBreakdown strong,
+.latencyBreakdown small {
+  display: block;
+}
+
+.latencyBreakdown span {
+  color: #91a0aa;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.latencyBreakdown strong {
+  color: #f3f6f8;
+  font-size: 14px;
+}
+
+.latencyBreakdown small {
+  color: #91a0aa;
+  font-size: 12px;
+}
+
+.latencyBreakdown .latestTrace {
+  grid-column: 1 / -1;
+  border-color: rgba(216, 251, 111, 0.28);
+}
+
+pre {
+  margin: 0;
+  padding: 18px;
+  white-space: pre-wrap;
+  color: #dbe7ee;
+  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.toast {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  max-width: min(420px, calc(100vw - 48px));
+  border: 1px solid #32414b;
+  border-radius: 8px;
+  background: #111820;
+  color: #f3f6f8;
+  padding: 14px 16px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.32);
+}
+
+.flowStudio {
+  display: grid;
+  grid-template-rows: auto minmax(620px, calc(100vh - 310px)) auto;
+  gap: 18px;
+  min-height: calc(100vh - 56px);
+}
+
+.flowTopbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.flowSubtitle {
+  max-width: 880px;
+  margin-top: 10px;
+  color: #91a0aa;
+  line-height: 1.45;
+}
+
+.flowActions,
+.flowSimControls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.flowActions button,
+.flowTestBench button,
+.nodePaletteGrid button {
+  min-height: 38px;
+  border-radius: 8px;
+  background: #d8fb6f;
+  color: #10140c;
+  padding: 0 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.flowWorkspace {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr) 330px;
+  gap: 14px;
+}
+
+.flowPalette,
+.flowInspector,
+.flowTestBench {
+  min-width: 0;
+  border: 1px solid #1d242b;
+  border-radius: 8px;
+  background: #0f1419;
+  overflow: hidden;
+}
+
+.flowPalette {
+  display: grid;
+  grid-template-rows: auto auto auto 1fr;
+}
+
+.studioPanelHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  min-height: 56px;
+  padding: 14px;
+  border-bottom: 1px solid #1d242b;
+}
+
+.studioPanelHead.compact {
+  border-top: 1px solid #1d242b;
+}
+
+.studioPanelHead strong,
+.studioPanelHead span {
+  display: block;
+}
+
+.studioPanelHead span {
+  color: #91a0aa;
+  font-size: 12px;
+}
+
+.nodePaletteGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 14px;
+}
+
+.nodePaletteGrid button {
+  min-width: 0;
+  min-height: 42px;
+  background: #172027;
+  color: #dbe7ee;
+  font-size: 12px;
+  padding: 0 10px;
+  justify-content: flex-start;
+}
+
+.flowCanvas {
+  position: relative;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #1d242b;
+  border-radius: 8px;
+  background: #0a0e12;
+}
+
+.flowEdges,
+.flowNodesLayer {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 2200px;
+  height: 1100px;
+}
+
+.flowEdges {
+  pointer-events: none;
+}
+
+.flowEdges path {
+  fill: none;
+  stroke: #52616d;
+  stroke-width: 2;
+}
+
+.flowEdges text {
+  fill: #a9b6bf;
+  font-size: 12px;
+}
+
+.flowNodesLayer {
+  pointer-events: none;
+}
+
+.react-flow,
+.react-flow__renderer,
+.react-flow__viewport {
+  background: #0a0e12;
+}
+
+.react-flow__controls button {
+  background: #111820;
+  border-bottom-color: #26313a;
+  color: #dbe7ee;
+}
+
+.react-flow__minimap {
+  background: #10161c;
+  border: 1px solid #26313a;
+  border-radius: 8px;
+}
+
+.flowNodeCard {
+  position: absolute;
+  width: 230px;
+  border: 1px solid #2a3640;
+  border-radius: 8px;
+  background: #111820;
+  color: #f3f6f8;
+  padding: 12px;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.22);
+  pointer-events: auto;
+  user-select: none;
+}
+
+.flowNodeCard.selected,
+.selectedRuntimeNode .flowNodeCard {
+  border-color: #67e8f9;
+}
+
+.activeRuntimeNode .flowNodeCard {
+  border-color: #d8fb6f;
+  box-shadow: 0 0 0 2px rgba(216, 251, 111, 0.18), 0 18px 54px rgba(0, 0, 0, 0.28);
+}
+
+.flowNodeCard.start,
+.flowNodeCard.end {
+  background: #101714;
+}
+
+.flowNodeCard.codex_task {
+  border-color: #67e8f9;
+}
+
+.flowNodeCard.guardrail {
+  border-color: #fbbf24;
+}
+
+.flowNodeTop,
+.flowNodeMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.flowNodeTop {
+  color: #91a0aa;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.flowNodeCard strong {
+  display: block;
+  margin-top: 9px;
+  font-size: 15px;
+}
+
+.flowNodeCard p {
+  display: -webkit-box;
+  overflow: hidden;
+  min-height: 40px;
+  margin-top: 6px;
+  color: #b7c4cc;
+  font-size: 12px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.flowNodeMeta {
+  margin-top: 10px;
+}
+
+.flowNodeMeta small {
+  border-radius: 999px;
+  background: #1b242c;
+  color: #dbe7ee;
+  padding: 4px 8px;
+}
+
+.flowInspector {
+  overflow: auto;
+}
+
+.emptyInspector {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  padding: 24px;
+  color: #91a0aa;
+  text-align: center;
+}
+
+.inspectorScroll {
+  display: grid;
+}
+
+.inspectorField {
+  display: grid;
+  gap: 7px;
+  padding: 12px 14px;
+}
+
+.inspectorField span,
+.inspectorGroup h3 {
+  color: #91a0aa;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.inspectorField input,
+.inspectorField select,
+.inspectorField textarea,
+.inspectorGroup textarea,
+.flowSimControls input[type="text"],
+.flowSimControls > input {
+  width: 100%;
+  border: 1px solid #26313a;
+  border-radius: 8px;
+  outline: none;
+  background: #0a0e12;
+  color: #f3f6f8;
+  padding: 10px 11px;
+}
+
+.inspectorField textarea,
+.inspectorGroup textarea {
+  resize: vertical;
+  min-height: 70px;
+  font-family: inherit;
+  line-height: 1.45;
+}
+
+.inspectorField input:focus,
+.inspectorField select:focus,
+.inspectorField textarea:focus,
+.inspectorGroup textarea:focus,
+.flowSimControls input:focus {
+  border-color: #d8fb6f;
+}
+
+.inspectorGroup {
+  display: grid;
+  gap: 2px;
+  padding: 12px 0;
+  border-top: 1px solid #1d242b;
+}
+
+.inspectorGroup h3 {
+  margin: 0;
+  padding: 0 14px 6px;
+}
+
+.inlineCheck {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 14px;
+  color: #dbe7ee;
+  font-size: 13px;
+}
+
+.edgeEditor {
+  display: grid;
+  gap: 8px;
+  padding: 0 14px 12px;
+}
+
+.edgeEditorRow {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.edgeEditorRow input,
+.edgeEditorRow select {
+  min-width: 0;
+  border: 1px solid #26313a;
+  border-radius: 8px;
+  background: #0a0e12;
+  color: #f3f6f8;
+  padding: 8px;
+}
+
+.edgeEditorRow button {
+  min-height: 36px;
+  border-radius: 8px;
+  background: #172027;
+  color: #dbe7ee;
+  padding: 0 10px;
+}
+
+.validationList {
+  display: grid;
+  gap: 8px;
+  overflow: auto;
+  padding: 14px;
+}
+
+.validationOk,
+.validationBad {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #d8fb6f;
+}
+
+.validationBad {
+  color: #ffb0b0;
+}
+
+.validationError,
+.validationWarning {
+  border-radius: 8px;
+  margin: 0;
+  padding: 9px 10px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.validationError {
+  background: rgba(255, 115, 115, 0.12);
+  color: #ffb0b0;
+}
+
+.validationWarning {
+  background: rgba(251, 191, 36, 0.12);
+  color: #f9d97a;
+}
+
+.flowTestBench {
+  display: grid;
+  grid-template-rows: auto auto minmax(130px, 1fr) auto;
+}
+
+.flowVoicePanel {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 14px;
+  align-items: center;
+  padding: 12px 14px;
+  border-bottom: 1px solid #1d242b;
+  background: #0b1116;
+}
+
+.flowVoicePanel strong,
+.flowVoicePanel span {
+  display: block;
+}
+
+.flowVoicePanel span {
+  color: #91a0aa;
+  font-size: 12px;
+}
+
+.flowVoiceControls {
+  display: flex;
+  gap: 8px;
+}
+
+.flowVoiceLink {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid #26333d;
+  border-radius: 8px;
+  background: #101820;
+  color: #91a0aa;
+  font-size: 12px;
+}
+
+.flowVoiceLink strong,
+.flowVoiceLink span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flowVoiceLink.isConnected {
+  border-color: rgba(216, 251, 111, 0.42);
+  color: #dbe7ee;
+}
+
+.flowVoiceLink.isListening,
+.flowVoiceLink.isSpeaking {
+  background: rgba(216, 251, 111, 0.09);
+}
+
+.flowVoiceLink.isSpeaking {
+  border-color: rgba(103, 232, 249, 0.5);
+  background: rgba(103, 232, 249, 0.08);
+}
+
+.flowVoiceLinkDot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #4b5964;
+}
+
+.flowVoiceLink.isConnected .flowVoiceLinkDot {
+  background: #d8fb6f;
+  box-shadow: 0 0 12px rgba(216, 251, 111, 0.58);
+}
+
+.flowVoiceLink.isListening .flowVoiceLinkDot,
+.flowVoiceLink.isSpeaking .flowVoiceLinkDot {
+  animation: voiceLinkPulse 0.75s ease-in-out infinite;
+}
+
+.flowVoiceTurns {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.flowVoiceTurns span {
+  flex: 0 0 auto;
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid #26333d;
+  border-radius: 8px;
+  padding: 7px 9px;
+  color: #dbe7ee;
+}
+
+.flowVoiceTurns span.assistant {
+  border-color: rgba(216, 251, 111, 0.4);
+  color: #d8fb6f;
+}
+
+@keyframes runtimeNodePulse {
+  0%,
+  100% {
+    transform: translateZ(0) scale(1);
+    filter: brightness(1);
+  }
+  50% {
+    transform: translateZ(0) scale(1.018);
+    filter: brightness(1.16);
+  }
+}
+
+@keyframes voiceLinkPulse {
+  0%,
+  100% {
+    opacity: 0.62;
+    transform: scale(0.86);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.18);
+  }
+}
+
+@keyframes flowEdgePulse {
+  0%,
+  100% {
+    opacity: 0.72;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.flowTranscript {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 14px;
+}
+
+.flowTurn {
+  flex: 0 0 min(360px, 82vw);
+}
+
+.flowTurn span {
+  display: block;
+  margin-bottom: 5px;
+  color: #91a0aa;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.flowTurn p {
+  border-radius: 8px;
+  background: #172027;
+  color: #dbe7ee;
+  padding: 11px 12px;
+  line-height: 1.4;
+}
+
+.flowTurn.assistant p {
+  background: #d8fb6f;
+  color: #11160c;
+}
+
+.flowTurn small {
+  display: block;
+  margin-top: 5px;
+  color: #91a0aa;
+}
+
+.flowSimControls {
+  border-top: 1px solid #1d242b;
+  padding: 14px;
+}
+
+.flowSimControls label {
+  flex: 0 0 auto;
+  color: #dbe7ee;
+  font-size: 13px;
+}
+
+.flowSimControls > input {
+  min-height: 40px;
+}
+
+@media (max-width: 980px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .rail {
+    display: none;
+  }
+
+  .workspace {
+    padding: 20px;
+  }
+
+  .mainGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .selfLearnGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .selfLearnMetrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .conversationPanel {
+    min-height: 560px;
+  }
+
+  .flowStudio {
+    grid-template-rows: auto auto auto;
+  }
+
+  .flowTopbar,
+  .flowActions,
+  .flowSimControls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .flowWorkspace {
+    grid-template-columns: 1fr;
+  }
+
+  .flowCanvas {
+    min-height: 620px;
+  }
+}
+
+@media (max-width: 620px) {
+  .workspace {
+    padding: 14px;
+  }
+
+  .topbar {
+    align-items: flex-start;
+  }
+
+  .statusGrid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .selfLearnTopbar,
+  .selfLearnTopActions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .selfLearnSessionStrip,
+  .selfLearnMetrics,
+  .latencyBreakdown {
+    grid-template-columns: 1fr;
+  }
+
+  .selfLearnEvent {
+    grid-template-columns: 1fr;
+  }
+
+  .selfLearnEvent small {
+    grid-column: auto;
+  }
+
+  .sectionHead,
+  .composer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .feedbackActions,
+  .composer button {
+    width: 100%;
+  }
+
+  .turn {
+    max-width: 100%;
+  }
+}
+
+/* Flow Studio v2: behavior graph canvas */
+.flowStudio {
+  display: grid;
+  grid-template-rows: auto minmax(640px, calc(100vh - 320px)) auto;
+  gap: 16px;
+  min-height: calc(100vh - 56px);
+}
+
+.flowTopbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.flowTopbar h1 {
+  font-size: clamp(26px, 3.6vw, 44px);
+  line-height: 1;
+}
+
+.flowSubtitle {
+  max-width: 920px;
+  margin-top: 10px;
+  color: #9aa7b1;
+  line-height: 1.45;
+}
+
+.flowActions,
+.flowSimControls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.flowActions button,
+.flowTestBench button,
+.canvasToolbar button,
+.miniIconButton {
+  min-height: 38px;
+  border-radius: 8px;
+  background: #d8fb6f;
+  color: #10140c;
+  padding: 0 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.flowWorkspace {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) 340px;
+  gap: 12px;
+}
+
+.flowPalette,
+.flowInspector,
+.flowTestBench {
+  min-width: 0;
+  border: 1px solid #202830;
+  border-radius: 8px;
+  background: #0e1318;
+  overflow: hidden;
+}
+
+.flowPalette {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto minmax(0, 1fr);
+}
+
+.studioPanelHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  min-height: 56px;
+  padding: 14px;
+  border-bottom: 1px solid #202830;
+}
+
+.studioPanelHead.compact {
+  border-top: 1px solid #202830;
+}
+
+.studioPanelHead strong,
+.studioPanelHead span {
+  display: block;
+}
+
+.studioPanelHead span {
+  overflow: hidden;
+  color: #8d9aa5;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.miniIconButton {
+  width: 34px;
+  min-height: 34px;
+  padding: 0;
+}
+
+.traceList {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  overflow: auto;
+  padding: 12px;
+}
+
+.traceTurn {
+  border-left: 2px solid #2f8cff;
+  background: #11171d;
+  padding: 8px 10px;
+}
+
+.traceTurn.user {
+  border-left-color: #d8fb6f;
+}
+
+.traceTurn span {
+  display: block;
+  margin-bottom: 4px;
+  color: #8996a1;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.traceTurn p {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #dce6ed;
+  font-size: 12px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.flowCanvas {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid #202830;
+  border-radius: 8px;
+  cursor: grab;
+  touch-action: none;
+  overscroll-behavior: contain;
+  background-color: #090d11;
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(120, 136, 150, 0.34) 1px, transparent 0),
+    linear-gradient(180deg, rgba(47, 140, 255, 0.05), transparent 35%);
+  background-size: 24px 24px, auto;
+}
+
+.flowCanvas.isPanning {
+  cursor: grabbing;
+}
+
+.flowWorld {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+
+.flowEdges,
+.flowNodesLayer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.flowEdges {
+  pointer-events: none;
+}
+
+.flowEdges path {
+  fill: none;
+  stroke: #2f8cff;
+  stroke-linecap: round;
+  stroke-width: 3;
+  opacity: 0.84;
+}
+
+.flowEdges .activeEdge path {
+  stroke: #d8fb6f;
+  filter: drop-shadow(0 0 10px rgba(216, 251, 111, 0.34));
+  animation: flowEdgePulse 1.1s ease-in-out infinite;
+}
+
+.flowEdges text {
+  fill: #91a0aa;
+  paint-order: stroke;
+  stroke: #090d11;
+  stroke-width: 5;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.flowNodesLayer {
+  pointer-events: none;
+}
+
+.flowNodeCard {
+  position: absolute;
+  width: 252px;
+  min-height: 154px;
+  border: 2px solid #2f8cff;
+  border-radius: 8px;
+  background: #121212;
+  color: #f1f5f8;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.34);
+  pointer-events: auto;
+  user-select: none;
+}
+
+.flowNodeCard.logic,
+.flowNodeCard.condition {
+  border-color: #f5b400;
+}
+
+.flowNodeCard.action,
+.flowNodeCard.codex_task,
+.flowNodeCard.api {
+  border-color: #49d36d;
+}
+
+.flowNodeCard.repair,
+.flowNodeCard.fallback {
+  border-color: #ff4d65;
+}
+
+.flowNodeCard.pre-call,
+.flowNodeCard.start {
+  border-color: #9aa7b1;
+  background: #17191c;
+}
+
+.flowNodeCard.end {
+  border-color: #8a939b;
+  background: #17191c;
+}
+
+.flowNodeCard.selected {
+  outline: 1px solid rgba(47, 140, 255, 0.44);
+  outline-offset: 4px;
+}
+
+.flowNodeCard.activeRuntimeNode {
+  border-color: #d8fb6f;
+  box-shadow: 0 0 0 3px rgba(216, 251, 111, 0.16), 0 22px 70px rgba(0, 0, 0, 0.42);
+}
+
+.flowNodeCard.voiceLinkedRuntimeNode {
+  outline: 1px solid rgba(216, 251, 111, 0.42);
+  outline-offset: 6px;
+}
+
+.flowNodeCard.listeningRuntimeNode,
+.flowNodeCard.speakingRuntimeNode {
+  animation: runtimeNodePulse 0.95s ease-in-out infinite;
+}
+
+.flowNodeCard.speakingRuntimeNode {
+  border-color: #67e8f9;
+  box-shadow: 0 0 0 3px rgba(103, 232, 249, 0.18), 0 22px 70px rgba(0, 0, 0, 0.42);
+}
+
+.nodeInputHandle {
+  position: absolute;
+  left: -14px;
+  top: 58px;
+  width: 0;
+  height: 0;
+  border-top: 10px solid transparent;
+  border-bottom: 10px solid transparent;
+  border-left: 0;
+  border-right: 15px solid #8b95a0;
+}
+
+.nodeIcon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin: 18px auto 10px;
+  border-radius: 999px;
+  background: #2f8cff;
+  color: white;
+}
+
+.flowNodeCard.logic .nodeIcon,
+.flowNodeCard.condition .nodeIcon {
+  background: #f5b400;
+  color: #151005;
+}
+
+.flowNodeCard.action .nodeIcon,
+.flowNodeCard.codex_task .nodeIcon,
+.flowNodeCard.api .nodeIcon {
+  background: #49d36d;
+  color: #07120a;
+}
+
+.flowNodeCard.repair .nodeIcon,
+.flowNodeCard.fallback .nodeIcon {
+  background: #ff4d65;
+}
+
+.nodeMain {
+  display: grid;
+  justify-items: center;
+  min-height: 42px;
+  padding: 0 14px 12px;
+  text-align: center;
+}
+
+.nodeMain strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.nodeMain span {
+  margin-top: 4px;
+  color: #8d9aa5;
+  font-size: 11px;
+}
+
+.nodeRouteRows {
+  display: grid;
+  border-top: 1px solid #2a2f35;
+}
+
+.nodeRouteRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 31px;
+  border-bottom: 1px solid #2a2f35;
+  background: #232323;
+  padding: 0 34px 0 10px;
+}
+
+.nodeRouteRow:last-child {
+  border-bottom: 0;
+}
+
+.nodeRouteRow span {
+  overflow: hidden;
+  color: #e8edf1;
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nodeRouteRow i {
+  position: absolute;
+  right: -9px;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #2f8cff;
+}
+
+.selectedPreview {
+  position: absolute;
+  z-index: 5;
+  width: 360px;
+  border: 1px solid #2a3037;
+  border-radius: 8px;
+  background: #111417;
+  box-shadow: 0 18px 70px rgba(0, 0, 0, 0.45);
+  padding: 10px;
+}
+
+.selectedPreview h2 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.selectedPreview > div {
+  border: 1px solid #293139;
+  border-radius: 8px;
+  background: #14181c;
+  padding: 10px;
+}
+
+.selectedPreview span {
+  display: block;
+  margin-bottom: 6px;
+  color: #a1adb7;
+  font-size: 12px;
+}
+
+.selectedPreview p {
+  color: #eff4f7;
+  font-size: 12px;
+  line-height: 1.42;
+}
+
+.selectedPreview footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.selectedPreview small {
+  border-radius: 999px;
+  background: #202832;
+  color: #c8d2da;
+  padding: 4px 8px;
+}
+
+.canvasToolbar {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  translate: -50% 0;
+}
+
+.canvasToolbar button {
+  min-width: 42px;
+  background: #202327;
+  color: #f2f6f9;
+}
+
+.canvasToolbar button:first-child {
+  min-width: 118px;
+}
+
+.canvasToolbar span {
+  min-width: 48px;
+  border-radius: 8px;
+  background: #151a20;
+  color: #aab7c0;
+  padding: 10px 8px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.nodePicker {
+  position: absolute;
+  left: 50%;
+  bottom: 72px;
+  z-index: 12;
+  width: min(560px, calc(100% - 32px));
+  max-height: min(560px, calc(100% - 100px));
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  border: 1px solid #2b333b;
+  border-radius: 8px;
+  background: #111417;
+  box-shadow: 0 24px 90px rgba(0, 0, 0, 0.52);
+  translate: -50% 0;
+}
+
+.nodePickerSearch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 0 12px;
+  border-bottom: 1px solid #252d34;
+}
+
+.nodePickerSearch input {
+  width: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: #f2f6f9;
+}
+
+.nodePickerSearch button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: #20262d;
+  color: #d9e2e8;
+}
+
+.nodePickerTabs {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1px;
+  padding: 8px;
+  border-bottom: 1px solid #252d34;
+}
+
+.nodePickerTabs button {
+  min-height: 38px;
+  border-radius: 8px;
+  background: transparent;
+  color: #a4b0ba;
+}
+
+.nodePickerTabs button.active {
+  background: #292b2e;
+  color: #f6f8fa;
+}
+
+.nodePickerList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  overflow: auto;
+  padding: 12px;
+}
+
+.nodePickerList button {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 62px;
+  border: 1px solid #2a3037;
+  border-radius: 8px;
+  background: #15191e;
+  color: #edf3f6;
+  padding: 10px;
+  text-align: left;
+}
+
+.nodePickerList span,
+.nodePickerList strong,
+.nodePickerList small {
+  display: block;
+  min-width: 0;
+}
+
+.nodePickerList small {
+  overflow: hidden;
+  margin-top: 4px;
+  color: #8f9da7;
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flowInspector {
+  overflow: auto;
+}
+
+.emptyInspector {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  padding: 24px;
+  color: #91a0aa;
+  text-align: center;
+}
+
+.inspectorScroll {
+  display: grid;
+}
+
+.inspectorField {
+  display: grid;
+  gap: 7px;
+  padding: 12px 14px;
+}
+
+.inspectorField span,
+.inspectorGroup h3 {
+  color: #91a0aa;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.inspectorField input,
+.inspectorField select,
+.inspectorField textarea,
+.inspectorGroup textarea,
+.flowSimControls > input {
+  width: 100%;
+  border: 1px solid #26313a;
+  border-radius: 8px;
+  outline: none;
+  background: #0a0e12;
+  color: #f3f6f8;
+  padding: 10px 11px;
+}
+
+.inspectorField textarea,
+.inspectorGroup textarea {
+  resize: vertical;
+  min-height: 70px;
+  font-family: inherit;
+  line-height: 1.45;
+}
+
+.inspectorField input:focus,
+.inspectorField select:focus,
+.inspectorField textarea:focus,
+.inspectorGroup textarea:focus,
+.flowSimControls input:focus {
+  border-color: #d8fb6f;
+}
+
+.inspectorGroup {
+  display: grid;
+  gap: 2px;
+  padding: 12px 0;
+  border-top: 1px solid #202830;
+}
+
+.inspectorGroup h3 {
+  margin: 0;
+  padding: 0 14px 6px;
+}
+
+.inlineCheck {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 14px;
+  color: #dbe7ee;
+  font-size: 13px;
+}
+
+.edgeEditor {
+  display: grid;
+  gap: 8px;
+  padding: 0 14px 12px;
+}
+
+.edgeEditorRow {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) 42px;
+  gap: 6px;
+}
+
+.edgeEditorRow input,
+.edgeEditorRow select {
+  min-width: 0;
+  border: 1px solid #26313a;
+  border-radius: 8px;
+  background: #0a0e12;
+  color: #f3f6f8;
+  padding: 8px;
+}
+
+.edgeEditorRow button {
+  min-height: 36px;
+  border-radius: 8px;
+  background: #172027;
+  color: #dbe7ee;
+  padding: 0 10px;
+}
+
+.validationList {
+  display: grid;
+  gap: 8px;
+  overflow: auto;
+  padding: 14px;
+}
+
+.validationOk,
+.validationBad {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #d8fb6f;
+}
+
+.validationBad {
+  color: #ffb0b0;
+}
+
+.validationError,
+.validationWarning {
+  border-radius: 8px;
+  margin: 0;
+  padding: 9px 10px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.validationError {
+  background: rgba(255, 115, 115, 0.12);
+  color: #ffb0b0;
+}
+
+.validationWarning {
+  background: rgba(251, 191, 36, 0.12);
+  color: #f9d97a;
+}
+
+.flowTestBench {
+  display: grid;
+  grid-template-rows: auto auto minmax(130px, 1fr) auto;
+}
+
+.flowTranscript {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 14px;
+}
+
+.flowTurn {
+  flex: 0 0 min(360px, 82vw);
+}
+
+.flowTurn span {
+  display: block;
+  margin-bottom: 5px;
+  color: #91a0aa;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.flowTurn p {
+  border-radius: 8px;
+  background: #172027;
+  color: #dbe7ee;
+  padding: 11px 12px;
+  line-height: 1.4;
+}
+
+.flowTurn.assistant p {
+  background: #d8fb6f;
+  color: #11160c;
+}
+
+.flowTurn small {
+  display: block;
+  margin-top: 5px;
+  color: #91a0aa;
+}
+
+.flowSimControls {
+  border-top: 1px solid #202830;
+  padding: 14px;
+}
+
+.flowSimControls label {
+  flex: 0 0 auto;
+  color: #dbe7ee;
+  font-size: 13px;
+}
+
+.flowSimControls > input {
+  min-height: 40px;
+}
+
+@media (max-width: 1180px) {
+  .flowWorkspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .flowPalette,
+  .flowInspector {
+    min-height: 260px;
+  }
+
+  .flowCanvas {
+    min-height: 680px;
+  }
+}
+
+@media (max-width: 720px) {
+  .flowTopbar,
+  .flowActions,
+  .flowSimControls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .nodePickerTabs {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .nodePickerList {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Interface revamp: 21st.dev-inspired command surface */
+:root {
+  --surface-0: #050607;
+  --surface-1: #0b0d10;
+  --surface-2: #101419;
+  --surface-3: #151b21;
+  --surface-4: #1c252d;
+  --line-soft: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(221, 255, 112, 0.32);
+  --text-strong: #f7faf8;
+  --text-main: #d8e0e6;
+  --text-soft: #95a0aa;
+  --text-faint: #68727b;
+  --accent: #d8ff5f;
+  --accent-2: #5eead4;
+  --accent-3: #60a5fa;
+  --danger: #ff6b7d;
+  --warning: #f6c85f;
+  --radius: 8px;
+  --shadow-deep: 0 28px 90px rgba(0, 0, 0, 0.48);
+  --shadow-float: 0 18px 54px rgba(0, 0, 0, 0.35);
+}
+
+html {
+  background: var(--surface-0);
+}
+
+body {
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.024) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    var(--surface-0);
+  background-size: 72px 72px;
+  color: var(--text-main);
+}
+
+body::selection {
+  background: rgba(216, 255, 95, 0.28);
+  color: var(--text-strong);
+}
+
+button,
+input,
+textarea,
+select {
+  letter-spacing: 0;
+}
+
+button {
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease,
+    opacity 160ms ease;
+}
+
+button:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid rgba(216, 255, 95, 0.72);
+  outline-offset: 2px;
+}
+
+.shell {
+  grid-template-columns: 280px minmax(0, 1fr);
+  background:
+    linear-gradient(180deg, rgba(216, 255, 95, 0.04), transparent 260px),
+    var(--surface-0);
+}
+
+.rail {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  border-right: 1px solid var(--line-soft);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.012)),
+    rgba(8, 10, 12, 0.92);
+  padding: 22px 16px;
+  box-shadow: 18px 0 70px rgba(0, 0, 0, 0.24);
+}
+
+.brand {
+  min-height: 54px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
+  padding: 8px;
+}
+
+.brandMark {
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(216, 255, 95, 0.65);
+  background:
+    linear-gradient(180deg, rgba(216, 255, 95, 0.96), rgba(94, 234, 212, 0.86));
+  box-shadow: 0 12px 30px rgba(216, 255, 95, 0.16);
+}
+
+.brand strong {
+  color: var(--text-strong);
+  font-size: 18px;
+  letter-spacing: 0;
+}
+
+.brand span {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.nav {
+  gap: 7px;
+  margin-top: 26px;
+}
+
+.nav button,
+.nav a {
+  position: relative;
+  min-height: 46px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: #b7c3cc;
+  padding: 0 13px;
+  overflow: hidden;
+}
+
+.nav button::before,
+.nav a::before {
+  content: "";
+  position: absolute;
+  inset: 8px auto 8px 0;
+  width: 2px;
+  border-radius: 2px;
+  background: transparent;
+}
+
+.nav button:hover,
+.nav a:hover {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text-strong);
+}
+
+.nav button.active,
+.nav a.active {
+  border-color: rgba(216, 255, 95, 0.22);
+  background:
+    linear-gradient(90deg, rgba(216, 255, 95, 0.13), rgba(94, 234, 212, 0.045)),
+    rgba(255, 255, 255, 0.055);
+  color: var(--text-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.nav button.active::before,
+.nav a.active::before {
+  background: var(--accent);
+}
+
+.railFooter {
+  display: grid;
+  gap: 6px;
+  margin-top: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, rgba(216, 255, 95, 0.08), rgba(255, 255, 255, 0.035)),
+    var(--surface-2);
+  padding: 14px;
+}
+
+.railFooter span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.railFooter i {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 14px rgba(216, 255, 95, 0.6);
+}
+
+.railFooter strong,
+.railFooter small {
+  overflow: hidden;
+  min-width: 0;
+  line-height: 1.28;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.railFooter strong {
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+.railFooter small {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.workspace {
+  min-height: 100vh;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.028), transparent 240px),
+    linear-gradient(90deg, rgba(216, 255, 95, 0.035), transparent 38%),
+    transparent;
+  padding: 28px;
+}
+
+.topbar,
+.flowTopbar,
+.selfLearnTopbar {
+  position: relative;
+  align-items: flex-end;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: var(--radius);
+  overflow: visible;
+  padding: 22px 24px 24px;
+}
+
+.topbar::after,
+.flowTopbar::after,
+.selfLearnTopbar::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  width: min(240px, 45%);
+  height: 1px;
+  background: linear-gradient(90deg, var(--accent), transparent);
+}
+
+.eyebrow {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+h1 {
+  max-width: 980px;
+  color: var(--text-strong);
+  font-size: clamp(32px, 4.4vw, 64px);
+  line-height: 1.04;
+}
+
+h2 {
+  color: var(--text-strong);
+  font-size: 15px;
+}
+
+.liveHeaderActions,
+.flowActions,
+.selfLearnTopActions,
+.selfLearnControls,
+.buttonRow,
+.feedbackActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.kitBadge {
+  min-height: 28px;
+  border-radius: 999px;
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-main);
+  padding: 5px 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.kitBadge-active,
+.kitBadge-agent {
+  border-color: rgba(216, 255, 95, 0.42);
+  background: rgba(216, 255, 95, 0.12);
+  color: #ecffb2;
+}
+
+.kitBadge-client {
+  border-color: rgba(94, 234, 212, 0.42);
+  background: rgba(94, 234, 212, 0.1);
+  color: #bffff7;
+}
+
+.kitBadge-inactive,
+.kitBadge-secondary {
+  border-color: rgba(255, 255, 255, 0.09);
+  color: var(--text-soft);
+}
+
+.iconButton,
+.sectionHead button,
+.feedbackActions button,
+.composer button,
+.promptChips button,
+.flowActions button,
+.flowTestBench button,
+.canvasToolbar button,
+.miniIconButton,
+.nodePaletteGrid button,
+.selfLearnScope button,
+.selfLearnToggle {
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.03)),
+    var(--surface-3);
+  color: var(--text-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+.composer button,
+.flowActions button,
+.flowTestBench button,
+.feedbackActions button:first-child,
+.canvasToolbar button:first-child,
+.selfLearnScope button.active,
+.selfLearnToggle.active {
+  border-color: rgba(216, 255, 95, 0.54);
+  background:
+    linear-gradient(180deg, rgba(237, 255, 139, 0.98), rgba(168, 230, 66, 0.94));
+  color: #101405;
+  box-shadow: 0 14px 36px rgba(216, 255, 95, 0.15);
+}
+
+.sectionHead button:hover:not(:disabled),
+.feedbackActions button:hover:not(:disabled),
+.composer button:hover:not(:disabled),
+.promptChips button:hover:not(:disabled),
+.flowActions button:hover:not(:disabled),
+.flowTestBench button:hover:not(:disabled),
+.canvasToolbar button:hover:not(:disabled),
+.selfLearnScope button:hover:not(:disabled),
+.selfLearnToggle:hover:not(:disabled),
+.iconButton:hover:not(:disabled) {
+  border-color: rgba(216, 255, 95, 0.46);
+  transform: translateY(-1px);
+}
+
+.statusGrid,
+.selfLearnSessionStrip,
+.selfLearnMetrics {
+  overflow: hidden;
+  gap: 1px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--line-soft);
+  box-shadow: var(--shadow-float);
+}
+
+.statusGrid {
+  grid-template-columns: repeat(6, minmax(170px, 1fr));
+  margin: 24px 0 18px;
+}
+
+.metric {
+  position: relative;
+  min-height: 118px;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.018)),
+    var(--surface-2);
+  padding: 18px;
+}
+
+.metric::after {
+  content: "";
+  position: absolute;
+  inset: auto 18px 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(216, 255, 95, 0.4), transparent);
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.metric:hover::after {
+  opacity: 1;
+}
+
+.metric > span {
+  display: grid;
+  place-items: center;
+  flex: 0 0 38px;
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(216, 255, 95, 0.18);
+  border-radius: var(--radius);
+  background: rgba(216, 255, 95, 0.08);
+  color: var(--accent);
+}
+
+.metric > div {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.metric small {
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.metric strong {
+  overflow: visible;
+  margin-top: 4px;
+  color: var(--text-strong);
+  font-size: clamp(15px, 1.05vw, 18px);
+  line-height: 1.18;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.metric em {
+  margin-top: 4px;
+  color: var(--text-soft);
+  overflow-wrap: anywhere;
+}
+
+.mainGrid {
+  grid-template-columns: minmax(520px, 1.35fr) minmax(340px, 0.75fr);
+  gap: 18px;
+}
+
+.conversationPanel,
+.panel,
+.selfLearnPanel,
+.flowPalette,
+.flowInspector,
+.flowTestBench,
+.flowCanvas {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.016)),
+    rgba(13, 16, 19, 0.96);
+  box-shadow: var(--shadow-float);
+}
+
+.conversationPanel {
+  min-height: 690px;
+  overflow: hidden;
+}
+
+.sectionHead,
+.studioPanelHead {
+  min-height: 66px;
+  border-bottom: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.022);
+}
+
+.sectionHead p,
+.studioPanelHead span,
+.flowSubtitle,
+.muted {
+  color: var(--text-soft);
+}
+
+.transcript {
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+  background-size: 42px 42px;
+}
+
+.emptyState {
+  min-height: 340px;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--text-soft);
+}
+
+.emptyState svg {
+  color: var(--accent);
+}
+
+.turn {
+  max-width: min(78%, 740px);
+}
+
+.turn span,
+.flowTurn span {
+  color: var(--text-soft);
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.turn p,
+.flowTurn p {
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--text-main);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.18);
+}
+
+.turn.assistant p,
+.flowTurn.assistant p {
+  border-color: rgba(216, 255, 95, 0.44);
+  background:
+    linear-gradient(180deg, rgba(216, 255, 95, 0.98), rgba(154, 219, 48, 0.94));
+  color: #121608;
+}
+
+.promptChips {
+  padding: 0 18px 16px;
+}
+
+.promptChips button {
+  min-height: 36px;
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text-main);
+  white-space: nowrap;
+}
+
+.composer {
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.composer input,
+.inspectorField input,
+.inspectorField select,
+.inspectorField textarea,
+.inspectorGroup textarea,
+.edgeEditorRow input,
+.edgeEditorRow select,
+.flowSimControls > input,
+.nodePickerSearch input {
+  border-color: rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--text-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.composer input {
+  min-height: 48px;
+}
+
+.composer input:focus,
+.inspectorField input:focus,
+.inspectorField select:focus,
+.inspectorField textarea:focus,
+.inspectorGroup textarea:focus,
+.edgeEditorRow input:focus,
+.edgeEditorRow select:focus,
+.flowSimControls input:focus {
+  border-color: rgba(216, 255, 95, 0.62);
+  box-shadow: 0 0 0 3px rgba(216, 255, 95, 0.08);
+}
+
+.sideStack {
+  gap: 18px;
+}
+
+.pipecatKitPanel {
+  position: relative;
+  overflow: hidden;
+}
+
+.pipecatKitPanel::before {
+  content: "";
+  position: absolute;
+  inset: 66px 0 auto;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(94, 234, 212, 0.42), transparent);
+}
+
+.voiceModeSwitch {
+  gap: 7px;
+  padding: 14px 16px 0;
+}
+
+.speechPathSwitch {
+  gap: 7px;
+  padding: 10px 16px 0;
+}
+
+.inputModeSwitch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  padding: 10px 16px 0;
+}
+
+.flowSpeechPathSwitch {
+  gap: 7px;
+}
+
+.voiceModeSwitch button,
+.speechPathSwitch button,
+.inputModeSwitch button,
+.flowSpeechPathSwitch button {
+  min-height: 40px;
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-soft);
+}
+
+.voiceModeSwitch button.active,
+.speechPathSwitch button.active,
+.inputModeSwitch button.active,
+.flowSpeechPathSwitch button.active {
+  border-color: rgba(216, 255, 95, 0.42);
+  background: rgba(216, 255, 95, 0.11);
+  color: var(--text-strong);
+}
+
+.kitStage {
+  padding: 24px 18px 18px;
+}
+
+.kitWaveform {
+  border-color: rgba(255, 255, 255, 0.12);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(0, 0, 0, 0.08)),
+    var(--wave-bg);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 0 0 10px rgba(255, 255, 255, 0.018),
+    0 24px 70px rgba(0, 0, 0, 0.42);
+}
+
+.kitWaveform::after {
+  border-color: rgba(255, 255, 255, 0.11);
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.kitControlBar {
+  border-top-color: var(--line-soft);
+}
+
+.kitControlBar button {
+  min-height: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--text-strong);
+  padding: 0 16px;
+}
+
+.kitControlBar button:first-child {
+  border-color: rgba(216, 255, 95, 0.48);
+  background: linear-gradient(180deg, rgba(237, 255, 139, 0.98), rgba(168, 230, 66, 0.94));
+  color: #101405;
+}
+
+.voicePhaseGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+  padding: 0 16px 14px;
+}
+
+.voicePhase {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text-soft);
+  padding: 7px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.voicePhase.active {
+  border-color: rgba(94, 234, 212, 0.42);
+  background: rgba(94, 234, 212, 0.12);
+  color: var(--text-strong);
+}
+
+.voiceDebugPanel {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--line-soft);
+  padding: 14px 16px 16px;
+}
+
+.debugPanelHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.debugPanelHead strong,
+.debugPanelHead span {
+  color: var(--text-strong);
+  font-size: 12px;
+}
+
+.debugPanelHead span {
+  border: 1px solid rgba(216, 255, 95, 0.22);
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: var(--text-soft);
+}
+
+.debugGrid {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.62fr) minmax(0, 1fr);
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--line-soft);
+}
+
+.debugGrid small,
+.debugGrid span {
+  min-width: 0;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 7px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.debugGrid small {
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.debugGrid span {
+  color: var(--text-strong);
+  font-size: 11px;
+}
+
+.debugTextPair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.debugTextPair div {
+  min-width: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 8px;
+}
+
+.debugTextPair small {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.debugTextPair p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  color: var(--text-soft);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.voiceTextControls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.voiceTextControls input {
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  outline: none;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text-strong);
+  padding: 0 11px;
+}
+
+.voiceTextControls input:focus {
+  border-color: rgba(216, 255, 95, 0.62);
+  box-shadow: 0 0 0 3px rgba(216, 255, 95, 0.08);
+}
+
+.voiceTextControls button {
+  min-height: 40px;
+  border-radius: 8px;
+  background: #d8fb6f;
+  color: #10140c;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.voiceTextControls button[type="button"] {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--text-strong);
+}
+
+.voiceTextResult {
+  display: grid;
+  gap: 7px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.voiceTextResult small,
+.voiceTextResult span {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voiceTextResult p {
+  color: var(--text-main);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.voiceTextAudioControls {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.voiceTextAudioControls button {
+  min-height: 36px;
+  border: 1px solid rgba(216, 255, 95, 0.32);
+  border-radius: 8px;
+  background: rgba(216, 251, 111, 0.12);
+  color: var(--text-strong);
+  padding: 0 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.voiceTextAudio {
+  width: 100%;
+  min-width: 180px;
+  height: 36px;
+}
+
+.voiceTextSuiteList {
+  display: grid;
+}
+
+.voiceTextCase {
+  display: grid;
+  grid-template-columns: auto minmax(90px, 0.42fr) minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  min-height: 42px;
+  border-top: 1px solid var(--line-soft);
+  padding: 8px 16px;
+}
+
+.voiceTextCase span {
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-soft);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.voiceTextCase span.passed {
+  background: rgba(216, 255, 95, 0.13);
+  color: #d8fb6f;
+}
+
+.voiceTextCase span.failed {
+  background: rgba(255, 115, 115, 0.14);
+  color: #ffb0b0;
+}
+
+.voiceTextCase strong,
+.voiceTextCase small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voiceTextCase strong {
+  color: var(--text-strong);
+  font-size: 12px;
+}
+
+.voiceTextCase small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.evalList,
+.improvementList {
+  background: transparent;
+}
+
+.evalRow {
+  border-top: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.evalRow:first-child {
+  border-top: 0;
+}
+
+.evalRow span {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.improvementList span,
+.fixList article,
+.learnedPolicy span,
+.latencyBreakdown > div,
+.selfLearnEvent {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.042);
+}
+
+pre {
+  color: var(--text-main);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent);
+}
+
+.toast {
+  z-index: 80;
+  border-color: rgba(216, 255, 95, 0.32);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03)),
+    #111510;
+  box-shadow: var(--shadow-deep);
+}
+
+.selfLearn {
+  gap: 18px;
+}
+
+.selfLearnScope {
+  border-color: var(--line-soft);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.selfLearnControls {
+  gap: 8px;
+}
+
+.selfLearnToggle {
+  min-height: 42px;
+  padding: 0 12px;
+}
+
+.selfLearnToggle span,
+.selfLearnToggle strong {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.selfLearnFactor {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 6px 10px;
+  min-width: 230px;
+  min-height: 54px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.035);
+  padding: 8px 12px;
+}
+
+.selfLearnFactor span,
+.selfLearnFactor strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.selfLearnFactor span {
+  color: var(--text-soft);
+}
+
+.selfLearnFactor input {
+  grid-column: 1 / -1;
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.selfLearnScope button {
+  color: var(--text-soft);
+}
+
+.selfLearnSessionPill {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.018)),
+    var(--surface-2);
+}
+
+.selfLearnSessionPill small {
+  color: var(--text-soft);
+  letter-spacing: 0;
+}
+
+.selfLearnPanel {
+  overflow: hidden;
+}
+
+.selfLearnTimelinePanel {
+  min-height: 700px;
+}
+
+.selfLearnLiveBadge {
+  border-color: rgba(216, 255, 95, 0.42);
+  background: rgba(216, 255, 95, 0.12);
+  color: #edffb2;
+  text-transform: uppercase;
+}
+
+.selfLearnTimeline {
+  padding: 16px;
+}
+
+.selfLearnEvent {
+  border-left-width: 2px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+}
+
+.selfLearnEvent strong,
+.latencyBreakdown strong {
+  color: var(--text-strong);
+}
+
+.selfLearnEvent p {
+  color: var(--text-main);
+}
+
+.learnedPolicy {
+  border-top-color: var(--line-soft);
+}
+
+.flowStudio {
+  grid-template-rows: auto minmax(660px, calc(100vh - 340px)) auto;
+  gap: 18px;
+}
+
+.flowTopbar {
+  padding-bottom: 20px;
+}
+
+.flowTopbar h1 {
+  font-size: clamp(34px, 4.4vw, 62px);
+}
+
+.flowSubtitle {
+  max-width: 980px;
+  font-size: 15px;
+}
+
+.flowMetaRail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 14px;
+}
+
+.flowMetaRail span {
+  min-height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text-main);
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.flowActions button {
+  min-height: 42px;
+  min-width: 112px;
+}
+
+.flowWorkspace {
+  grid-template-columns: minmax(210px, 0.24fr) minmax(440px, 1fr) minmax(280px, 0.32fr);
+  gap: 14px;
+}
+
+.flowPalette,
+.flowInspector {
+  min-height: 0;
+}
+
+.traceList,
+.validationList,
+.inspectorScroll {
+  scrollbar-color: rgba(216, 255, 95, 0.34) rgba(255, 255, 255, 0.04);
+}
+
+.traceTurn {
+  border-left-width: 2px;
+  border-color: rgba(96, 165, 250, 0.58);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.traceTurn.user {
+  border-left-color: var(--accent);
+}
+
+.flowCanvas {
+  background-color: #06080a;
+  background-image:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.042) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.038) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(216, 255, 95, 0.034), rgba(94, 234, 212, 0.018) 48%, transparent);
+  background-size: 32px 32px, 32px 32px, auto;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.025),
+    var(--shadow-float);
+}
+
+.flowEdges path {
+  stroke: rgba(96, 165, 250, 0.84);
+  stroke-width: 2.5;
+}
+
+.flowEdges .activeEdge path {
+  stroke: var(--accent);
+  filter: drop-shadow(0 0 12px rgba(216, 255, 95, 0.34));
+}
+
+.flowEdges text {
+  fill: #c2ccd3;
+  stroke: #06080a;
+  font-weight: 750;
+}
+
+.flowNodeCard {
+  width: 264px;
+  min-height: 158px;
+  border-width: 1px;
+  border-color: rgba(96, 165, 250, 0.52);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.025)),
+    #11161b;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 20px 60px rgba(0, 0, 0, 0.38);
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    filter 160ms ease;
+}
+
+.flowNodeCard:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.04);
+}
+
+.flowNodeCard.logic,
+.flowNodeCard.condition {
+  border-color: rgba(246, 200, 95, 0.62);
+}
+
+.flowNodeCard.action,
+.flowNodeCard.codex_task,
+.flowNodeCard.api {
+  border-color: rgba(94, 234, 212, 0.58);
+}
+
+.flowNodeCard.repair,
+.flowNodeCard.fallback {
+  border-color: rgba(255, 107, 125, 0.62);
+}
+
+.flowNodeCard.pre-call,
+.flowNodeCard.start,
+.flowNodeCard.end {
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.flowNodeCard.selected {
+  outline-color: rgba(96, 165, 250, 0.58);
+}
+
+.flowNodeCard.activeRuntimeNode {
+  border-color: rgba(216, 255, 95, 0.9);
+  box-shadow:
+    0 0 0 3px rgba(216, 255, 95, 0.14),
+    0 24px 80px rgba(0, 0, 0, 0.46);
+}
+
+.nodeInputHandle {
+  border-right-color: rgba(216, 255, 95, 0.7);
+}
+
+.nodeIcon {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(96, 165, 250, 0.96);
+  box-shadow: 0 10px 26px rgba(96, 165, 250, 0.2);
+}
+
+.flowNodeCard.logic .nodeIcon,
+.flowNodeCard.condition .nodeIcon {
+  background: var(--warning);
+}
+
+.flowNodeCard.action .nodeIcon,
+.flowNodeCard.codex_task .nodeIcon,
+.flowNodeCard.api .nodeIcon {
+  background: var(--accent-2);
+}
+
+.flowNodeCard.repair .nodeIcon,
+.flowNodeCard.fallback .nodeIcon {
+  background: var(--danger);
+}
+
+.nodeMain strong {
+  color: var(--text-strong);
+  font-size: 14px;
+}
+
+.nodeMain span,
+.nodeRouteRow span {
+  color: var(--text-soft);
+}
+
+.nodeRouteRows {
+  border-top-color: rgba(255, 255, 255, 0.075);
+}
+
+.nodeRouteRow {
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.nodeRouteRow i {
+  background: var(--accent-3);
+  box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.1);
+}
+
+.selectedPreview,
+.nodePicker {
+  border-color: rgba(255, 255, 255, 0.12);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.03)),
+    #0e1216;
+  box-shadow: var(--shadow-deep);
+}
+
+.selectedPreview > div {
+  border-color: rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.selectedPreview h2,
+.selectedPreview p {
+  color: var(--text-strong);
+}
+
+.canvasToolbar {
+  gap: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.035)),
+    rgba(9, 12, 15, 0.92);
+  padding: 7px;
+  box-shadow: var(--shadow-float);
+}
+
+.canvasToolbar button {
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--text-strong);
+}
+
+.canvasToolbar button:first-child {
+  background: linear-gradient(180deg, rgba(237, 255, 139, 0.98), rgba(168, 230, 66, 0.94));
+  color: #101405;
+}
+
+.canvasToolbar span {
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--text-soft);
+}
+
+.nodePickerSearch,
+.nodePickerTabs {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+.nodePickerSearch {
+  color: var(--text-soft);
+}
+
+.nodePickerSearch button {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-main);
+}
+
+.nodePickerTabs button {
+  color: var(--text-soft);
+}
+
+.nodePickerTabs button.active {
+  background: rgba(216, 255, 95, 0.12);
+  color: #edffb2;
+}
+
+.nodePickerList button {
+  border-color: rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.nodePickerList button:hover {
+  border-color: rgba(216, 255, 95, 0.32);
+  background: rgba(216, 255, 95, 0.08);
+}
+
+.emptyInspector {
+  color: var(--text-soft);
+}
+
+.emptyInspector svg {
+  color: var(--accent);
+}
+
+.inspectorField span,
+.inspectorGroup h3 {
+  color: var(--text-soft);
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+.inspectorGroup {
+  border-top-color: rgba(255, 255, 255, 0.075);
+}
+
+.edgeEditorRow button {
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--text-main);
+}
+
+.validationOk {
+  color: var(--accent);
+}
+
+.validationBad {
+  color: var(--danger);
+}
+
+.validationError,
+.validationWarning {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.flowTestBench {
+  grid-template-rows: auto auto minmax(140px, 1fr) auto;
+}
+
+.flowVoicePanel {
+  border-bottom-color: var(--line-soft);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.flowVoicePanel strong {
+  color: var(--text-strong);
+}
+
+.flowVoicePanel span {
+  color: var(--text-soft);
+}
+
+.flowVoiceControls button {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--text-main);
+}
+
+.flowVoiceControls button:first-child {
+  border-color: rgba(216, 255, 95, 0.46);
+  background: linear-gradient(180deg, rgba(237, 255, 139, 0.98), rgba(168, 230, 66, 0.94));
+  color: #101405;
+}
+
+.flowVoiceLink {
+  border-color: rgba(255, 255, 255, 0.09);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.flowVoiceLink.isConnected {
+  border-color: rgba(216, 255, 95, 0.42);
+}
+
+.flowTranscript {
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.014) 1px, transparent 1px);
+  background-size: 38px 38px;
+}
+
+.flowSimControls {
+  border-top-color: var(--line-soft);
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.flowSimControls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-main);
+}
+
+input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+.errorText {
+  color: #ffbac3;
+}
+
+.voiceConsole {
+  position: relative;
+  display: grid;
+  gap: 18px;
+  min-height: calc(100vh - 56px);
+}
+
+.voiceConsoleTopbar,
+.voicePanelHeader,
+.voiceInspectorHead,
+.voiceConsoleHeaderActions,
+.voiceConsoleControls,
+.voiceConsoleSegmented,
+.voiceConsoleComposer,
+.rawGroupHead,
+.settingsRows label {
+  display: flex;
+  align-items: center;
+}
+
+.voiceConsoleTopbar {
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.052), rgba(255, 255, 255, 0.018)),
+    rgba(11, 15, 18, 0.78);
+  padding: 20px 22px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(18px);
+}
+
+.voiceConsoleTopbar h1 {
+  font-size: clamp(30px, 4vw, 48px);
+  line-height: 1.02;
+}
+
+.voiceConsoleHeaderActions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.voiceConsoleIconButton {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--text-main);
+}
+
+.voiceConsoleIconButton.active,
+.voiceConsoleIconButton:hover:not(:disabled) {
+  border-color: rgba(216, 255, 95, 0.38);
+  background: rgba(216, 251, 111, 0.1);
+  color: var(--text-strong);
+}
+
+.voiceConsoleLayout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 370px);
+  gap: 18px;
+  align-items: start;
+  min-width: 0;
+}
+
+.voiceConsoleCompact .voiceConsoleLayout {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.voiceConsoleStage {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+.voiceConsoleCore,
+.codexSyncPanel,
+.voiceConversationStrip,
+.voiceConsoleInspector,
+.voiceSettingsPanel {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.016)),
+    rgba(9, 13, 16, 0.76);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(18px);
+}
+
+.voiceConsoleCore {
+  display: grid;
+  place-items: center;
+  gap: 18px;
+  min-height: 560px;
+  padding: 48px 22px 22px;
+}
+
+.voiceOrbShell {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: min(72vw, 360px);
+  min-width: 260px;
+  aspect-ratio: 1;
+}
+
+.voiceOrbShell::before,
+.voiceOrbShell::after {
+  position: absolute;
+  content: "";
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.voiceOrbShell::before {
+  inset: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    radial-gradient(circle at 50% 50%, rgba(216, 251, 111, 0.13), transparent 42%),
+    radial-gradient(circle at 36% 32%, rgba(103, 232, 249, 0.1), transparent 38%);
+  filter: blur(0.2px);
+}
+
+.voiceOrbShell::after {
+  inset: 0;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+}
+
+.voiceOrbShell.connected::after {
+  border-color: rgba(216, 255, 95, 0.24);
+  box-shadow: 0 0 56px rgba(216, 251, 111, 0.08);
+}
+
+.voiceOrbShell.speaking::before {
+  animation: voiceCorePulse 1.35s ease-in-out infinite;
+}
+
+.voiceOrbState {
+  position: absolute;
+  bottom: 36px;
+  left: 50%;
+  display: grid;
+  min-width: 190px;
+  gap: 3px;
+  translate: -50% 0;
+  text-align: center;
+}
+
+.voiceOrbState strong {
+  color: var(--text-strong);
+  font-size: 15px;
+}
+
+.voiceOrbState span {
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voiceConsoleControls {
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.voicePrimaryButton,
+.voiceSecondaryButton,
+.voiceConsoleComposer button,
+.settingsRows button {
+  min-height: 40px;
+  border-radius: 8px;
+  padding: 0 15px;
+}
+
+.voicePrimaryButton,
+.voiceConsoleComposer button[type="submit"] {
+  border: 1px solid rgba(216, 255, 95, 0.52);
+  background: linear-gradient(180deg, rgba(237, 255, 139, 0.98), rgba(168, 230, 66, 0.94));
+  color: #101405;
+}
+
+.voiceSecondaryButton,
+.voiceConsoleComposer button,
+.settingsRows button {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--text-strong);
+}
+
+.voiceConsoleSegments {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.voiceConsoleSegmented {
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.voiceConsoleSegmented button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  background: transparent;
+  color: var(--text-soft);
+  padding: 0 11px;
+}
+
+.voiceConsoleSegmented button:first-child {
+  border-left: 0;
+}
+
+.voiceConsoleSegmented button.active {
+  background: rgba(216, 251, 111, 0.12);
+  color: var(--text-strong);
+}
+
+.voiceConsoleComposer {
+  display: grid;
+  grid-template-columns: minmax(220px, 520px) auto auto;
+  gap: 8px;
+  justify-content: center;
+  width: min(100%, 760px);
+}
+
+.voiceConsoleComposer input {
+  min-width: 0;
+  min-height: 42px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  outline: none;
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text-strong);
+  padding: 0 13px;
+}
+
+.voiceConsoleComposer input:focus {
+  border-color: rgba(216, 255, 95, 0.56);
+  box-shadow: 0 0 0 3px rgba(216, 255, 95, 0.08);
+}
+
+.voiceConsoleComposer button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.voiceConsoleAudio {
+  width: min(100%, 420px);
+  height: 36px;
+}
+
+.voiceConsoleNotice {
+  max-width: min(100%, 760px);
+  text-align: center;
+}
+
+.voicePanelHeader,
+.voiceInspectorHead {
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.voicePanelHeader h2,
+.voiceInspectorHead h2 {
+  color: var(--text-strong);
+}
+
+.voicePanelHeader p,
+.voiceInspectorHead p {
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codexFlowChart {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(92px, 1fr));
+  gap: 10px;
+  overflow-x: auto;
+  padding: 18px 16px 12px;
+}
+
+.codexFlowStep {
+  position: relative;
+  display: grid;
+  min-width: 92px;
+  min-height: 94px;
+  align-content: start;
+  gap: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 12px;
+}
+
+.codexFlowStep strong,
+.codexFlowStep small {
+  overflow-wrap: anywhere;
+}
+
+.codexFlowStep strong {
+  color: var(--text-main);
+  font-size: 12px;
+}
+
+.codexFlowStep small {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.codexFlowDot {
+  width: 12px;
+  height: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.codexFlowStep.done .codexFlowDot {
+  border-color: rgba(216, 251, 111, 0.5);
+  background: #d8fb6f;
+}
+
+.codexFlowStep.active {
+  border-color: rgba(94, 234, 212, 0.44);
+  background:
+    linear-gradient(180deg, rgba(94, 234, 212, 0.13), rgba(255, 255, 255, 0.035)),
+    rgba(255, 255, 255, 0.035);
+}
+
+.codexFlowStep.active .codexFlowDot {
+  border-color: rgba(94, 234, 212, 0.66);
+  background: #67e8f9;
+  box-shadow: 0 0 18px rgba(103, 232, 249, 0.26);
+}
+
+.codexFlowStep.failed {
+  border-color: rgba(255, 115, 115, 0.38);
+  background: rgba(255, 115, 115, 0.08);
+}
+
+.codexFlowStep.failed .codexFlowDot {
+  border-color: rgba(255, 115, 115, 0.62);
+  background: #fb7185;
+}
+
+.codexFlowConnector {
+  position: absolute;
+  top: 18px;
+  right: -10px;
+  width: 10px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.codexSyncMessage {
+  padding: 0 16px 16px;
+  color: var(--text-main);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.voiceConversationStrip {
+  min-width: 0;
+}
+
+.voicePhaseGrid.compact {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 0;
+}
+
+.voicePhaseGrid.compact .voicePhase {
+  min-width: 72px;
+  padding: 6px 7px;
+}
+
+.voiceConversationTurns {
+  display: grid;
+  gap: 10px;
+  max-height: 430px;
+  overflow: auto;
+  padding: 14px 16px 16px;
+}
+
+.emptyState.compact {
+  min-height: 96px;
+}
+
+.voiceConsoleInspector {
+  position: sticky;
+  top: 18px;
+  min-width: 0;
+  max-height: calc(100vh - 92px);
+  overflow: hidden;
+}
+
+.voiceInspectorHandle {
+  display: grid;
+  place-items: center;
+  position: sticky;
+  top: 18px;
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--text-main);
+}
+
+.rawVariableList {
+  display: grid;
+  gap: 12px;
+  max-height: calc(100vh - 178px);
+  overflow: auto;
+  padding: 14px;
+}
+
+.rawVariableGroup,
+.voiceSettingsPanel {
+  display: grid;
+  gap: 8px;
+}
+
+.voiceSettingsPanel {
+  margin: 14px 14px 0;
+  padding: 12px;
+}
+
+.rawGroupHead {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.rawGroupHead strong {
+  color: var(--text-strong);
+  font-size: 12px;
+}
+
+.rawGroupHead span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.rawVariableRow,
+.settingsRows label,
+.settingsHistory span {
+  display: grid;
+  gap: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 8px;
+}
+
+.rawVariableRow {
+  grid-template-columns: minmax(92px, 0.42fr) minmax(0, 1fr);
+  align-items: center;
+}
+
+.rawVariableRow span,
+.settingsRows span,
+.settingsHistory strong {
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.rawVariableRow strong,
+.settingsRows strong,
+.settingsHistory span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-main);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settingsRows {
+  display: grid;
+  gap: 7px;
+}
+
+.settingsRows label {
+  grid-template-columns: minmax(72px, 0.38fr) minmax(0, 1fr);
+  justify-content: space-between;
+}
+
+.settingsRows button {
+  justify-self: start;
+}
+
+.settingsHistory {
+  display: grid;
+  gap: 7px;
+}
+
+.variableBadgeStack {
+  position: fixed;
+  top: 22px;
+  right: 22px;
+  z-index: 5;
+  display: grid;
+  gap: 8px;
+  width: min(340px, calc(100vw - 44px));
+  pointer-events: none;
+}
+
+.variableChangeBadge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  border: 1px solid rgba(94, 234, 212, 0.26);
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg, rgba(94, 234, 212, 0.13), rgba(216, 251, 111, 0.1)),
+    rgba(10, 14, 17, 0.88);
+  color: var(--text-main);
+  padding: 0 12px;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.24);
+  animation: variableBadgeIn 220ms ease both;
+  backdrop-filter: blur(14px);
+}
+
+.variableChangeBadge strong {
+  color: var(--text-strong);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+@keyframes voiceCorePulse {
+  0%,
+  100% {
+    scale: 1;
+    opacity: 0.95;
+  }
+  50% {
+    scale: 1.035;
+    opacity: 1;
+  }
+}
+
+@keyframes variableBadgeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 1320px) {
+  .statusGrid,
+  .selfLearnMetrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .mainGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .flowWorkspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .flowPalette,
+  .flowInspector {
+    min-height: 300px;
+  }
+
+  .voiceConsoleLayout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .voiceConsoleInspector {
+    position: static;
+    max-height: none;
+  }
+
+  .rawVariableList {
+    max-height: 520px;
+  }
+}
+
+@media (max-width: 980px) {
+  .rail {
+    position: static;
+    display: block;
+    height: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .nav {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-top: 16px;
+  }
+
+  .railFooter {
+    margin-top: 14px;
+  }
+
+  .workspace {
+    padding: 20px;
+  }
+
+  .voiceConsoleTopbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .voiceConsoleHeaderActions {
+    justify-content: flex-start;
+  }
+
+  .codexFlowChart {
+    grid-template-columns: repeat(7, minmax(128px, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .workspace {
+    padding: 14px;
+  }
+
+  .topbar,
+  .flowTopbar,
+  .selfLearnTopbar,
+  .liveHeaderActions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  h1,
+  .flowTopbar h1 {
+    font-size: clamp(31px, 12vw, 44px);
+  }
+
+  .statusGrid,
+  .selfLearnSessionStrip,
+  .selfLearnMetrics,
+  .latencyBreakdown {
+    grid-template-columns: 1fr;
+  }
+
+  .metric {
+    min-height: 94px;
+  }
+
+  .conversationPanel {
+    min-height: 560px;
+  }
+
+  .turn {
+    max-width: 100%;
+  }
+
+  .nav {
+    grid-template-columns: 1fr;
+  }
+
+  .flowStudio {
+    grid-template-rows: auto auto auto;
+  }
+
+  .flowCanvas {
+    min-height: 620px;
+  }
+
+  .flowVoicePanel,
+  .flowVoiceLink {
+    grid-template-columns: 1fr;
+  }
+
+  .canvasToolbar {
+    left: 14px;
+    right: 14px;
+    justify-content: center;
+    translate: 0;
+  }
+
+  .voiceConsoleCore {
+    min-height: 520px;
+    padding: 34px 14px 18px;
+  }
+
+  .voiceOrbShell {
+    width: min(100%, 300px);
+    min-width: 230px;
+  }
+
+  .voiceConsoleComposer {
+    grid-template-columns: 1fr;
+  }
+
+  .voicePanelHeader,
+  .voiceInspectorHead {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .voicePhaseGrid.compact {
+    justify-content: flex-start;
+  }
+
+  .rawVariableRow,
+  .settingsRows label {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Theme, sidebar, and green shader pass */
+:root {
+  --rail-width: 280px;
+  font-family: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --surface-0: #f4faf2;
+  --surface-1: #edf6eb;
+  --surface-2: rgba(255, 255, 255, 0.72);
+  --surface-3: rgba(250, 255, 248, 0.84);
+  --surface-4: rgba(229, 241, 226, 0.92);
+  --line-soft: rgba(23, 56, 33, 0.15);
+  --line-strong: rgba(23, 128, 61, 0.36);
+  --text-strong: #0f1c14;
+  --text-main: #26372b;
+  --text-soft: #647267;
+  --text-faint: #819086;
+  --accent: #168a43;
+  --accent-2: #079f7b;
+  --accent-3: #2563eb;
+  --danger: #c7354f;
+  --warning: #a36500;
+  --shadow-deep: 0 28px 90px rgba(24, 74, 38, 0.16);
+  --shadow-float: 0 18px 54px rgba(24, 74, 38, 0.12);
+}
+
+body {
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    var(--surface-0);
+  font-variant-numeric: tabular-nums;
+}
+
+html,
+body,
+#root {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+:root[data-theme="light"] body {
+  background:
+    linear-gradient(90deg, rgba(21, 71, 35, 0.045) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(21, 71, 35, 0.035) 1px, transparent 1px),
+    var(--surface-0);
+}
+
+h1,
+h2,
+.brand strong,
+.nav button,
+.flowMetaRail span,
+.kitBadge,
+.metric small,
+.studioPanelHead strong,
+button {
+  font-family: "Geist Mono Variable", "Geist Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.shell {
+  position: relative;
+  isolation: isolate;
+  grid-template-columns: var(--rail-width) minmax(0, 1fr);
+  width: 100%;
+  max-width: 100vw;
+  min-width: 0;
+  overflow-x: hidden;
+  background: transparent;
+  transition: grid-template-columns 220ms ease;
+}
+
+.shellCollapsed {
+  --rail-width: 86px;
+}
+
+.smokeBackgroundCanvas {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  opacity: 0.52;
+  filter: saturate(1.45) contrast(1.08);
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+
+:root[data-theme="light"] .smokeBackgroundCanvas {
+  opacity: 0.42;
+  filter: saturate(1.42) contrast(1.05) brightness(1.02);
+  mix-blend-mode: multiply;
+}
+
+.rail,
+.workspace {
+  position: relative;
+  z-index: 1;
+}
+
+.workspace {
+  min-width: 0;
+  overflow-x: clip;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(60, 255, 130, 0.09), transparent 30%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.026), transparent 240px);
+}
+
+:root[data-theme="light"] .workspace {
+  background:
+    radial-gradient(circle at 10% 0%, rgba(22, 138, 67, 0.18), transparent 32%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(244, 250, 242, 0.3));
+}
+
+.rail {
+  width: var(--rail-width);
+  overflow: hidden;
+  transition:
+    width 220ms ease,
+    padding 220ms ease,
+    background 180ms ease,
+    border-color 180ms ease;
+}
+
+.railChrome {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.railIconButton {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.025)),
+    rgba(255, 255, 255, 0.045);
+  color: var(--text-main);
+}
+
+.railIconButton:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  color: var(--text-strong);
+  transform: translateY(-1px);
+}
+
+.brandText,
+.navLabel,
+.railFooter strong,
+.railFooter small {
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+
+.railFooter strong,
+.railFooter small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  line-height: 1.32;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.railFooter small {
+  max-width: 100%;
+}
+
+.topbar,
+.flowTopbar,
+.selfLearnTopbar {
+  margin: 0 0 20px;
+  padding: 24px 26px 26px;
+  overflow: visible;
+}
+
+.topbar h1,
+.flowTopbar h1,
+.selfLearnTopbar h1 {
+  line-height: 1.06;
+  padding-bottom: 0.04em;
+}
+
+.shellCollapsed .rail {
+  padding-right: 12px;
+  padding-left: 12px;
+}
+
+.shellCollapsed .railChrome {
+  display: grid;
+  justify-items: center;
+}
+
+.shellCollapsed .brand {
+  justify-content: center;
+  padding: 8px 0;
+}
+
+.shellCollapsed .brandText,
+.shellCollapsed .navLabel,
+.shellCollapsed .railFooter strong,
+.shellCollapsed .railFooter small {
+  display: none;
+}
+
+.shellCollapsed .nav button {
+  justify-content: center;
+  min-height: 46px;
+  padding: 0;
+}
+
+.shellCollapsed .nav button::before {
+  inset: auto 18px 0;
+  width: auto;
+  height: 2px;
+}
+
+.shellCollapsed .railFooter {
+  place-items: center;
+  padding: 12px 0;
+}
+
+.shellCollapsed .railFooter span {
+  min-width: 10px;
+  font-size: 0;
+}
+
+.shellCollapsed .railFooter i {
+  margin: 0;
+}
+
+:root[data-theme="light"] .rail,
+:root[data-theme="light"] .conversationPanel,
+:root[data-theme="light"] .panel,
+:root[data-theme="light"] .selfLearnPanel,
+:root[data-theme="light"] .flowPalette,
+:root[data-theme="light"] .flowInspector,
+:root[data-theme="light"] .flowTestBench,
+:root[data-theme="light"] .flowCanvas,
+:root[data-theme="light"] .brand,
+:root[data-theme="light"] .railFooter {
+  border-color: var(--line-soft);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(244, 250, 242, 0.58)),
+    rgba(255, 255, 255, 0.64);
+  box-shadow: var(--shadow-float);
+}
+
+:root[data-theme="light"] .topbar,
+:root[data-theme="light"] .flowTopbar,
+:root[data-theme="light"] .selfLearnTopbar,
+:root[data-theme="light"] .sectionHead,
+:root[data-theme="light"] .studioPanelHead,
+:root[data-theme="light"] .composer,
+:root[data-theme="light"] .flowSimControls,
+:root[data-theme="light"] .flowVoicePanel {
+  border-color: var(--line-soft);
+  background: rgba(255, 255, 255, 0.66);
+  box-shadow: 0 18px 50px rgba(24, 74, 38, 0.08);
+}
+
+:root[data-theme="light"] h1,
+:root[data-theme="light"] h2,
+:root[data-theme="light"] .brand strong,
+:root[data-theme="light"] .metric strong,
+:root[data-theme="light"] .studioPanelHead strong,
+:root[data-theme="light"] .nodeMain strong,
+:root[data-theme="light"] .flowVoicePanel strong,
+:root[data-theme="light"] .selectedPreview h2,
+:root[data-theme="light"] .selectedPreview p {
+  color: var(--text-strong);
+}
+
+:root[data-theme="light"] .sectionHead p,
+:root[data-theme="light"] .studioPanelHead span,
+:root[data-theme="light"] .flowSubtitle,
+:root[data-theme="light"] .muted,
+:root[data-theme="light"] .brand span,
+:root[data-theme="light"] .metric small,
+:root[data-theme="light"] .metric em,
+:root[data-theme="light"] .nodeMain span,
+:root[data-theme="light"] .nodeRouteRow span,
+:root[data-theme="light"] .flowVoicePanel span,
+:root[data-theme="light"] .selfLearnSessionPill small,
+:root[data-theme="light"] .selfLearnEvent span,
+:root[data-theme="light"] .selfLearnEvent small,
+:root[data-theme="light"] .fixList small,
+:root[data-theme="light"] .latencyBreakdown span,
+:root[data-theme="light"] .latencyBreakdown small,
+:root[data-theme="light"] .nodePickerList small,
+:root[data-theme="light"] .flowTurn span,
+:root[data-theme="light"] .turn span,
+:root[data-theme="light"] .turn small {
+  color: var(--text-soft);
+}
+
+:root[data-theme="light"] .selfLearnSessionPill strong,
+:root[data-theme="light"] .selfLearnEvent strong,
+:root[data-theme="light"] .selfLearnEvent p,
+:root[data-theme="light"] .fixList p,
+:root[data-theme="light"] .fixList span,
+:root[data-theme="light"] .learnedPolicy strong,
+:root[data-theme="light"] .learnedPolicy span,
+:root[data-theme="light"] .latencyBreakdown strong,
+:root[data-theme="light"] .nodePickerList strong,
+:root[data-theme="light"] .flowMetaRail span,
+:root[data-theme="light"] .inlineCheck,
+:root[data-theme="light"] .flowSimControls label,
+:root[data-theme="light"] .evalRow strong,
+:root[data-theme="light"] .evalRow small {
+  color: var(--text-strong);
+}
+
+:root[data-theme="light"] .nav button,
+:root[data-theme="light"] .nav a,
+:root[data-theme="light"] .railIconButton,
+:root[data-theme="light"] .kitControlBar button,
+:root[data-theme="light"] .voiceTextControls button[type="button"],
+:root[data-theme="light"] .flowVoiceControls button,
+:root[data-theme="light"] .speechPathSwitch button,
+:root[data-theme="light"] .inputModeSwitch button,
+:root[data-theme="light"] .flowSpeechPathSwitch button {
+  border-color: rgba(23, 56, 33, 0.12);
+  background: rgba(255, 255, 255, 0.46);
+  color: var(--text-main);
+}
+
+:root[data-theme="light"] .nav button.active,
+:root[data-theme="light"] .nav a.active,
+:root[data-theme="light"] .voiceModeSwitch button.active,
+:root[data-theme="light"] .speechPathSwitch button.active,
+:root[data-theme="light"] .inputModeSwitch button.active,
+:root[data-theme="light"] .flowSpeechPathSwitch button.active {
+  border-color: rgba(22, 138, 67, 0.24);
+  background:
+    linear-gradient(90deg, rgba(22, 138, 67, 0.13), rgba(7, 159, 123, 0.06)),
+    rgba(255, 255, 255, 0.72);
+  color: var(--text-strong);
+}
+
+:root[data-theme="light"] .brandMark,
+:root[data-theme="light"] .composer button,
+:root[data-theme="light"] .voiceTextControls button,
+:root[data-theme="light"] .voiceTextAudioControls button,
+:root[data-theme="light"] .flowActions button,
+:root[data-theme="light"] .flowTestBench button,
+:root[data-theme="light"] .feedbackActions button:first-child,
+:root[data-theme="light"] .canvasToolbar button:first-child,
+:root[data-theme="light"] .kitControlBar button:first-child,
+:root[data-theme="light"] .flowVoiceControls button:first-child,
+:root[data-theme="light"] .selfLearnScope button.active {
+  border-color: rgba(22, 138, 67, 0.4);
+  background:
+    linear-gradient(180deg, rgba(77, 212, 121, 0.98), rgba(19, 143, 69, 0.96));
+  color: #06130b;
+}
+
+:root[data-theme="light"] .kitBadge {
+  border-color: rgba(23, 56, 33, 0.12);
+  background: rgba(255, 255, 255, 0.58);
+  color: var(--text-main);
+}
+
+:root[data-theme="light"] .kitBadge-active,
+:root[data-theme="light"] .kitBadge-agent {
+  border-color: rgba(22, 138, 67, 0.34);
+  background: rgba(22, 138, 67, 0.12);
+  color: #0f6a34;
+}
+
+:root[data-theme="light"] .metric,
+:root[data-theme="light"] .selfLearnSessionPill,
+:root[data-theme="light"] .improvementList span,
+:root[data-theme="light"] .fixList article,
+:root[data-theme="light"] .learnedPolicy span,
+:root[data-theme="light"] .latencyBreakdown > div,
+:root[data-theme="light"] .selfLearnEvent,
+:root[data-theme="light"] .evalRow,
+:root[data-theme="light"] .voiceTextCase,
+:root[data-theme="light"] .traceTurn,
+:root[data-theme="light"] .flowVoiceLink,
+:root[data-theme="light"] .flowVoiceTurns span {
+  border-color: rgba(23, 56, 33, 0.12);
+  background: rgba(255, 255, 255, 0.58);
+  color: var(--text-main);
+}
+
+:root[data-theme="light"] .statusGrid,
+:root[data-theme="light"] .selfLearnSessionStrip,
+:root[data-theme="light"] .selfLearnMetrics {
+  border-color: rgba(23, 56, 33, 0.16);
+  background: rgba(23, 56, 33, 0.14);
+}
+
+:root[data-theme="light"] .selfLearnPanel,
+:root[data-theme="light"] .conversationPanel,
+:root[data-theme="light"] .panel,
+:root[data-theme="light"] .flowPalette,
+:root[data-theme="light"] .flowInspector,
+:root[data-theme="light"] .flowTestBench {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 253, 247, 0.84)),
+    rgba(255, 255, 255, 0.88);
+}
+
+:root[data-theme="light"] .metric,
+:root[data-theme="light"] .selfLearnSessionPill {
+  background: rgba(255, 255, 255, 0.78);
+}
+
+:root[data-theme="light"] .metric > span,
+:root[data-theme="light"] .emptyState svg,
+:root[data-theme="light"] .emptyInspector svg {
+  border-color: rgba(22, 138, 67, 0.18);
+  background: rgba(22, 138, 67, 0.1);
+  color: var(--accent);
+}
+
+:root[data-theme="light"] .flowCanvas {
+  background-color: rgba(237, 247, 235, 0.72);
+  background-image:
+    linear-gradient(90deg, rgba(16, 70, 32, 0.08) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(16, 70, 32, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(53, 200, 120, 0.12), rgba(37, 99, 235, 0.04) 48%, transparent);
+}
+
+:root[data-theme="light"] .flowEdges path {
+  stroke: rgba(37, 99, 235, 0.66);
+}
+
+:root[data-theme="light"] .flowEdges .activeEdge path {
+  stroke: var(--accent);
+  filter: drop-shadow(0 0 10px rgba(22, 138, 67, 0.22));
+}
+
+:root[data-theme="light"] .flowEdges text {
+  fill: var(--text-main);
+  stroke: rgba(244, 250, 242, 0.92);
+}
+
+:root[data-theme="light"] .flowNodeCard,
+:root[data-theme="light"] .selectedPreview,
+:root[data-theme="light"] .nodePicker {
+  border-color: rgba(37, 99, 235, 0.28);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(246, 253, 244, 0.74)),
+    rgba(255, 255, 255, 0.8);
+  color: var(--text-main);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    0 18px 48px rgba(24, 74, 38, 0.14);
+}
+
+:root[data-theme="light"] .flowNodeCard.activeRuntimeNode {
+  border-color: rgba(22, 138, 67, 0.78);
+  box-shadow:
+    0 0 0 3px rgba(22, 138, 67, 0.12),
+    0 20px 54px rgba(24, 74, 38, 0.16);
+}
+
+:root[data-theme="light"] .nodeRouteRow,
+:root[data-theme="light"] .selectedPreview > div,
+:root[data-theme="light"] .canvasToolbar,
+:root[data-theme="light"] .nodePickerList button,
+:root[data-theme="light"] .nodePickerSearch button,
+:root[data-theme="light"] .nodePickerTabs button.active {
+  border-color: rgba(23, 56, 33, 0.1);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+:root[data-theme="light"] .composer input,
+:root[data-theme="light"] .inspectorField input,
+:root[data-theme="light"] .inspectorField select,
+:root[data-theme="light"] .inspectorField textarea,
+:root[data-theme="light"] .inspectorGroup textarea,
+:root[data-theme="light"] .edgeEditorRow input,
+:root[data-theme="light"] .edgeEditorRow select,
+:root[data-theme="light"] .flowSimControls > input,
+:root[data-theme="light"] .voiceTextControls input,
+:root[data-theme="light"] .nodePickerSearch input {
+  border-color: rgba(23, 56, 33, 0.14);
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--text-strong);
+}
+
+:root[data-theme="light"] .turn p,
+:root[data-theme="light"] .flowTurn p {
+  border-color: rgba(23, 56, 33, 0.12);
+  background: rgba(255, 255, 255, 0.66);
+  color: var(--text-main);
+}
+
+:root[data-theme="light"] .turn.assistant p,
+:root[data-theme="light"] .flowTurn.assistant p {
+  border-color: rgba(22, 138, 67, 0.34);
+  background:
+    linear-gradient(180deg, rgba(66, 205, 115, 0.94), rgba(23, 138, 67, 0.9));
+  color: #06130b;
+}
+
+:root[data-theme="light"] .kitWaveform {
+  border-color: rgba(23, 56, 33, 0.12);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.58),
+    0 0 0 10px rgba(22, 138, 67, 0.035),
+    0 22px 55px rgba(24, 74, 38, 0.14);
+}
+
+:root[data-theme="light"] .selfLearnError {
+  border-color: rgba(180, 35, 24, 0.26);
+  background: rgba(255, 232, 229, 0.9);
+  color: #99231b;
+}
+
+:root[data-theme="light"] .errorText {
+  color: #99231b;
+}
+
+:root[data-theme="light"] .selfLearnLiveBadge {
+  border-color: rgba(22, 138, 67, 0.3);
+  background: rgba(22, 138, 67, 0.12);
+  color: #0f6a34;
+}
+
+:root[data-theme="light"] .selfLearnScope button {
+  color: var(--text-main);
+}
+
+:root[data-theme="light"] .selfLearnScope button:disabled {
+  color: #7b877e;
+  opacity: 0.72;
+}
+
+:root[data-theme="light"] .evalRow span {
+  background: rgba(22, 138, 67, 0.1);
+  color: #0f6a34;
+}
+
+:root[data-theme="light"] pre {
+  color: var(--text-main);
+}
+
+:root[data-theme="light"] .voiceConsoleTopbar,
+:root[data-theme="light"] .voiceConsoleCore,
+:root[data-theme="light"] .codexSyncPanel,
+:root[data-theme="light"] .voiceConversationStrip,
+:root[data-theme="light"] .voiceConsoleInspector,
+:root[data-theme="light"] .voiceSettingsPanel {
+  border-color: var(--line-soft);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 253, 247, 0.78)),
+    rgba(255, 255, 255, 0.84);
+  box-shadow: var(--shadow-float);
+}
+
+:root[data-theme="light"] .voiceConsoleIconButton,
+:root[data-theme="light"] .voiceSecondaryButton,
+:root[data-theme="light"] .voiceConsoleComposer button,
+:root[data-theme="light"] .voiceConsoleSegmented,
+:root[data-theme="light"] .voiceInspectorHandle,
+:root[data-theme="light"] .settingsRows button {
+  border-color: rgba(23, 56, 33, 0.13);
+  background: rgba(255, 255, 255, 0.58);
+  color: var(--text-main);
+}
+
+:root[data-theme="light"] .voicePrimaryButton,
+:root[data-theme="light"] .voiceConsoleComposer button[type="submit"] {
+  border-color: rgba(22, 138, 67, 0.4);
+  background: linear-gradient(180deg, rgba(77, 212, 121, 0.98), rgba(19, 143, 69, 0.96));
+  color: #06130b;
+}
+
+:root[data-theme="light"] .voiceConsoleSegmented button {
+  border-left-color: rgba(23, 56, 33, 0.1);
+  color: var(--text-soft);
+}
+
+:root[data-theme="light"] .voiceConsoleSegmented button.active,
+:root[data-theme="light"] .voiceConsoleIconButton.active,
+:root[data-theme="light"] .voiceConsoleIconButton:hover:not(:disabled) {
+  border-color: rgba(22, 138, 67, 0.28);
+  background: rgba(22, 138, 67, 0.11);
+  color: var(--text-strong);
+}
+
+:root[data-theme="light"] .voiceConsoleComposer input {
+  border-color: rgba(23, 56, 33, 0.14);
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--text-strong);
+}
+
+:root[data-theme="light"] .voiceOrbShell::before {
+  border-color: rgba(23, 56, 33, 0.12);
+  background:
+    radial-gradient(circle at 50% 50%, rgba(22, 138, 67, 0.13), transparent 42%),
+    radial-gradient(circle at 36% 32%, rgba(37, 99, 235, 0.08), transparent 38%);
+}
+
+:root[data-theme="light"] .voiceOrbShell::after {
+  border-color: rgba(23, 56, 33, 0.11);
+}
+
+:root[data-theme="light"] .codexFlowStep,
+:root[data-theme="light"] .rawVariableRow,
+:root[data-theme="light"] .settingsRows label,
+:root[data-theme="light"] .settingsHistory span {
+  border-color: rgba(23, 56, 33, 0.11);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+:root[data-theme="light"] .codexFlowStep.active {
+  border-color: rgba(37, 99, 235, 0.28);
+  background:
+    linear-gradient(180deg, rgba(37, 99, 235, 0.09), rgba(255, 255, 255, 0.68)),
+    rgba(255, 255, 255, 0.68);
+}
+
+:root[data-theme="light"] .codexFlowConnector {
+  background: rgba(23, 56, 33, 0.16);
+}
+
+:root[data-theme="light"] .variableChangeBadge {
+  border-color: rgba(22, 138, 67, 0.24);
+  background:
+    linear-gradient(90deg, rgba(22, 138, 67, 0.12), rgba(37, 99, 235, 0.08)),
+    rgba(255, 255, 255, 0.9);
+  box-shadow: 0 16px 42px rgba(24, 74, 38, 0.14);
+}
+
+@media (max-width: 980px) {
+  .shell,
+  .shell.shellCollapsed {
+    --rail-width: 100%;
+    grid-template-columns: 1fr;
+  }
+
+  .shellCollapsed .brandText,
+  .shellCollapsed .navLabel,
+  .shellCollapsed .railFooter strong,
+  .shellCollapsed .railFooter small {
+    display: block;
+  }
+
+  .shellCollapsed .navLabel {
+    display: inline;
+  }
+
+  .shellCollapsed .nav button {
+    justify-content: flex-start;
+    padding: 0 13px;
+  }
+
+  .shellCollapsed .railFooter {
+    place-items: stretch;
+    padding: 14px;
+  }
+
+  .shellCollapsed .railFooter span {
+    font-size: 12px;
+  }
+}

@@ -1,0 +1,169 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: NVIDIA Nemotron vLLM host for the voice-agent feedback engine.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC where the GPU instance will run.
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public or NAT-routed subnet for the GPU instance.
+  AllowedCidr:
+    Type: String
+    Description: CIDR allowed to reach vLLM on port 5000. Use your office/VPN/app CIDR.
+    AllowedPattern: ^(([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2})$
+  InstanceType:
+    Type: String
+    Default: g5.xlarge
+    Description: GPU instance. Default is credit-safe single-GPU. Use g6e.12xlarge/p4d.24xlarge/p5.48xlarge only for short 49B/Super benchmarks.
+  ModelId:
+    Type: String
+    Default: nvidia/Llama-3.1-Nemotron-Nano-8B-v1
+    Description: Hugging Face model ID.
+  ServedModelName:
+    Type: String
+    Default: Llama-3.1-Nemotron-Nano-8B-v1
+    Description: Name exposed by the OpenAI-compatible API.
+  TensorParallelSize:
+    Type: Number
+    Default: 1
+    Description: Number of GPUs for tensor parallelism. Keep 1 for credit-safe 8B, set 4-8 for larger models.
+  MaxModelLen:
+    Type: Number
+    Default: 8192
+    Description: Context length to expose. Keep lower on small GPUs to preserve memory.
+  AutoStopHours:
+    Type: Number
+    Default: 4
+    MinValue: 1
+    MaxValue: 24
+    Description: Stop the instance automatically after this many hours to protect credits.
+  HuggingFaceToken:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: Optional Hugging Face token if the model requires gated access.
+  AmiSsmParameter:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-24.04/latest/ami-id
+    Description: Latest AWS Deep Learning Base OSS NVIDIA Driver GPU AMI.
+
+Resources:
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: Project
+          Value: voice-agent-feedback-engine
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref InstanceRole
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: vLLM API access for voice-agent feedback engine.
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          CidrIp: !Ref AllowedCidr
+          Description: OpenAI-compatible vLLM API
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Project
+          Value: voice-agent-feedback-engine
+
+  VllmInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiSsmParameter
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref SecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: 600
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: voice-agent-vllm
+        - Key: Project
+          Value: voice-agent-feedback-engine
+      UserData:
+        Fn::Base64: !Sub |
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec > >(tee /var/log/voice-agent-vllm-user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
+
+          apt-get update
+          apt-get install -y python3.12-venv git jq at
+          python3.12 -m venv /opt/vllm
+          /opt/vllm/bin/pip install --upgrade pip
+          /opt/vllm/bin/pip install "vllm==0.9.2"
+
+          cat >/etc/systemd/system/vllm.service <<'SERVICE'
+          [Unit]
+          Description=vLLM OpenAI-compatible NVIDIA Nemotron server
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          Environment=HF_HOME=/opt/huggingface
+          Environment=HF_TOKEN=${HuggingFaceToken}
+          ExecStart=/opt/vllm/bin/python -m vllm.entrypoints.openai.api_server \
+            --model "${ModelId}" \
+            --trust-remote-code \
+            --seed=1 \
+            --host=0.0.0.0 \
+            --port=5000 \
+            --served-model-name "${ServedModelName}" \
+            --tensor-parallel-size=${TensorParallelSize} \
+            --max-model-len=${MaxModelLen} \
+            --gpu-memory-utilization=0.95 \
+            --enforce-eager
+          Restart=always
+          RestartSec=10
+
+          [Install]
+          WantedBy=multi-user.target
+          SERVICE
+
+          systemctl daemon-reload
+          systemctl enable --now vllm
+          systemctl enable --now atd
+          echo "shutdown -h now" | at now + ${AutoStopHours} hours
+
+Outputs:
+  InstanceId:
+    Description: EC2 instance ID.
+    Value: !Ref VllmInstance
+  PublicIp:
+    Description: Public IP for the vLLM host, if subnet assigns one.
+    Value: !GetAtt VllmInstance.PublicIp
+  VllmBaseUrl:
+    Description: Use this as LOCAL_LLM_BASE_URL.
+    Value: !Sub "http://${VllmInstance.PublicIp}:5000/v1"
+  SsmStartSession:
+    Description: Debug command for CloudShell.
+    Value: !Sub "aws ssm start-session --target ${VllmInstance}"
