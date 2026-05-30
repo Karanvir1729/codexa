@@ -76,25 +76,6 @@ type RuntimeSettings = {
   };
 };
 
-type CodexAuthStatus = {
-  logged_in: boolean;
-  status_text: string;
-  codex_command: string;
-  codex_home: string;
-};
-
-type CodexDeviceLogin = {
-  login_id: string;
-  status: "starting" | "pending" | "completed" | "failed" | "cancelled";
-  verification_url: string;
-  user_code: string;
-  message: string;
-  started_at: string;
-  expires_at: string;
-  completed_at: string | null;
-  exit_code: number | null;
-};
-
 type FlowchartVisualState = "idle" | "planning" | "waiting_for_approval" | "completed" | "failed" | "running" | "warning";
 
 type FlowchartNode = {
@@ -147,23 +128,6 @@ type ResetSupervisorSessionResponse = {
   };
 };
 
-type DesktopRuntimeConfig = {
-  apiBase?: string;
-  codexHome?: string;
-  isDesktop?: boolean;
-  supervisorUserId?: string;
-  workspacePath?: string;
-};
-
-declare global {
-  interface Window {
-    codexaDesktop?: {
-      config?: DesktopRuntimeConfig;
-      openExternal?: (url: string) => Promise<boolean>;
-    };
-  }
-}
-
 class SupervisorApiError extends Error {
   constructor(
     readonly status: number,
@@ -174,17 +138,9 @@ class SupervisorApiError extends Error {
   }
 }
 
-const desktopRuntimeConfig = window.codexaDesktop?.config;
-const envSupervisorApiBase = import.meta.env.VITE_SUPERVISOR_API_BASE?.trim();
-const supervisorApiBase = desktopRuntimeConfig?.apiBase?.trim()
-  || (envSupervisorApiBase === "__CURRENT_ORIGIN__" ? window.location.origin : envSupervisorApiBase)
-  || "/supervisor-api";
-const supervisorWorkspacePath = desktopRuntimeConfig?.workspacePath?.trim()
-  || import.meta.env.VITE_SUPERVISOR_WORKSPACE_PATH?.trim()
-  || "/Users/karanvirkhanna";
-const supervisorUserId = desktopRuntimeConfig?.supervisorUserId?.trim()
-  || import.meta.env.VITE_SUPERVISOR_USER_ID?.trim()
-  || "browser-ui";
+const supervisorApiBase = import.meta.env.VITE_SUPERVISOR_API_BASE?.trim() || "/supervisor-api";
+const supervisorWorkspacePath = import.meta.env.VITE_SUPERVISOR_WORKSPACE_PATH?.trim() || "/Users/karanvirkhanna";
+const supervisorUserId = import.meta.env.VITE_SUPERVISOR_USER_ID?.trim() || "browser-ui";
 const sessionStorageKey = "codex-phone-supervisor-session";
 const interactionStorageKey = "codex-phone-supervisor-builder-interactions";
 
@@ -516,9 +472,6 @@ export function AppBuilderPage({ onNotice }: { onNotice: (message: string) => vo
   const [flowchart, setFlowchart] = useState<FlowchartState | null>(null);
   const [megaplan, setMegaplan] = useState<MegaplanRecord | null>(null);
   const [runtimeSettings, setRuntimeSettings] = useState<RuntimeSettings | null>(null);
-  const [codexAuth, setCodexAuth] = useState<CodexAuthStatus | null>(null);
-  const [deviceLogin, setDeviceLogin] = useState<CodexDeviceLogin | null>(null);
-  const [codexAuthMessage, setCodexAuthMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [sessionResetStatus, setSessionResetStatus] = useState("");
   const cliStreamRef = useRef<HTMLPreElement | null>(null);
@@ -528,17 +481,7 @@ export function AppBuilderPage({ onNotice }: { onNotice: (message: string) => vo
     supervisorGet<{ local_codex?: RuntimeSettings }>("/ready")
       .then((payload) => setRuntimeSettings(payload.local_codex ?? null))
       .catch(() => setRuntimeSettings(null));
-    void loadCodexAuth();
   }, []);
-
-  useEffect(() => {
-    if (!deviceLogin || !["starting", "pending"].includes(deviceLogin.status)) return;
-    const timer = window.setInterval(() => {
-      void pollCodexDeviceLogin(deviceLogin.login_id);
-      void loadCodexAuth();
-    }, 2000);
-    return () => window.clearInterval(timer);
-  }, [deviceLogin?.login_id, deviceLogin?.status]);
 
   useEffect(() => {
     if (sessionId) window.localStorage.setItem(sessionStorageKey, sessionId);
@@ -706,76 +649,9 @@ export function AppBuilderPage({ onNotice }: { onNotice: (message: string) => vo
     }
   }
 
-  async function loadCodexAuth() {
-    try {
-      const status = await supervisorGet<CodexAuthStatus>("/desktop/codex/auth/status");
-      setCodexAuth(status);
-      if (status.logged_in) setCodexAuthMessage("");
-    } catch {
-      setCodexAuth(null);
-    }
-  }
-
-  async function openExternal(url: string) {
-    if (window.codexaDesktop?.openExternal) {
-      await window.codexaDesktop.openExternal(url);
-      return;
-    }
-    window.open(url, "_blank", "noopener,noreferrer");
-  }
-
-  async function startCodexDeviceLoginFlow() {
-    setCodexAuthMessage("Starting OpenAI sign-in...");
-    try {
-      const payload = await supervisorPost<{ login: CodexDeviceLogin }>("/desktop/codex/auth/device-login", {});
-      setDeviceLogin(payload.login);
-      setCodexAuthMessage(payload.login.status === "failed" ? "OpenAI sign-in could not start." : "OpenAI sign-in is waiting for browser approval.");
-      if (payload.login.verification_url) await openExternal(payload.login.verification_url);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "OpenAI sign-in could not start.";
-      setCodexAuthMessage(message);
-      onNotice(message);
-    }
-  }
-
-  async function pollCodexDeviceLogin(loginId: string) {
-    try {
-      const payload = await supervisorGet<{ login: CodexDeviceLogin }>(`/desktop/codex/auth/device-login/${encodeURIComponent(loginId)}`);
-      setDeviceLogin(payload.login);
-      if (payload.login.status === "completed") {
-        setCodexAuthMessage("OpenAI account connected to Codex.");
-        await loadCodexAuth();
-      }
-      if (payload.login.status === "failed") setCodexAuthMessage("OpenAI sign-in did not complete. Start sign-in again.");
-      if (payload.login.status === "cancelled") setCodexAuthMessage("OpenAI sign-in was cancelled.");
-    } catch {
-      setCodexAuthMessage("OpenAI sign-in status is unavailable.");
-    }
-  }
-
-  async function cancelCodexDeviceLoginFlow() {
-    if (!deviceLogin) return;
-    const payload = await supervisorPost<{ login: CodexDeviceLogin }>(`/desktop/codex/auth/device-login/${encodeURIComponent(deviceLogin.login_id)}/cancel`, {});
-    setDeviceLogin(payload.login);
-    await loadCodexAuth();
-  }
-
   async function sendSupervisorMessage(text: string) {
     const cleaned = text.trim();
     if (!cleaned || busy) return;
-    if (codexAuth && !codexAuth.logged_in) {
-      const message = "Connect OpenAI before starting Codex.";
-      onNotice(message);
-      setChatMessages((items) => mergeInteractions(items, [{
-        id: makeLocalId(),
-        role: "system",
-        source: "system",
-        text: message,
-        ts: new Date().toISOString(),
-        session_id: sessionId
-      }]));
-      return;
-    }
     setBusy(true);
     setChatInput("");
     try {
@@ -833,8 +709,6 @@ export function AppBuilderPage({ onNotice }: { onNotice: (message: string) => vo
   ].join("\n\n");
   const activePreview = tasks.find((task) => task.latest_preview?.preview_url)?.latest_preview ?? null;
   const isMegaplanApprovalPending = session?.pending_action?.type === "approve_megaplan" || session?.pending_action?.action === "approve_megaplan";
-  const codexConnected = codexAuth?.logged_in ?? false;
-  const isDeviceLoginPending = Boolean(deviceLogin && ["starting", "pending"].includes(deviceLogin.status));
 
   useEffect(() => {
     void refreshBuilder().catch(() => undefined);
@@ -894,35 +768,6 @@ export function AppBuilderPage({ onNotice }: { onNotice: (message: string) => vo
         </div>
       </section>
 
-      <section className="builderPanel builderAuthPanel" data-testid="builder-codex-auth">
-        <div className="voicePanelHeader">
-          <div>
-            <h2>{codexConnected ? "OpenAI Connected" : "Connect OpenAI"}</h2>
-            <p>{codexAuth?.status_text ?? "Checking Codex login status."}</p>
-          </div>
-          <div className="builderPanelActions">
-            <button type="button" onClick={() => void loadCodexAuth()}>Check</button>
-            {!codexConnected ? (
-              <button type="button" onClick={() => void startCodexDeviceLoginFlow()} disabled={isDeviceLoginPending}>
-                {isDeviceLoginPending ? "Waiting" : "Sign in"}
-              </button>
-            ) : null}
-          </div>
-        </div>
-        <div className="builderRepoStrip">
-          <span>CODEX_HOME <strong>{codexAuth?.codex_home || desktopRuntimeConfig?.codexHome || "loading"}</strong></span>
-          {codexAuthMessage ? <span>{codexAuthMessage}</span> : null}
-          {deviceLogin && !codexConnected ? <span>Status <strong>{deviceLogin.status}</strong></span> : null}
-          {deviceLogin?.user_code && !codexConnected ? <span>Code <strong>{deviceLogin.user_code}</strong></span> : null}
-          {deviceLogin?.verification_url && !codexConnected ? (
-            <button type="button" onClick={() => void openExternal(deviceLogin.verification_url)}>Open OpenAI</button>
-          ) : null}
-          {isDeviceLoginPending ? (
-            <button type="button" onClick={() => void cancelCodexDeviceLoginFlow()}>Cancel</button>
-          ) : null}
-        </div>
-      </section>
-
       <section className="builderGrid">
         <div className="builderPanel builderChatPanel">
           <div className="voicePanelHeader">
@@ -957,11 +802,11 @@ export function AppBuilderPage({ onNotice }: { onNotice: (message: string) => vo
             <textarea
               value={chatInput}
               onChange={(event) => setChatInput(event.target.value)}
-              placeholder={codexConnected ? "Describe the app, or reply approve when the Megaplan is ready." : "Connect OpenAI before starting Codex."}
-              disabled={busy || !codexConnected}
+              placeholder="Describe the app, or reply approve when the Megaplan is ready."
+              disabled={busy}
               rows={3}
             />
-            <button type="button" onClick={() => void sendSupervisorMessage(chatInput)} disabled={busy || !codexConnected || !chatInput.trim()}>
+            <button type="button" onClick={() => void sendSupervisorMessage(chatInput)} disabled={busy || !chatInput.trim()}>
               <Send size={17} /> Send
             </button>
           </form>

@@ -66,12 +66,6 @@ import { recordPreviewReport, servePreviewAsset, startPreviewForSession } from "
 import { resetSupervisorSession } from "./session-reset.js";
 import { getMegaplanForSession } from "./megaplan.js";
 import { getCodexSkillInventory } from "./codex-skills.js";
-import {
-  cancelCodexDeviceLogin,
-  getCodexDeviceLogin,
-  readCodexLoginStatus,
-  startCodexDeviceLogin,
-} from "./codex-auth.js";
 import type { Channel, TaskStatus, WorkerType } from "./types.js";
 
 const app = express();
@@ -315,32 +309,6 @@ function ensureBodyChannel(value: unknown, fallback: Channel = "web_text") {
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
-});
-
-app.get("/desktop/codex/auth/status", async (_req, res) => {
-  res.json(await readCodexLoginStatus());
-});
-
-app.post("/desktop/codex/auth/device-login", (_req, res) => {
-  res.status(202).json({ login: startCodexDeviceLogin() });
-});
-
-app.get("/desktop/codex/auth/device-login/:login_id", (req, res) => {
-  const login = getCodexDeviceLogin(req.params.login_id);
-  if (!login) {
-    res.status(404).json(apiError("CODEX_DEVICE_LOGIN_NOT_FOUND", "Device login not found."));
-    return;
-  }
-  res.json({ login });
-});
-
-app.post("/desktop/codex/auth/device-login/:login_id/cancel", (req, res) => {
-  const login = cancelCodexDeviceLogin(req.params.login_id);
-  if (!login) {
-    res.status(404).json(apiError("CODEX_DEVICE_LOGIN_NOT_FOUND", "Device login not found."));
-    return;
-  }
-  res.json({ login });
 });
 
 app.get("/ready", (_req, res) => {
