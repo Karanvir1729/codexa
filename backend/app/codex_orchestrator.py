@@ -841,6 +841,11 @@ class CodexOrchestratorBridge:
         if is_codex_approval_response(user_text):
             return self._short_text(result.text, limit=120) or "Approved. Codex is continuing."
         if result.requires_approval:
+            summary = self._approval_summary(result)
+            if summary:
+                return self._with_builder_megaplan_hint(
+                    self._with_approval_hint(summary)
+                )
             return self._with_builder_megaplan_hint(
                 self._with_approval_hint(self._short_text(result.text, limit=120) or "Plan ready.")
             )
@@ -881,6 +886,17 @@ class CodexOrchestratorBridge:
                 self._short_text(fallback, limit=120) or "Codex hit an issue."
             )
         return self._with_builder_megaplan_hint(self._short_text(fallback, limit=120) or "Builder is synced.")
+
+    def _approval_summary(self, result: CodexOrchestratorResult) -> str:
+        session = _metadata_session(result.raw)
+        latest_summary = str((session or {}).get("latest_summary") or "").strip()
+        if latest_summary:
+            cleaned = " ".join(latest_summary.split())
+            target = re.sub(r"^build\s+", "", cleaned, flags=re.IGNORECASE)
+            target = re.sub(r"\s+in\s+/[^.]+\.?$", "", target).strip(" .")
+            if target:
+                return f"Megaplan is ready for {target}."
+        return "Megaplan is ready."
 
     def _with_builder_megaplan_hint(self, text: str) -> str:
         cleaned = " ".join(str(text or "").split()).strip()

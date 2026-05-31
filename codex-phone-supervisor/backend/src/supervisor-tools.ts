@@ -1788,7 +1788,7 @@ function voiceProjectDescription(text: string) {
   return [
     text.trim(),
     "Voice/Twilio Builder defaults: infer reasonable local implementation defaults, proceed without product/domain/UX research unless the user explicitly asks for it or the request is high-stakes/current-information-sensitive, create a Megaplan, and wait for approval before implementation.",
-  ].filter(Boolean).join("\n\n");
+  ].filter(Boolean).join(" ");
 }
 
 function readOnlyConversationResponse(text: string) {

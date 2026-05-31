@@ -575,7 +575,7 @@ async def test_twilio_agent_turn_delegates_directly_to_codex_without_voice_llm(t
         caller="+14246993915",
     )
 
-    assert response["message"] == "Codexa will plan the app; say approve to continue; Builder has the Megaplan."
+    assert response["message"] == "Megaplan is ready; say approve to continue; Builder has the Megaplan."
     assert response["provider"] == "codex-orchestrator"
     assert response["codex"]["codex_session_id"] == "codexa-twilio"
     assert response["codex"]["codex_project_id"] == "project-twilio"
@@ -605,7 +605,7 @@ async def test_twilio_agent_turn_delegates_directly_to_codex_without_voice_llm(t
     )
     assert [(turn["role"], turn["content"]) for turn in turns] == [
         ("user", "Build a full stack app for booking classes."),
-        ("assistant", "Codexa will plan the app; say approve to continue; Builder has the Megaplan."),
+        ("assistant", "Megaplan is ready; say approve to continue; Builder has the Megaplan."),
     ]
     assistant_metrics = loads(turns[1]["metrics_json"], {})
     assert turns[1]["model"] == "codexa-http"
