@@ -7,7 +7,12 @@ from typing import Any
 import httpx
 import pytest
 
-from app.codex_orchestrator import CodexOrchestratorBridge, is_codex_detail_request, is_codex_task_request
+from app.codex_orchestrator import (
+    CodexOrchestratorBridge,
+    CodexOrchestratorResult,
+    is_codex_detail_request,
+    is_codex_task_request,
+)
 from app.config import Settings
 from app.db import Database, loads
 from app.flow_runtime import FlowRepository, FlowRuntime
@@ -537,6 +542,43 @@ async def test_runtime_executor_runs_codex_tool_once_and_uses_spoken_result(tmp_
     assert execution.response_text == "Codexa question for the user; Builder has the Megaplan."
     assert execution.codex["codex_session_id"] == "codexa-1"
     assert execution.statuses[0]["status"] == "completed"
+
+
+def test_voice_approval_summary_keeps_spoken_megaplan_handoff_short(tmp_path: Path):
+    settings = _settings(tmp_path)
+    db = Database(settings.database_path)
+    bridge = CodexOrchestratorBridge(db, settings)
+    result = CodexOrchestratorResult(
+        text="Before I start, here is what I understand: long Megaplan text.",
+        conversation_id="voice-codex",
+        status="completed",
+        codex_session_id="codexa-1",
+        codex_project_id="project-1",
+        requires_approval=True,
+        approval_id="approve_megaplan",
+        raw={
+            "status_response": {
+                "session": {
+                    "latest_summary": (
+                        "Build a simple local browser chess game in "
+                        "`/opt/codex-workspaces/chess-game` using conservative "
+                        "static-app defaults. Include playable chess UI, legal "
+                        "move handling, turn/status feedback, move history, reset, "
+                        "responsive styling, validation, and deferred improvement tracking."
+                    )
+                }
+            }
+        },
+    )
+
+    assert bridge._voice_summary(
+        result,
+        user_text="Can you build a simple chess game for me?",
+        allow_spoken_detail=False,
+    ) == (
+        "Megaplan is ready for a simple local browser chess game; "
+        "say approve to continue; Builder has the Megaplan."
+    )
 
 
 @pytest.mark.asyncio

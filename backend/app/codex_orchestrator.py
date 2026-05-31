@@ -891,12 +891,39 @@ class CodexOrchestratorBridge:
         session = _metadata_session(result.raw)
         latest_summary = str((session or {}).get("latest_summary") or "").strip()
         if latest_summary:
-            cleaned = " ".join(latest_summary.split())
-            target = re.sub(r"^build\s+", "", cleaned, flags=re.IGNORECASE)
-            target = re.sub(r"\s+in\s+/[^.]+\.?$", "", target).strip(" .")
+            target = self._approval_target(latest_summary)
             if target:
                 return f"Megaplan is ready for {target}."
         return "Megaplan is ready."
+
+    def _approval_target(self, summary: str) -> str:
+        cleaned = " ".join(str(summary or "").split()).strip()
+        if not cleaned:
+            return ""
+        first_sentence = re.split(r"\.\s+", cleaned, maxsplit=1)[0]
+        target = re.sub(r"^build\s+", "", first_sentence, flags=re.IGNORECASE)
+        target = re.sub(r"\s+in\s+`?/[^`.,;]+`?", "", target)
+        target = re.sub(
+            r"\s+using\s+conservative[^.;]*defaults\b",
+            "",
+            target,
+            flags=re.IGNORECASE,
+        )
+        target = re.sub(
+            r"\s+with\s+conservative[^.;]*defaults\b",
+            "",
+            target,
+            flags=re.IGNORECASE,
+        )
+        target = re.split(
+            r"\b(?:include|technical direction|validation|no backend|you will)\b",
+            target,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0].strip(" .;:")
+        if not target:
+            return ""
+        return self._short_text(f"{target}.", limit=80).rstrip(" .")
 
     def _with_builder_megaplan_hint(self, text: str) -> str:
         cleaned = " ".join(str(text or "").split()).strip()
