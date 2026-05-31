@@ -18,7 +18,6 @@ from .voice_runtime_controls import (
     emotion_code_for_tone,
     emotion_code_for_turn,
     next_voice_speed,
-    prefix_emotion_code,
     voice_speed_intent,
     voice_speed_label,
     voice_tone_intent,
@@ -1353,7 +1352,9 @@ async def _run_voice_pipeline(
                     trace.model_used = "clarification_policy"
                     latency_state.response_trace = trace
                     log_latency("llm_clarification_response", trace, text=clarification)
-                await self._push_llm_text(prefix_emotion_code(clarification, emotion_code))
+                if settings.voice_emotion_codes_enabled:
+                    voice_controls.apply_emotion_code(emotion_code)
+                await self._push_llm_text(clarification)
                 return
             if runtime_control_request:
                 text = await run_voice_runtime_model_command(
@@ -1367,7 +1368,9 @@ async def _run_voice_pipeline(
                     if settings.voice_emotion_codes_enabled
                     else "N"
                 )
-                await self._push_llm_text(prefix_emotion_code(text, emotion_code))
+                if settings.voice_emotion_codes_enabled:
+                    voice_controls.apply_emotion_code(emotion_code)
+                await self._push_llm_text(text)
                 return
             flow_text = None if runtime_control_request else await voice_flow.respond(
                 latest_user_text,
@@ -1386,7 +1389,9 @@ async def _run_voice_pipeline(
                     trace.llm_first_text_at = now
                     trace.llm_completed_at = now
                     latency_state.response_trace = trace
-                await self._push_llm_text(prefix_emotion_code(flow_text, emotion_code))
+                if settings.voice_emotion_codes_enabled:
+                    voice_controls.apply_emotion_code(emotion_code)
+                await self._push_llm_text(flow_text)
                 return
             await super()._process_context(context)
 

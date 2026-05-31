@@ -722,7 +722,7 @@ def max_tokens_for_profile(settings: Settings, model_profile: str, profile: Mapp
         return min(int(configured.get("max_output_tokens") or settings.max_completion_tokens), 96)
     if model_profile == "reasoning":
         return min(max(settings.max_completion_tokens, 180), 512)
-    return min(settings.max_completion_tokens, 160)
+    return min(max(settings.max_completion_tokens, 420), 512)
 
 
 def compact_runtime_context(profile: Mapping[str, Any]) -> str:

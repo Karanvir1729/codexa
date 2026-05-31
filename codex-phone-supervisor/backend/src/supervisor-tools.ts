@@ -1759,6 +1759,38 @@ function hasImplementationRequest(text: string) {
   return new RegExp(implementationVerbPattern, "i").test(removeNegatedImplementationClauses(text));
 }
 
+function looksLikeNewProjectRequest(text: string) {
+  const cleaned = removeNegatedImplementationClauses(text);
+  return hasImplementationRequest(cleaned)
+    || /\b(?:website|site|landing page|app|game|tool|agent|project|repo|repository)\b/i.test(cleaned);
+}
+
+function isVoiceLikeChannel(channel?: Channel | null) {
+  return channel === "web_voice" || channel === "phone" || channel === "twilio_call" || channel === "twilio_sms" || channel === "sms";
+}
+
+function voiceProjectNameFromRequest(text: string) {
+  const cleaned = text
+    .replace(/\b(?:can you|could you|would you|please|for me|i want|i need|tell codex to)\b/gi, " ")
+    .replace(new RegExp(implementationVerbPattern, "gi"), " ")
+    .replace(/\b(?:a|an|the|new|simple|small|basic|local|browser|web|with|using|and|to|for|me)\b/gi, " ")
+    .replace(/[^a-z0-9 _-]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const words = cleaned.split(/\s+/).filter(Boolean).slice(0, 5);
+  const base = words.join(" ").trim() || "voice app";
+  const hasKind = /\b(?:website|site|landing|app|game|tool|agent|project|repo|repository)\b/i.test(base);
+  const requestedKind = text.match(/\b(?:website|site|landing page|app|game|tool|agent|project|repo|repository)\b/i)?.[0] ?? "app";
+  return hasKind ? base : `${base} ${requestedKind}`;
+}
+
+function voiceProjectDescription(text: string) {
+  return [
+    text.trim(),
+    "Voice/Twilio Builder defaults: infer reasonable local implementation defaults, proceed without product/domain/UX research unless the user explicitly asks for it or the request is high-stakes/current-information-sensitive, create a Megaplan, and wait for approval before implementation.",
+  ].filter(Boolean).join("\n\n");
+}
+
 function readOnlyConversationResponse(text: string) {
   if (!/\b(?:do not|don't|dont|without|no)\s+[^.?!,;]*(?:create|modify|change|edit|write|build|make|add|update|fix|implement|scaffold|generate)\b/i.test(text)) return null;
   if (hasImplementationRequest(text)) return null;
@@ -1835,6 +1867,20 @@ async function createProjectFromResolvedName(
 }
 
 async function handleNewProjectIntent(session: SessionState, cleaned: string) {
+  const resolvingPendingProjectName =
+    session.pending_action?.type === "confirm_create_project" ||
+    session.pending_action?.type === "collect_project_name";
+  if (!resolvingPendingProjectName && !looksLikeNewProjectRequest(cleaned)) return null;
+
+  if (isVoiceLikeChannel(session.channel) && !resolvingPendingProjectName && session.project_discovery.status !== "selected") {
+    return await createProjectFromResolvedName(
+      session,
+      cleaned,
+      voiceProjectNameFromRequest(cleaned),
+      voiceProjectDescription(cleaned),
+    );
+  }
+
   let intake: Awaited<ReturnType<typeof resolveProjectIntake>>;
   const startedMs = Date.now();
   appendOrchestratorEvent({

@@ -189,15 +189,18 @@ class OpenAICompatibleLLMClient:
         system = system_prompt
         if self.settings.reasoning_mode == "off":
             system = f"/no_think\n{system_prompt}"
+        max_tokens = self.settings.max_completion_tokens
+        json_response_requested = _runtime_protocol_requires_json(system_prompt)
+        if json_response_requested:
+            max_tokens = max(max_tokens, 420)
         payload = {
             "model": self.model,
             "messages": [{"role": "system", "content": system}, *messages],
             "temperature": self.settings.llm_temperature,
             "top_p": self.settings.llm_top_p,
-            "max_tokens": self.settings.max_completion_tokens,
+            "max_tokens": max_tokens,
             "stream": False,
         }
-        json_response_requested = _runtime_protocol_requires_json(system_prompt)
         if json_response_requested:
             payload["response_format"] = {"type": "json_object"}
             payload["temperature"] = 0
@@ -312,12 +315,15 @@ class VertexNIMLLMClient:
         system = system_prompt
         if self.settings.reasoning_mode == "off":
             system = f"/no_think\n{system_prompt}"
+        max_tokens = self.settings.max_completion_tokens
+        if _runtime_protocol_requires_json(system_prompt):
+            max_tokens = max(max_tokens, 420)
         payload = {
             "model": self.model,
             "messages": [{"role": "system", "content": system}, *messages],
             "temperature": self.settings.llm_temperature,
             "top_p": self.settings.llm_top_p,
-            "max_tokens": self.settings.max_completion_tokens,
+            "max_tokens": max_tokens,
             "stream": False,
         }
         token = await self._access_token()
