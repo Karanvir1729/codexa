@@ -1181,6 +1181,121 @@ async def _run_voice_pipeline(
             log_latency("structured_output_repair_failed", trace, error=type(exc).__name__)
             return None
 
+    voice_runtime_llm = make_llm_client(settings)
+
+    def runtime_llm_messages(context: LLMContext, latest_user_text: str) -> list[dict[str, str]]:
+        trimmed = trim_voice_chat_messages(
+            merge_adjacent_chat_messages(context.get_messages()),
+            max_messages=settings.voice_llm_context_messages,
+            max_chars=settings.voice_llm_context_max_chars,
+        )
+        messages: list[dict[str, str]] = []
+        for message in trimmed:
+            role = _message_role(message)
+            if role not in {"system", "user", "assistant"}:
+                continue
+            content = (_message_content_text(message) or "").strip()
+            if content:
+                messages.append({"role": role, "content": content})
+        if latest_user_text.strip() and (
+            not messages
+            or messages[-1]["role"] != "user"
+            or messages[-1]["content"].strip() != latest_user_text.strip()
+        ):
+            messages.append({"role": "user", "content": latest_user_text.strip()})
+        return messages
+
+    async def run_voice_runtime_model_command(
+        context: LLMContext,
+        latest_user_text: str,
+        *,
+        codex_session_active: bool,
+        trace: VoiceLatencyTrace,
+    ) -> str:
+        nonlocal runtime_profile
+        selected_profile = "balanced"
+        selected_model = model_for_profile(settings, runtime_profile, selected_profile)
+        selected_max_tokens = max_tokens_for_profile(settings, selected_profile, runtime_profile)
+        runtime_profile.setdefault("llm", {})["current_model"] = selected_model
+        runtime_profile["active_model_profile"] = selected_profile
+        trace.model_profile = selected_profile
+        trace.model_used = selected_model
+        trace.structured_output_expected = True
+        trace.llm_request_started_at = time.perf_counter()
+        latency_state.response_trace = trace
+        log_latency(
+            "llm_request_started",
+            trace,
+            selected_model_profile=selected_profile,
+            selected_model=selected_model,
+            max_tokens=selected_max_tokens,
+            source="voice_runtime_model_direct",
+        )
+        builder_context = await codex_builder_runtime_context(
+            db,
+            settings,
+            recorder.conversation_id,
+        )
+        try:
+            result = await voice_runtime_llm.generate(
+                runtime_llm_messages(context, latest_user_text),
+                runtime_command_context(
+                    runtime_profile,
+                    settings,
+                    latest_user_text,
+                    codex_session_active=codex_session_active,
+                    builder_context=builder_context,
+                ),
+            )
+        except Exception as exc:
+            now = time.perf_counter()
+            trace.llm_first_text_at = now
+            trace.llm_completed_at = now
+            trace.structured_output_parse_errors = [type(exc).__name__]
+            log_latency("voice_runtime_model_failed", trace, error=type(exc).__name__)
+            return "I could not reach the Builder router. Please try again."
+
+        now = time.perf_counter()
+        trace.llm_first_text_at = now
+        trace.llm_completed_at = now
+        trace.model_used = result.model or selected_model
+        trace.llm_structured_output_raw = result.text
+        parsed = parse_voice_runtime_command(result.text)
+        if not parsed.ok:
+            repaired = await repair_voice_runtime_json(result.text, trace)
+            if repaired:
+                repaired_result = parse_voice_runtime_command(repaired)
+                repaired_result.repair_attempted = True
+                repaired_result.repaired_raw = repaired
+                if repaired_result.ok:
+                    parsed = repaired_result
+                else:
+                    parsed.errors = [
+                        *parsed.errors,
+                        *[f"repair:{error}" for error in repaired_result.errors],
+                    ]
+        if parsed.ok and parsed.command:
+            text = await apply_voice_runtime_command(
+                parsed.command,
+                trace,
+                event="llm_structured_output_parsed",
+                repair_attempted=parsed.repair_attempted,
+            )
+            trace.structured_output_expected = False
+            return text or _empty_live_voice_response(latest_user_text)
+
+        errors = parsed.errors or ["structured_output_parse_failed"]
+        trace.structured_output_parse_errors = errors
+        runtime_profile.setdefault("debug", {})["structured_output_parse_errors"] = errors
+        runtime_profile.setdefault("debug", {})["last_llm_structured_output"] = result.text
+        try:
+            save_runtime_profile(db, runtime_profile)
+        except Exception:
+            logger.debug("Failed to persist runtime voice profile", exc_info=True)
+        log_latency("structured_output_parse_failed", trace, text=result.text[:240], errors=errors)
+        trace.structured_output_expected = False
+        return "I could not get a valid Builder routing response. Please try again."
+
     def response_emotion_code(user_text: str, response_text: str) -> str:
         if voice_controls.user_tone_override:
             return voice_controls.emotion_code
@@ -1239,6 +1354,20 @@ async def _run_voice_pipeline(
                     latency_state.response_trace = trace
                     log_latency("llm_clarification_response", trace, text=clarification)
                 await self._push_llm_text(prefix_emotion_code(clarification, emotion_code))
+                return
+            if runtime_control_request:
+                text = await run_voice_runtime_model_command(
+                    context,
+                    latest_user_text,
+                    codex_session_active=codex_session_active,
+                    trace=trace,
+                )
+                emotion_code = (
+                    response_emotion_code(latest_user_text, text)
+                    if settings.voice_emotion_codes_enabled
+                    else "N"
+                )
+                await self._push_llm_text(prefix_emotion_code(text, emotion_code))
                 return
             flow_text = None if runtime_control_request else await voice_flow.respond(
                 latest_user_text,
