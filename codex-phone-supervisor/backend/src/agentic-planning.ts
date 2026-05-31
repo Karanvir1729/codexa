@@ -46,6 +46,7 @@ export interface PlannerInput {
     | "active_task"
     | "active_task_id"
     | "active_worker_id"
+    | "channel"
     | "pending_action"
     | "pending_approvals"
     | "preferred_worker_mode"
@@ -322,7 +323,15 @@ function hasResearchDecision(input: PlannerInput) {
   const value = normalized(userConversationCorpus(input));
   return /\b(no research|skip research|without research|do not research|don't research|no need to research|no need for research|proceed without research)\b/i.test(value)
     || /\b(research first|do research|conduct research|need research|needs research|look up|browse|search the web|investigate sources|compare current|current best practices)\b/i.test(value)
-    || /\b(you decide|codex decide|use defaults|pick defaults|just build it|just make it|just do it|go ahead|no more questions|keep it simple)\b/i.test(value);
+    || /\b(you decide|codex decide|use defaults|use practical defaults|use sensible defaults|choose practical defaults|choose sensible defaults|pick defaults|just build it|just make it|just do it|go ahead|no more questions|keep it simple)\b/i.test(value);
+}
+
+function isVoiceLikeChannel(channel?: Channel | null) {
+  return channel === "web_voice" || channel === "phone" || channel === "twilio_call" || channel === "twilio_sms" || channel === "sms";
+}
+
+function shouldReducePlannerQuestions(input: PlannerInput) {
+  return input.conversation_pressure.reduce_clarifying_questions || isVoiceLikeChannel(input.session.channel);
 }
 
 function isResearchRelevantBuild(input: PlannerInput, decision: PlannerDecision) {
@@ -341,7 +350,7 @@ function isResearchRelevantBuild(input: PlannerInput, decision: PlannerDecision)
 
 function needsResearchClarification(input: PlannerInput, decision: PlannerDecision) {
   if (decision.decision_type === "ask_clarification" || decision.decision_type === "wait_for_user" || decision.decision_type === "answer_status_question") return false;
-  if (input.conversation_pressure.reduce_clarifying_questions) return false;
+  if (shouldReducePlannerQuestions(input)) return false;
   if (hasResearchDecision(input)) return false;
   if (!isResearchRelevantBuild(input, decision)) return false;
   return decision.requires_user_approval || decision.execution_allowed || decision.next_action === "launch_workers" || decision.next_action === "create_task_graph";
@@ -365,7 +374,7 @@ function enforceResearchClarification(input: PlannerInput, decision: PlannerDeci
 }
 
 function adaptDecisionForConversationPressure(input: PlannerInput, decision: PlannerDecision) {
-  if (!input.conversation_pressure.reduce_clarifying_questions || decision.decision_type !== "ask_clarification") return decision;
+  if (!shouldReducePlannerQuestions(input) || decision.decision_type !== "ask_clarification") return decision;
   if (!input.project && !input.session.project_id && !input.session.current_project_id) return decision;
   const mode = plannerMode(input);
   const fallbackSplit = input.complexity.suggested_subtasks.length
@@ -381,8 +390,8 @@ function adaptDecisionForConversationPressure(input: PlannerInput, decision: Pla
   return {
     ...decision,
     decision_type: "request_user_approval" as const,
-    reason: `${decision.reason} User conversation pressure indicates Codex should stop expanding clarification questions and use conservative defaults.`,
-    user_visible_response: "Understood. I will stop expanding questions, use pragmatic local defaults from the conversation, and put that Megaplan in front of you for approval before Codex starts.",
+    reason: `${decision.reason} ${isVoiceLikeChannel(input.session.channel) ? "Voice/Twilio turns should use AI-inferred defaults and avoid setup back-and-forth unless truly blocked." : "User conversation pressure indicates Codex should stop expanding clarification questions and use conservative defaults."}`,
+    user_visible_response: "Understood. I will use pragmatic local defaults from the conversation and put the Megaplan in front of you for approval before Codex starts.",
     requirements_summary: decision.requirements_summary || input.session.requirement_summary || input.user_message,
     open_questions: [],
     assumptions: uniqueText([

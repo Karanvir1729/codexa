@@ -222,7 +222,7 @@ async def test_codex_bridge_delegates_and_reuses_persisted_session(tmp_path: Pat
     assert first.metadata()["voice_conversation_id"] == "voice-codex"
     assert second.codex_session_id == "codexa-session-1"
     assert requests[0]["channel"] == "web_voice"
-    assert "Plan-first rule" in requests[0]["text"]
+    assert requests[0]["text"] == "Build an app dashboard."
     assert requests[1]["session_id"] == "codexa-session-1"
     assert requests[1]["text"] == "Use this repo."
 
@@ -583,7 +583,7 @@ async def test_twilio_agent_turn_delegates_directly_to_codex_without_voice_llm(t
     assert response["runtime_action_status"][0]["status"] == "completed"
     assert requests[0]["channel"] == "web_voice"
     assert requests[0]["external_conversation_id"] == "twilio-call-CA123"
-    assert "Plan-first rule" in requests[0]["text"]
+    assert requests[0]["text"] == "Build a full stack app for booking classes."
 
     row = db.one(
         """
@@ -819,7 +819,7 @@ async def test_voice_text_codex_plan_first_conversation_and_approval(tmp_path: P
     assert third["message"].startswith("Approved.")
     assert third["providers"]["codex_session_id"] == "codexa-1"
     assert calls[0]["channel"] == "web_voice"
-    assert "Plan-first rule" in calls[0]["text"]
+    assert calls[0]["text"] == "Build a test feature for the app."
     assert calls[1]["session_id"] == "codexa-1"
     assert calls[1]["text"] == "Use this repo."
     assert calls[2]["text"] == "approve"

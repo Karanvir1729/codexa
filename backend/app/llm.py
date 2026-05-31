@@ -128,7 +128,7 @@ class MockLLMClient:
                 },
             }
         else:
-            speak = "I understand."
+            speak = "I understand. Go ahead."
             action = {"tool": "get_voice_runtime_status", "args": {"reason": "user_requested_runtime_status"}}
 
         return json.dumps(

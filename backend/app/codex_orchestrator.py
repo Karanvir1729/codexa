@@ -175,10 +175,10 @@ async def codex_builder_runtime_context(
     mapping = bridge.load_mapping(conversation_id)
     if not mapping.get("codex_session_id"):
         return (
-            "Builder context: no active Builder/Codex session is attached yet. Use model "
-            "judgment: software/app/game/site/tool/build/change/debug/test/deploy requests "
-            "should create a Builder session with delegate_to_codex_orchestrator; ordinary "
-            "conversation should return no runtime action."
+            "Builder context: no Builder/Codex session is attached yet. Use model judgment: "
+            "software/app/game/site/tool/build/change/debug/test/deploy requests should create "
+            "a Builder session with delegate_to_codex_orchestrator; ordinary conversation should "
+            "return no runtime action."
         )
 
     status_result: CodexOrchestratorResult | None = None
@@ -783,35 +783,7 @@ class CodexOrchestratorBridge:
         if is_codex_approval_response(user_text):
             return user_text.strip()
 
-        transcript_text = self._format_transcript(transcript)
-        if mode != "plan_first":
-            return user_text.strip()
-        if allow_spoken_detail:
-            voice_rule = (
-                "Voice output rule: use AI to write natural speech. Default to one short spoken sentence. "
-                "Mention that the Builder page has the Megaplan for the longer summary. "
-                "If the latest user asks to elaborate, explain more, or asks for a full summary, give the fuller spoken summary.\n"
-            )
-        else:
-            voice_rule = (
-                "Voice output rule: use AI to write natural speech, but always return one short spoken sentence. "
-                "Tell the user the Builder page has the Megaplan for the longer summary. "
-                "Do not give the full plan or long summary in the spoken response.\n"
-            )
-
-        return (
-            "Codexa voice bridge request. Take my recent chatlogs and decide what the user is asking for.\n"
-            f"{voice_rule}"
-            "Plan-first rule: behave like the Builder page. Infer reasonable defaults instead of asking setup questions. "
-            "If the user did not name a project, infer a short project name from the request. If implementation details are missing, "
-            "choose sensible defaults for a useful first version and put assumptions in the Megaplan. Ask a clarifying question only "
-            "when the request is impossible or unsafe without it. Otherwise give the final plan and ask for explicit approval. "
-            "Do not start implementation, create files, modify files, deploy, install packages, or run Codex implementation until "
-            "the user explicitly approves after hearing the final plan.\n"
-            f"Voice conversation id: {conversation_id}\n"
-            f"Recent chatlogs:\n{transcript_text or '(none)'}\n"
-            f"Latest user request: {user_text.strip()}"
-        )
+        return user_text.strip()
 
     def _format_transcript(self, transcript: list[Mapping[str, Any]]) -> str:
         lines: list[str] = []
