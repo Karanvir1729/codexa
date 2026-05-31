@@ -96,6 +96,9 @@ Nemotron worked well as the structured reasoning layer. The OpenAI-compatible in
 The biggest opportunity is documentation around realtime voice use. Teams need model guidance framed around first-token latency, warm concurrency, streaming behavior, and the tradeoff between quick conversational turns and deep planning turns. Nemotron is a strong fit for this architecture, and clearer voice-agent deployment recipes would make it faster to ship.
 
 **Cekura**
+<img width="1417" height="724" alt="image" src="https://github.com/user-attachments/assets/d5c9edc1-49cc-4672-8ffc-3768791d8b88" />
+<img width="583" height="672" alt="image" src="https://github.com/user-attachments/assets/888da8d2-d97e-4851-af66-b4f0fa279d83" />
+<img width="1238" height="533" alt="image" src="https://github.com/user-attachments/assets/f743519a-4965-40c1-a394-887952ad32bd" />
 
 Cekura mapped well to agent behavior because the scenarios can test product truth, not just HTTP status. The WebSocket agent model was the right fit for a self-hosted voice/coding agent, and result webhooks made it possible to close the loop into our own prompt-learning system.
 
