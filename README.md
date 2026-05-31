@@ -1,5 +1,9 @@
 # Codexa Voice
 
+Demo video: [https://www.youtube.com/watch?v=5LBfo_Mt4WA](https://www.youtube.com/watch?v=5LBfo_Mt4WA)
+
+Codexa-built example: [Ludo Lab](https://github.com/Karanvir1729/ludo-lab)
+
 Codexa Voice is a voice-first Codex workbench: think Cursor after it learns how to keep building while you are away from the keyboard. Today, vibe coding still makes people sit at a desk and watch an agent run. That waiting is the product gap. Codexa Voice turns it into a walk-away workflow: describe the build, approve the Megaplan, let Codex spawn parallel responsibility lanes, and take a walk while the system keeps coding, validating, and reporting progress.
 
 Live app: [https://34.121.55.47.sslip.io/](https://34.121.55.47.sslip.io/)
