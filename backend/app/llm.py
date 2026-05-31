@@ -113,6 +113,7 @@ class MockLLMClient:
             action = {"tool": "get_codex_orchestrator_status", "args": {"reason": "user_requested_codex_status"}}
         elif "delegate_to_codex_orchestrator" in system_prompt and (
             "active codex planning session" in system_prompt.lower()
+            or "active builder/codex session" in system_prompt.lower()
             or "codex" in normalized
             or normalized in {"approve", "approve it", "yes approve", "go ahead", "deny", "deny it", "no deny", "do not approve"}
             or any(word in normalized.split() for word in ["build", "create", "fix", "implement", "update", "test"])

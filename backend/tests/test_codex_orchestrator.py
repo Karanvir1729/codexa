@@ -15,7 +15,7 @@ from app.local_voice_runtime import (
     _live_voice_recent_user_request,
     _repair_codex_project_selection_transcript,
 )
-from app.llm import MockLLMClient
+from app.llm import LLMResult, MockLLMClient
 from app.voice_text_test import run_voice_text_turn
 from app.agent import AgentService
 from app.feedback import PromptRepository
@@ -25,6 +25,38 @@ from app.voice_runtime_executor import execute_voice_runtime_actions
 class FailingLLM:
     async def generate(self, messages, system_prompt):
         raise AssertionError("Twilio Codex routing should not call the voice LLM")
+
+    async def warmup(self) -> None:
+        return None
+
+
+class SemanticBuilderRouterLLM:
+    async def generate(self, messages, system_prompt):
+        assert "Builder context" in system_prompt
+        user_text = next((item["content"] for item in reversed(messages) if item["role"] == "user"), "")
+        return LLMResult(
+            text=json.dumps(
+                {
+                    "speak": "I'll route that to Builder.",
+                    "runtime_actions": [
+                        {
+                            "tool": "delegate_to_codex_orchestrator",
+                            "args": {
+                                "goal": user_text,
+                                "mode": "plan_first",
+                                "reason": "semantic_builder_request",
+                            },
+                        }
+                    ],
+                    "reasoning_profile": "reasoning",
+                    "debug": {"intent": "codex_orchestrator_delegate"},
+                }
+            ),
+            latency_ms=1,
+            model="semantic-builder-router",
+            provider="mock",
+            raw={"deterministic": True},
+        )
 
     async def warmup(self) -> None:
         return None
@@ -54,6 +86,8 @@ def test_codex_task_intent_accepts_planning_language_and_codexa_name():
     assert is_codex_task_request(
         "Use the codexa-live-smoke project. Plan adding a tiny static checklist feature."
     )
+    assert is_codex_task_request("Tell Codex to continue.")
+    assert not is_codex_task_request("Build a chess game.")
 
 
 def test_codex_detail_intent_accepts_natural_elaboration_language():
@@ -93,6 +127,50 @@ def test_live_voice_request_keeps_simple_latest_turn_when_not_task():
     ]
 
     assert _live_voice_recent_user_request(messages, "What's your name?", settings) == "What's your name?"
+
+
+@pytest.mark.asyncio
+async def test_voice_text_uses_model_router_for_builder_task_without_task_keyword_list(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    settings = _settings(tmp_path)
+    db = Database(settings.database_path)
+    prompt_repo = PromptRepository(db)
+    agent = AgentService(db, settings, SemanticBuilderRouterLLM())
+    flow_repo = FlowRepository(db)
+    flow_runtime = FlowRuntime(db, flow_repo, MockLLMClient(settings))
+    calls: list[dict[str, Any]] = []
+
+    async def fake_request(self, method, path, *, json=None, params=None):
+        if path == "/agent/chat":
+            calls.append(dict(json or {}))
+            return {
+                "text": "I made a Builder plan for the chess game.",
+                "sessionId": "codexa-chess",
+                "projectId": "project-chess",
+            }
+        return {"ok": True}
+
+    monkeypatch.setattr(CodexOrchestratorBridge, "_request_json", fake_request)
+
+    assert not is_codex_task_request("Build a chess game.")
+
+    result = await run_voice_text_turn(
+        message="Build a chess game.",
+        conversation_id="voice-chess",
+        settings=settings,
+        db=db,
+        prompt_repo=prompt_repo,
+        agent=agent,
+        flow_runtime=flow_runtime,
+        voice_behavior_mode="assistant",
+    )
+
+    assert calls
+    assert "Build a chess game." in calls[0]["text"]
+    assert result["codex"]["codex_session_id"] == "codexa-chess"
+    assert result["providers"]["codex_project_id"] == "project-chess"
 
 
 def test_contextual_codex_project_selection_stt_repair():

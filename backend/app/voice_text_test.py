@@ -11,7 +11,7 @@ from .agent import (
     fast_policy_response,
     repair_long_form_response,
 )
-from .codex_orchestrator import has_codex_orchestrator_session, is_codex_orchestrator_request
+from .codex_orchestrator import codex_builder_runtime_context, has_codex_orchestrator_session
 from .config import Settings
 from .db import Database
 from .feedback import PromptRepository
@@ -30,7 +30,6 @@ from .voice_self_observe import (
     build_learning_record,
     choose_model_profile,
     classify_voice_turn,
-    fallback_runtime_command_for_request,
     is_voice_tool_request,
     load_runtime_profile,
     model_for_profile,
@@ -331,7 +330,6 @@ async def run_voice_text_turn(
     raw_result: dict[str, Any] = {}
     structured_output: dict[str, Any] | None = None
     parse_errors: list[str] = []
-    fallback_reason: str | None = None
     codex_metadata: dict[str, Any] = {}
 
     async def apply_runtime_command(
@@ -402,107 +400,79 @@ async def run_voice_text_turn(
         return spoken
 
     codex_session_active = has_codex_orchestrator_session(db, cid)
-    if is_voice_tool_request(text, settings) or codex_session_active:
-        direct_command = fallback_runtime_command_for_request(
-            text,
-            runtime_profile,
-            settings,
-            reason="direct_voice_runtime_intent",
-            codex_session_active=codex_session_active,
+    model_runtime_router = settings.codex_orchestrator_enabled and mode == "assistant"
+    runtime_router_request = (
+        is_voice_tool_request(text, settings)
+        or codex_session_active
+        or model_runtime_router
+    )
+    if runtime_router_request:
+        selected_profile = "balanced"
+        selected_model = model_for_profile(settings, runtime_profile, selected_profile)
+        model = selected_model
+        reservation_id = agent.cost_guard.reserve(
+            agent.cost_guard.reserve_amount_for_provider(settings.llm_provider),
+            source="voice_runtime_command",
+            provider=settings.llm_provider,
+            model=settings.active_model,
+            metadata={"conversation_id": cid, "channel": "browser_voice_text", "assumed_stt": True},
         )
-        if direct_command and (codex_session_active or is_codex_orchestrator_request(text) or voice_speed_intent(text)):
-            response_text = await apply_runtime_command(
-                direct_command.speak,
-                [dict(action) for action in direct_command.runtime_actions],
-                direct_command.reasoning_profile,
-                direct_command.debug,
+        try:
+            builder_context = await codex_builder_runtime_context(db, settings, cid)
+            result = await asyncio.wait_for(
+                agent.llm.generate(
+                    agent.history(cid),
+                    runtime_command_context(
+                        runtime_profile,
+                        settings,
+                        text,
+                        codex_session_active=codex_session_active,
+                        builder_context=builder_context,
+                    ),
+                ),
+                timeout=settings.voice_runtime_command_timeout_seconds,
             )
-            provider = "runtime-fallback" if not codex_metadata else "codex-orchestrator"
-            model = "runtime-fallback" if not codex_metadata else "codexa-http"
-            response_source = "voice-runtime-tools" if not codex_metadata else "codex-orchestrator"
+        except Exception as exc:
+            agent.cost_guard.release(reservation_id, {"error": type(exc).__name__})
+            response_source = "voice-runtime-error"
+            provider = "llm-error"
+            model = settings.active_model
+            response_text = "I'm having trouble reaching the voice runtime model right now."
+            raw_result = {"error_type": type(exc).__name__}
+            llm_completed_at = time.perf_counter()
         else:
-            reservation_id = agent.cost_guard.reserve(
-                agent.cost_guard.reserve_amount_for_provider(settings.llm_provider),
-                source="voice_runtime_command",
-                provider=settings.llm_provider,
-                model=settings.active_model,
+            actual_cost = agent.cost_guard.estimate_llm_call(result.provider, result.raw)
+            agent.cost_guard.finalize(
+                reservation_id,
+                actual_cost,
+                units=result.raw.get("usage", {}),
                 metadata={"conversation_id": cid, "channel": "browser_voice_text", "assumed_stt": True},
             )
-            try:
-                result = await asyncio.wait_for(
-                    agent.llm.generate(
-                        agent.history(cid),
-                        runtime_command_context(
-                            runtime_profile,
-                            settings,
-                            text,
-                            codex_session_active=codex_session_active,
-                        ),
-                    ),
-                    timeout=settings.voice_runtime_command_timeout_seconds,
-                )
-            except Exception as exc:
-                agent.cost_guard.release(reservation_id, {"error": type(exc).__name__})
-                response_source = "voice-runtime-error"
-                provider = "llm-error"
-                model = settings.active_model
-                raw_result = {"error_type": type(exc).__name__}
-                fallback_reason = type(exc).__name__
-                llm_completed_at = time.perf_counter()
-            else:
-                actual_cost = agent.cost_guard.estimate_llm_call(result.provider, result.raw)
-                agent.cost_guard.finalize(
-                    reservation_id,
-                    actual_cost,
-                    units=result.raw.get("usage", {}),
-                    metadata={"conversation_id": cid, "channel": "browser_voice_text", "assumed_stt": True},
-                )
-                provider = result.provider
-                model = result.model
-                latency_ms = result.latency_ms
-                response_source = "voice-runtime-tools"
-                parsed = parse_voice_runtime_command(result.text)
-                raw_result = {**dict(result.raw), "model_text": result.text}
-                if parsed.ok and parsed.command:
-                    command = parsed.command
-                    response_text = await apply_runtime_command(
-                        command.speak,
-                        [dict(action) for action in command.runtime_actions],
-                        command.reasoning_profile,
-                        command.debug,
-                    )
-                    if runtime_actions and not any(
-                        status.get("status") == "completed" for status in runtime_action_status
-                    ) and not codex_metadata:
-                        fallback_reason = "runtime_actions_rejected"
-                    raw_result["structured_output"] = structured_output
-                else:
-                    parse_errors = parsed.errors or ["structured_output_parse_failed"]
-                    runtime_profile.setdefault("debug", {})["structured_output_parse_errors"] = parse_errors
-                    raw_result["structured_output_parse_errors"] = parse_errors
-                    fallback_reason = ",".join(parse_errors)
-        if fallback_reason:
-            fallback_command = fallback_runtime_command_for_request(
-                text,
-                runtime_profile,
-                settings,
-                reason=fallback_reason,
-                codex_session_active=codex_session_active,
-            )
-            if fallback_command:
+            provider = result.provider
+            model = result.model
+            latency_ms = result.latency_ms
+            response_source = "voice-runtime-tools"
+            parsed = parse_voice_runtime_command(result.text)
+            raw_result = {**dict(result.raw), "model_text": result.text}
+            if parsed.ok and parsed.command:
+                command = parsed.command
                 response_text = await apply_runtime_command(
-                    fallback_command.speak,
-                    [dict(action) for action in fallback_command.runtime_actions],
-                    fallback_command.reasoning_profile,
-                    fallback_command.debug,
+                    command.speak,
+                    [dict(action) for action in command.runtime_actions],
+                    command.reasoning_profile,
+                    command.debug,
                 )
-                raw_result["fallback_structured_output"] = structured_output
-                response_source = "voice-runtime-tools"
-                if provider == "llm-error":
-                    provider = "runtime-fallback"
-                    model = "runtime-fallback"
+                if runtime_actions and not any(
+                    status.get("status") == "completed" for status in runtime_action_status
+                ) and not codex_metadata:
+                    raw_result["runtime_actions_rejected"] = True
+                    response_text = "I couldn't complete that runtime action."
+                raw_result["structured_output"] = structured_output
             else:
-                response_text = "I'm having trouble updating the voice runtime right now."
+                parse_errors = parsed.errors or ["structured_output_parse_failed"]
+                runtime_profile.setdefault("debug", {})["structured_output_parse_errors"] = parse_errors
+                raw_result["structured_output_parse_errors"] = parse_errors
+                response_text = "I couldn't route that cleanly. Please repeat it."
         save_runtime_profile(db, runtime_profile)
         llm_completed_at = time.perf_counter()
     elif mode == "flow":

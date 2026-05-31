@@ -36,44 +36,6 @@ _DETAIL_RESPONSES = {
     "explain",
     "more",
 }
-_TASK_VERBS = {
-    "add",
-    "build",
-    "change",
-    "connect",
-    "create",
-    "debug",
-    "fix",
-    "generate",
-    "implement",
-    "make",
-    "modify",
-    "plan",
-    "scaffold",
-    "test",
-    "update",
-    "wire",
-}
-_TASK_NOUNS = {
-    "agent",
-    "api",
-    "app",
-    "backend",
-    "bug",
-    "code",
-    "component",
-    "feature",
-    "flow",
-    "frontend",
-    "integration",
-    "project",
-    "repo",
-    "site",
-    "task",
-    "test",
-    "ui",
-    "website",
-}
 
 
 @dataclass(frozen=True)
@@ -170,12 +132,7 @@ def is_codex_task_request(text: str) -> bool:
     normalized = _normalize(text)
     if not normalized:
         return False
-    words = set(normalized.split())
-    if (words & {"codex", "codexa"}) and (words & (_TASK_VERBS | {"continue"})):
-        return True
-    if "tell codex" in normalized:
-        return True
-    return bool(words & _TASK_VERBS) and bool(words & _TASK_NOUNS)
+    return "codex" in normalized or "codexa" in normalized
 
 
 def is_codex_orchestrator_request(text: str) -> bool:
@@ -198,6 +155,102 @@ def has_codex_orchestrator_session(db: Database, conversation_id: str | None) ->
         (conversation_id,),
     )
     return bool(row and row["codex_session_id"])
+
+
+async def codex_builder_runtime_context(
+    db: Database,
+    settings: Settings,
+    conversation_id: str | None,
+) -> str:
+    if not settings.codex_orchestrator_enabled:
+        return ""
+    if not conversation_id:
+        return (
+            "Builder context: no voice conversation id exists yet. If this is a software "
+            "build/change/debug/test/deploy request, create a Builder session with "
+            "delegate_to_codex_orchestrator."
+        )
+
+    bridge = CodexOrchestratorBridge(db, settings)
+    mapping = bridge.load_mapping(conversation_id)
+    if not mapping.get("codex_session_id"):
+        return (
+            "Builder context: no active Builder/Codex session is attached yet. Use model "
+            "judgment: software/app/game/site/tool/build/change/debug/test/deploy requests "
+            "should create a Builder session with delegate_to_codex_orchestrator; ordinary "
+            "conversation should return no runtime action."
+        )
+
+    status_result: CodexOrchestratorResult | None = None
+    try:
+        status_result = await bridge.status(
+            conversation_id,
+            user_text="status",
+            allow_spoken_detail=True,
+        )
+        mapping = bridge.load_mapping(conversation_id) or mapping
+    except Exception as exc:
+        mapping = dict(mapping)
+        mapping["status_fetch_error"] = type(exc).__name__
+
+    return format_codex_builder_runtime_context(mapping, status_result)
+
+
+def format_codex_builder_runtime_context(
+    mapping: Mapping[str, Any],
+    status_result: CodexOrchestratorResult | None = None,
+) -> str:
+    raw = status_result.raw if status_result else None
+    session = _metadata_session(raw) or _metadata_session(mapping.get("metadata"))
+    lines = ["Builder context:"]
+    ids = {
+        "voice_conversation_id": mapping.get("conversation_id"),
+        "codex_session_id": mapping.get("codex_session_id"),
+        "project_id": mapping.get("codex_project_id") or (session or {}).get("project_id"),
+        "task_id": mapping.get("codex_task_id") or (session or {}).get("active_task_id"),
+        "worker_id": mapping.get("codex_worker_id") or (session or {}).get("active_worker_id"),
+    }
+    lines.append("ids: " + ", ".join(f"{key}={value}" for key, value in ids.items() if value))
+    state = {
+        "last_status": mapping.get("last_status"),
+        "current_status": (session or {}).get("current_status") or (session or {}).get("status"),
+        "requires_approval": mapping.get("requires_approval"),
+        "approval_id": mapping.get("approval_id"),
+    }
+    lines.append(
+        "state: "
+        + ", ".join(f"{key}={value}" for key, value in state.items() if value not in {None, ""})
+    )
+    if status_result and status_result.text:
+        lines.append(f"builder_status_summary: {_truncate_optional(status_result.text, limit=320)}")
+    if mapping.get("last_response"):
+        lines.append(f"latest_builder_chat: {_truncate_optional(mapping.get('last_response'), limit=320)}")
+    if session:
+        if session.get("latest_summary"):
+            lines.append(f"latest_megaplan_summary: {_truncate_optional(session.get('latest_summary'), limit=420)}")
+        if session.get("latest_codex_message"):
+            lines.append(f"latest_codex_message: {_truncate_optional(session.get('latest_codex_message'), limit=420)}")
+        files = _compact_list(session.get("files_modified"), limit=8)
+        if files:
+            lines.append(f"files_modified: {', '.join(files)}")
+        completed = _compact_list(session.get("commands_completed"), limit=8)
+        failed = _compact_list(session.get("commands_failed"), limit=8)
+        errors = _compact_list(session.get("errors"), limit=5)
+        terminal = []
+        if completed:
+            terminal.append(f"commands_completed={completed}")
+        if failed:
+            terminal.append(f"commands_failed={failed}")
+        if errors:
+            terminal.append(f"errors={errors}")
+        if terminal:
+            lines.append("terminal_context: " + "; ".join(terminal))
+        pending = session.get("pending_action")
+        if isinstance(pending, Mapping):
+            lines.append(f"pending_action: {_truncate_optional(json.dumps(pending, default=str), limit=320)}")
+    if mapping.get("status_fetch_error"):
+        lines.append(f"status_fetch_error: {mapping['status_fetch_error']}")
+    return "\n".join(line for line in lines if line.strip())[:3000]
 
 
 class CodexOrchestratorBridge:

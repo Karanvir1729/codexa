@@ -10,7 +10,11 @@ from .voice_runtime_controls import (
     voice_tone_intent,
     voice_tone_response,
 )
-from .codex_orchestrator import CodexOrchestratorBridge, has_codex_orchestrator_session
+from .codex_orchestrator import (
+    CodexOrchestratorBridge,
+    codex_builder_runtime_context,
+    has_codex_orchestrator_session,
+)
 from .config import Settings
 from .cost_guard import CostGuard
 from .db import Database, dumps, loads
@@ -498,6 +502,11 @@ class AgentService:
                         self.settings,
                         text,
                         codex_session_active=codex_session_active,
+                        builder_context=await codex_builder_runtime_context(
+                            self.db,
+                            self.settings,
+                            conversation_id,
+                        ),
                     ),
                 ),
                 timeout=self.settings.voice_runtime_command_timeout_seconds,

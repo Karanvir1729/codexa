@@ -10,7 +10,6 @@ from typing import Any, Literal, Mapping
 
 from .codex_orchestrator import (
     CODEX_ORCHESTRATOR_RUNTIME_TOOLS,
-    is_codex_detail_request,
     is_codex_orchestrator_request,
     is_codex_status_request,
 )
@@ -283,6 +282,7 @@ def runtime_command_context(
     user_text: str = "",
     *,
     codex_session_active: bool = False,
+    builder_context: str | None = None,
 ) -> str:
     tts = profile.get("tts") if isinstance(profile.get("tts"), Mapping) else {}
     response = profile.get("response") if isinstance(profile.get("response"), Mapping) else {}
@@ -307,16 +307,18 @@ def runtime_command_context(
         speed_guidance = "The current request asks about Codex state. Choose get_codex_orchestrator_status."
     elif codex_enabled and codex_session_active:
         speed_guidance = (
-            "There is an active Codex planning session for this voice conversation. "
+            "There is an active Builder/Codex session for this voice conversation. "
             "If the user asks to elaborate, explain more, or asks for a fuller summary, choose get_codex_orchestrator_status. "
-            "Otherwise choose delegate_to_codex_orchestrator for this user turn, preserving the user's exact answer or instruction. "
+            "Otherwise use model judgment: if the user is answering, approving, denying, correcting, changing, or continuing the Builder work, "
+            "choose delegate_to_codex_orchestrator and preserve the user's exact instruction. "
             "Do not choose any TTS speed action unless the current user request explicitly asks to speak faster or slower."
         )
-    elif codex_enabled and is_codex_orchestrator_request(user_text):
+    elif codex_enabled:
         speed_guidance = (
-            "The current request is a coding/project task or Codex approval follow-up. "
-            "Choose delegate_to_codex_orchestrator with mode plan_first and a concise goal copied from the user request. "
-            "For this request, delegate_to_codex_orchestrator is required and TTS speed tools are invalid unless the user also asks to speak faster or slower."
+            "Use your semantic judgment for Builder routing. If the current request asks to build, create, code, implement, modify, debug, test, deploy, "
+            "or continue any software, app, game, website, repo, UI, API, or tool, choose delegate_to_codex_orchestrator with mode plan_first and copy the user's goal. "
+            "If the user is just having ordinary conversation, return an empty runtime_actions array and put the concise answer in speak. "
+            "Do not choose any TTS speed action unless the current user request explicitly asks to speak faster or slower."
         )
     else:
         speed_guidance = "If the current request does not require a runtime change, use an empty runtime_actions array."
@@ -326,10 +328,13 @@ def runtime_command_context(
             "\nCodex tool shapes: "
             '{"tool":"delegate_to_codex_orchestrator","args":{"goal":"user_goal","mode":"plan_first","reason":"brief_reason"}} '
             'or {"tool":"get_codex_orchestrator_status","args":{"reason":"brief_reason"}}. '
-            "Use delegate_to_codex_orchestrator when the user asks to build, fix, implement, create, update, test, or continue a coding/project task. "
-            "Use get_codex_orchestrator_status when the user asks what Codex is doing, what changed, or what approval is pending. "
-            "For approve/deny follow-ups, delegate the exact user response as the goal."
+            "Use model judgment, not keyword matching, to decide whether the user wants Builder/Codex work. "
+            "Use delegate_to_codex_orchestrator for software creation or changes, including games and websites. "
+            "Use get_codex_orchestrator_status when the user asks what Builder/Codex is doing, what changed, or what approval is pending. "
+            "For approve/deny follow-ups, delegate the exact user response as the goal. "
+            "The spoken response should be one concise sentence; if the user wants detail, say the Builder page has the Megaplan."
         )
+    builder_context_block = f"\n{builder_context.strip()}" if builder_context else ""
     allowed_tool_names = [
         "set_tts_speed",
         "increment_tts_speed",
@@ -343,6 +348,7 @@ def runtime_command_context(
     return f"""Voice runtime protocol for this turn. Return valid JSON only. Do not answer the user directly in this protocol; choose runtime tools.
 Current user request: {user_text[:500]!r}
 Runtime: provider={tts.get("provider", "gradium")}, voice_id={tts.get("voice_id", "YTpq7expH9539ERJ")}, speed={tts.get("speed", 1.0)} range=0.5-2.0 natural={natural_min}-{natural_max}, response_length={response.get("length", "short")}, model_profile={profile.get("active_model_profile", "balanced")}.
+{builder_context_block}
 Return object keys: speak, runtime_actions, reasoning_profile, debug.
 Allowed tool names: {", ".join(allowed_tool_names)}.
 Action object shape: {{"tool":"set_tts_speed","args":{{"speed":1.0,"reason":"brief_reason"}}}} or {{"tool":"increment_tts_speed","args":{{"delta":0.2,"reason":"brief_reason"}}}}.
@@ -353,128 +359,7 @@ Canonical slower example: {{"speak":"Sure, I'll talk slower.","runtime_actions":
 Canonical faster example: {{"speak":"Sure, I'll apply the faster speed now.","runtime_actions":[{{"tool":"increment_tts_speed","args":{{"delta":0.2,"reason":"user_requested_faster_speech"}}}}],"reasoning_profile":"fast","debug":{{"intent":"runtime_control"}}}}.
 Canonical Codex example: {{"speak":"I'll route that to Codex planning.","runtime_actions":[{{"tool":"delegate_to_codex_orchestrator","args":{{"goal":"user_goal","mode":"plan_first","reason":"user_requested_codex_planning"}}}}],"reasoning_profile":"reasoning","debug":{{"intent":"codex_orchestrator_delegate"}}}}.
 Rules: The current user request is authoritative; do not copy runtime_actions from prior turns. voice/audio/talking speed changes use TTS speed tools, not model_profile. model_profile only changes LLM strength. Short follow-ups like faster/fastest/slower should follow recent context; if that context is speech speed, choose a numeric TTS speed or delta within range. `speed` is an absolute multiplier and must never be negative; use a negative `delta` for slower speech. Runtime-change requests must include an action. Never return a bare tool object; always return the full object with speak and runtime_actions. Never put <tags> in speak; expression tags are added later by the renderer. Keep speak short.
-Choose runtime_actions yourself from the current user request and runtime state. If the current request mentions Codex or asks for a coding/project task, include delegate_to_codex_orchestrator."""
-
-
-def fallback_runtime_command_for_request(
-    user_text: str,
-    profile: Mapping[str, Any],
-    settings: Settings,
-    *,
-    reason: str,
-    codex_session_active: bool = False,
-) -> VoiceRuntimeCommand | None:
-    intent = voice_speed_intent(user_text)
-    if not intent:
-        if settings.codex_orchestrator_enabled and codex_session_active and is_codex_detail_request(user_text):
-            return VoiceRuntimeCommand(
-                speak="I'll pull the fuller Codex summary.",
-                runtime_actions=[
-                    {
-                        "tool": "get_codex_orchestrator_status",
-                        "args": {"reason": f"fallback_active_session_detail:{reason}"},
-                    }
-                ],
-                reasoning_profile="reasoning",
-                debug={
-                    "intent": "codex_orchestrator_detail",
-                    "source": "runtime_control_fallback",
-                    "fallback_reason": reason,
-                },
-            )
-        if settings.codex_orchestrator_enabled and codex_session_active:
-            return VoiceRuntimeCommand(
-                speak="I'll send that to Codex.",
-                runtime_actions=[
-                    {
-                        "tool": "delegate_to_codex_orchestrator",
-                        "args": {
-                            "goal": user_text.strip(),
-                            "mode": "plan_first",
-                            "reason": f"fallback_active_session:{reason}",
-                        },
-                    }
-                ],
-                reasoning_profile="reasoning",
-                debug={
-                    "intent": "codex_orchestrator_followup",
-                    "source": "runtime_control_fallback",
-                    "fallback_reason": reason,
-                },
-            )
-        if settings.codex_orchestrator_enabled and is_codex_status_request(user_text):
-            return VoiceRuntimeCommand(
-                speak="I'll check Codex status.",
-                runtime_actions=[
-                    {
-                        "tool": "get_codex_orchestrator_status",
-                        "args": {"reason": f"fallback:{reason}"},
-                    }
-                ],
-                reasoning_profile="fast",
-                debug={
-                    "intent": "codex_orchestrator_status",
-                    "source": "runtime_control_fallback",
-                    "fallback_reason": reason,
-                },
-            )
-        if settings.codex_orchestrator_enabled and is_codex_orchestrator_request(user_text):
-            return VoiceRuntimeCommand(
-                speak="I'll route that to Codex planning.",
-                runtime_actions=[
-                    {
-                        "tool": "delegate_to_codex_orchestrator",
-                        "args": {
-                            "goal": user_text.strip(),
-                            "mode": "plan_first",
-                            "reason": f"fallback:{reason}",
-                        },
-                    }
-                ],
-                reasoning_profile="reasoning",
-                debug={
-                    "intent": "codex_orchestrator_delegate",
-                    "source": "runtime_control_fallback",
-                    "fallback_reason": reason,
-                },
-            )
-        return None
-    tts = profile.get("tts") if isinstance(profile.get("tts"), Mapping) else {}
-    current = clamp_number(tts.get("speed"), settings.gradium_tts_speed, 0.5, 2.0)
-    natural_min, natural_max = natural_tts_speed_bounds(settings)
-    if intent == "very_fast":
-        speed = natural_max
-        action = {"tool": "set_tts_speed", "args": {"speed": speed, "reason": "fallback_user_requested_very_fast_speech"}}
-        speak = f"Got it, I'll apply the faster speed at {speed:.2g}x."
-    elif intent == "faster":
-        delta = 0.2
-        speed = clamp_live_tts_speed(settings, current + delta)
-        action = {"tool": "increment_tts_speed", "args": {"delta": delta, "reason": "fallback_user_requested_faster_speech"}}
-        speak = f"Sure, I'll apply the faster speed at {speed:.2g}x."
-    elif intent == "very_slow":
-        speed = natural_min
-        action = {"tool": "set_tts_speed", "args": {"speed": speed, "reason": "fallback_user_requested_very_slow_speech"}}
-        speak = f"Sure, I'll talk slower at {speed:.2g}x."
-    elif intent == "slower":
-        delta = -0.2
-        speed = clamp_live_tts_speed(settings, current + delta)
-        action = {"tool": "increment_tts_speed", "args": {"delta": delta, "reason": "fallback_user_requested_slower_speech"}}
-        speak = f"Sure, I'll talk slower at {speed:.2g}x."
-    else:
-        speed = 1.0
-        action = {"tool": "set_tts_speed", "args": {"speed": speed, "reason": "fallback_user_requested_normal_speech_speed"}}
-        speak = "Sure, I'll use normal speed."
-    return VoiceRuntimeCommand(
-        speak=speak,
-        runtime_actions=[action],
-        reasoning_profile="fast",
-        debug={
-            "intent": "runtime_control",
-            "source": "runtime_control_fallback",
-            "fallback_reason": reason,
-            "current_tts_speed": round(current, 2),
-        },
-    )
+Choose runtime_actions yourself from the current user request, Builder context, chat context, and runtime state. Do not use deterministic fallback routing. If the request should build or change software, include delegate_to_codex_orchestrator. If no runtime or Builder action is needed, return runtime_actions as an empty array."""
 
 
 def _strip_json_fence(text: str) -> str:

@@ -121,7 +121,7 @@ async def test_voice_text_turn_assumes_stt_and_records_voice_artifacts(voice_tex
 
 
 @pytest.mark.asyncio
-async def test_voice_text_turn_runtime_speed_falls_back_on_llm_timeout(tmp_path: Path):
+async def test_voice_text_turn_runtime_speed_reports_llm_timeout_without_fallback(tmp_path: Path):
     settings = Settings(
         database_path=str(tmp_path / "agent.sqlite3"),
         llm_provider="mock",
@@ -147,10 +147,10 @@ async def test_voice_text_turn_runtime_speed_falls_back_on_llm_timeout(tmp_path:
         input_mode="push_to_talk",
     )
 
-    assert result["provider"] == "runtime-fallback"
-    assert "slow" in result["message"].casefold()
-    assert result["runtime_action_status"][0]["status"] == "completed"
-    assert result["runtime_profile"]["tts_speed"] < settings.gradium_tts_speed
+    assert result["provider"] == "llm-error"
+    assert "voice runtime model" in result["message"].casefold()
+    assert result["runtime_action_status"] == []
+    assert result["runtime_profile"]["tts_speed"] == settings.gradium_tts_speed
 
 
 @pytest.mark.asyncio

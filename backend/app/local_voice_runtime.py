@@ -6,7 +6,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from .codex_orchestrator import has_codex_orchestrator_session
+from .codex_orchestrator import codex_builder_runtime_context, has_codex_orchestrator_session
 from .config import Settings, get_settings
 from .db import Database, dumps, loads
 from .feedback import FeedbackLearner, PromptRepository
@@ -30,7 +30,6 @@ from .voice_self_observe import (
     choose_model_profile,
     classify_voice_turn,
     clean_angle_tags,
-    fallback_runtime_command_for_request,
     fallback_voice_runtime_speak,
     is_voice_tool_request,
     likely_bad_transcript,
@@ -447,7 +446,10 @@ def _live_voice_recent_user_request(messages: list[Any], latest_user_text: str, 
     combined = " ".join(fragments).strip()
     if len(combined) > _LIVE_VOICE_REQUEST_MAX_CHARS:
         combined = combined[-_LIVE_VOICE_REQUEST_MAX_CHARS:].strip()
-    if combined and combined != latest_user_text.strip() and is_voice_tool_request(combined, settings):
+    if combined and combined != latest_user_text.strip() and (
+        is_voice_tool_request(combined, settings)
+        or (settings.codex_orchestrator_enabled and len(fragments) >= 3)
+    ):
         return combined
     return latest_user_text
 
@@ -1197,8 +1199,13 @@ async def _run_voice_pipeline(
                 settings,
             )
             codex_session_active = has_codex_orchestrator_session(db, recorder.conversation_id)
+            model_runtime_router = (
+                settings.codex_orchestrator_enabled and effective_voice_behavior_mode == "assistant"
+            )
             runtime_control_request = (
-                is_voice_tool_request(latest_user_text, settings) or codex_session_active
+                is_voice_tool_request(latest_user_text, settings)
+                or codex_session_active
+                or model_runtime_router
             )
             if runtime_control_request:
                 trace = latency_state.active_trace or VoiceLatencyTrace()
@@ -1206,33 +1213,7 @@ async def _run_voice_pipeline(
                     latency_state.active_trace = trace
                 trace.user_text = latest_user_text
                 trace.model_profile = "reasoning" if settings.codex_orchestrator_enabled else "fast"
-                trace.model_used = "voice-runtime-direct"
-                now = time.perf_counter()
-                trace.llm_request_started_at = trace.llm_request_started_at or now
-                trace.llm_first_text_at = now
-                trace.llm_completed_at = now
                 latency_state.response_trace = trace
-                fallback_command = fallback_runtime_command_for_request(
-                    latest_user_text,
-                    runtime_profile,
-                    settings,
-                    reason="live_voice_direct_runtime_intent",
-                    codex_session_active=codex_session_active,
-                )
-                if fallback_command:
-                    text = await apply_voice_runtime_command(
-                        fallback_command,
-                        trace,
-                        event="runtime_control_direct_applied",
-                    )
-                    trace.structured_output_expected = False
-                    emotion_code = (
-                        response_emotion_code(latest_user_text, text)
-                        if settings.voice_emotion_codes_enabled
-                        else "N"
-                    )
-                    await self._push_llm_text(prefix_emotion_code(text, emotion_code))
-                    return
             if (
                 latest_user_text
                 and likely_bad_transcript(latest_user_text)
@@ -1296,12 +1277,19 @@ async def _run_voice_pipeline(
             selected_model = model_for_profile(settings, runtime_profile, selected_profile)
             selected_max_tokens = max_tokens_for_profile(settings, selected_profile, runtime_profile)
             codex_session_active = has_codex_orchestrator_session(db, recorder.conversation_id)
+            model_runtime_router = (
+                settings.codex_orchestrator_enabled and effective_voice_behavior_mode == "assistant"
+            )
             runtime_control_request = (
-                is_voice_tool_request(latest_user_text, settings) or codex_session_active
+                is_voice_tool_request(latest_user_text, settings)
+                or codex_session_active
+                or model_runtime_router
             )
             if runtime_control_request:
                 # Runtime actions need stronger JSON adherence than the nano fast model provides.
                 selected_model = model_for_profile(settings, runtime_profile, "balanced")
+                selected_profile = "balanced"
+                selected_max_tokens = max_tokens_for_profile(settings, selected_profile, runtime_profile)
             self._settings.model = selected_model
             self._settings.max_tokens = selected_max_tokens
             runtime_profile.setdefault("llm", {})["current_model"] = selected_model
@@ -1325,6 +1313,11 @@ async def _run_voice_pipeline(
                 max_chars=settings.voice_llm_context_max_chars,
             )
             if runtime_control_request:
+                builder_context = await codex_builder_runtime_context(
+                    db,
+                    settings,
+                    recorder.conversation_id,
+                )
                 runtime_message = {
                     "role": "system",
                     "content": runtime_command_context(
@@ -1332,6 +1325,7 @@ async def _run_voice_pipeline(
                         settings,
                         latest_user_text,
                         codex_session_active=codex_session_active,
+                        builder_context=builder_context,
                     ),
                 }
                 insert_at = 1 if messages and _message_role(messages[0]) == "system" else 0
@@ -1553,21 +1547,9 @@ async def _run_voice_pipeline(
                             in {"delegate_to_codex_orchestrator", "get_codex_orchestrator_status"}
                             for status in trace.runtime_action_status
                         ):
-                            fallback_command = fallback_runtime_command_for_request(
-                                trace.user_text,
-                                runtime_profile,
-                                settings,
-                                reason="runtime_actions_rejected",
-                                codex_session_active=has_codex_orchestrator_session(
-                                    db, recorder.conversation_id
-                                ),
-                            )
-                            if fallback_command:
-                                text = await apply_voice_runtime_command(
-                                    fallback_command,
-                                    trace,
-                                    event="runtime_control_fallback_applied",
-                                )
+                            runtime_profile.setdefault("debug", {})[
+                                "runtime_actions_rejected"
+                            ] = True
                     else:
                         errors = parsed.errors or ["structured_output_parse_failed"]
                         trace.structured_output_parse_errors = errors
@@ -1581,26 +1563,8 @@ async def _run_voice_pipeline(
                             save_runtime_profile(db, runtime_profile)
                         except Exception:
                             logger.debug("Failed to persist runtime voice profile", exc_info=True)
-                        fallback_command = fallback_runtime_command_for_request(
-                            trace.user_text,
-                            runtime_profile,
-                            settings,
-                            reason=",".join(errors),
-                            codex_session_active=has_codex_orchestrator_session(
-                                db, recorder.conversation_id
-                            ),
-                        )
-                        if fallback_command:
-                            text = await apply_voice_runtime_command(
-                                fallback_command,
-                                trace,
-                                event="runtime_control_fallback_applied",
-                                parse_errors=errors,
-                                repair_attempted=parsed.repair_attempted,
-                            )
-                        else:
-                            text = fallback_voice_runtime_speak(text)
-                            log_latency("structured_output_parse_failed", trace, text=text, errors=errors)
+                        text = "I couldn't route that cleanly. Please repeat it."
+                        log_latency("structured_output_parse_failed", trace, text=text, errors=errors)
                     if not text:
                         text = _empty_live_voice_response(trace.user_text)
                         trace.empty_llm_completions += 1
